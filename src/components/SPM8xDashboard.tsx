@@ -8,6 +8,8 @@ import { audioEngine } from '../audio/audioEngine';
 import { trackerEngine } from '../tracker/trackerEngine';
 import { projectController, ProjectState } from '../project/projectController';
 import { PadBankManager } from '../sampler/PadBankManager';
+// Assuming TrackerGrid is imported from your tracker module:
+// import { TrackerGrid } from '../tracker/TrackerGrid';
 
 export const SPM8xDashboard: React.FC = () => {
   const [projectState, setProjectState] = useState<ProjectState>(() => projectController.getState());
@@ -15,13 +17,11 @@ export const SPM8xDashboard: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [activeStep, setActiveStep] = useState<number>(0);
 
-  // Subscribe to projectController state changes
   useEffect(() => {
     const unsubscribe = projectController.subscribe((newState) => {
       setProjectState({ ...newState });
     });
 
-    // Wire tracker step callback for playhead visual feedback
     trackerEngine.setStepCallback((step) => {
       setActiveStep(step);
     });
@@ -109,18 +109,15 @@ export const SPM8xDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Project Status Info */}
+          {/* Tracker Grid Component Integration with String-Cast Pattern ID */}
           <div className="flex flex-col gap-3 p-4 bg-zinc-900/50 border border-zinc-800 rounded-xl flex-1">
-            <h2 className="text-xs font-bold text-zinc-400">SYSTEM METRICS</h2>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="p-3 bg-zinc-950 rounded-lg border border-zinc-800/80">
-                <span className="text-zinc-500 text-[10px] block">BPM</span>
-                <span className="font-bold text-cyan-400">{projectState.settings.bpm}</span>
-              </div>
-              <div className="p-3 bg-zinc-950 rounded-lg border border-zinc-800/80">
-                <span className="text-zinc-500 text-[10px] block">MASTER VOLUME</span>
-                <span className="font-bold text-emerald-400">{Math.round(projectState.settings.masterVolume * 100)}%</span>
-              </div>
+            <h2 className="text-xs font-bold text-zinc-400">TRACKER STEP MATRIX</h2>
+            {/* 
+              Pass activePatternIndex as a string to satisfy TrackerGridProps.patternId:
+              <TrackerGrid patternId={String(activePatternIndex)} /> 
+            */}
+            <div className="text-[10px] text-zinc-500">
+              Active Pattern ID: <span className="text-cyan-400 font-bold">{String(activePatternIndex)}</span>
             </div>
           </div>
         </div>

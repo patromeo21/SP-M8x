@@ -1,70 +1,26 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * useAudioVisualizer.ts — React Hook for Audio Visualizer Service Lifecycle
- * Located in src/audio/
+ * useAudioVisualizer.ts — React Hook for Canvas Visualizer Binding
  */
 
-import { useEffect, useRef, useCallback } from 'react';
-import { AudioVisualizerService } from './AudioVisualizerService';
+import { useEffect, useRef } from 'react';
+import { audioVisualizerService } from './AudioVisualizerService';
 
-interface UseAudioVisualizerProps {
-  analyser: AnalyserNode | null;
-  mode?: 'waveform' | 'frequency';
-  lineColor?: string;
-  backgroundColor?: string;
-  targetFps?: number; // Supports up to 120fps on high-refresh mobile/iPad displays
-}
-
-export function useAudioVisualizer({
-  analyser,
-  mode = 'waveform',
-  lineColor,
-  backgroundColor,
-  targetFps,
-}: UseAudioVisualizerProps) {
+export function useAudioVisualizer(analyser: AnalyserNode | null) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const serviceRef = useRef<AudioVisualizerService | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !analyser) return;
 
-    // Instantiate visualizer service
-    const service = new AudioVisualizerService({
-      canvas,
-      analyser,
-      mode,
-      lineColor,
-      backgroundColor,
-      targetFps,
-    });
+    audioVisualizerService.attach(canvas, analyser);
+    audioVisualizerService.start();
 
-    serviceRef.current = service;
-    service.start();
-
-    // Cleanup on unmount or dependency change
     return () => {
-      service.stop();
-      serviceRef.current = null;
+      audioVisualizerService.stop();
+      audioVisualizerService.detach();
     };
-  }, [analyser, mode, lineColor, backgroundColor, targetFps]);
+  }, [analyser]);
 
-  const setMode = useCallback((newMode: 'waveform' | 'frequency') => {
-    serviceRef.current?.setMode(newMode);
-  }, []);
-
-  const start = useCallback(() => {
-    serviceRef.current?.start();
-  }, []);
-
-  const stop = useCallback(() => {
-    serviceRef.current?.stop();
-  }, []);
-
-  return {
-    canvasRef,
-    setMode,
-    start,
-    stop,
-  };
+  return { canvasRef };
 }

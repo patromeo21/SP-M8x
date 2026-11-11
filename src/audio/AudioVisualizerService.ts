@@ -10,12 +10,11 @@ export class AudioVisualizerService {
   private animationFrameId: number | null = null;
   private isRunning: boolean = false;
 
-  // Reusable typed array buffer for zero-alloc frame updates
   private dataArray: Uint8Array = new Uint8Array(0);
 
   public attach(canvas: HTMLCanvasElement, analyser: AnalyserNode): void {
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d', { alpha: false }); // Disable alpha channel for GPU efficiency
+    this.ctx = canvas.getContext('2d', { alpha: false });
     this.analyser = analyser;
     this.dataArray = new Uint8Array(analyser.frequencyBinCount);
   }
@@ -42,17 +41,14 @@ export class AudioVisualizerService {
     const width = this.canvas.width;
     const height = this.canvas.height;
 
-    // Retrieve time-domain waveform data from AudioNode Analyser
-    // Cast Uint8Array explicitly to avoid SharedArrayBuffer type mismatch in strict environments
-    this.analyser.getByteTimeDomainData(this.dataArray as unknown as Uint8Array);
+    // Type-cast buffer array explicitly to satisfy Web Audio AnalyserNode signature
+    this.analyser.getByteTimeDomainData(this.dataArray as unknown as Uint8Array<ArrayBuffer>);
 
-    // Dark canvas background render
     this.ctx.fillStyle = '#09090b';
     this.ctx.fillRect(0, 0, width, height);
 
-    // Oscilloscope Waveform Line Configuration
     this.ctx.lineWidth = 2;
-    this.ctx.strokeStyle = '#22d3ee'; // Cyan 400
+    this.ctx.strokeStyle = '#22d3ee';
     this.ctx.beginPath();
 
     const sliceWidth = width / this.dataArray.length;

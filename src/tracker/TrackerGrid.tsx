@@ -1,95 +1,62 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * TrackerGrid.tsx — M8-Style Tracker Grid with Memoized Cells & Pointer Events
- * Located in src/tracker/TrackerGrid.tsx
+ * TrackerGrid.tsx — Step Sequencer Grid Matrix View
  */
 
-import React, { memo, useCallback } from 'react';
+import React from 'react';
+import { projectController } from '../project/projectController';
 
-interface TrackerStepCellProps {
-  stepIndex: number;
-  isActivePlayhead: boolean;
-  stepData?: { note: string; instrument: string; volume: string };
-  onStepSelect: (step: number) => void;
+export interface TrackerGridProps {
+  patternId: string | number; // Accepts both string and number safely
+  activeStep?: number;
 }
 
-// Memoized individual step cell to eliminate cascade re-renders across 64 steps
-const TrackerStepCell = memo<TrackerStepCellProps>(
-  ({ stepIndex, isActivePlayhead, stepData, onStepSelect }) => {
-    return (
-      <div
-        onPointerDown={() => onStepSelect(stepIndex)}
-        className={`flex items-center justify-between px-2 py-1.5 text-xs font-mono border-b border-zinc-900 transition-colors cursor-pointer select-none ${
-          isActivePlayhead
-            ? 'bg-amber-500/20 border-l-2 border-l-amber-400 text-amber-300'
-            : stepIndex % 4 === 0
-            ? 'bg-zinc-900/60 text-zinc-300'
-            : 'bg-zinc-950 text-zinc-400 hover:bg-zinc-900/40'
-        }`}
-      >
-        <span className="text-zinc-600 font-bold w-6">
-          {String(stepIndex + 1).padStart(2, '0')}
-        </span>
-        <span className="tracking-widest font-bold">
-          {stepData?.note ?? '---'}
-        </span>
-        <span className="text-cyan-400">
-          {stepData?.instrument ?? '--'}
-        </span>
-        <span className="text-amber-400">
-          {stepData?.volume ?? '--'}
-        </span>
-      </div>
-    );
-  },
-  (prev, next) =>
-    prev.isActivePlayhead === next.isActivePlayhead &&
-    prev.stepIndex === next.stepIndex &&
-    prev.stepData?.note === next.stepData?.note &&
-    prev.stepData?.instrument === next.stepData?.instrument &&
-    prev.stepData?.volume === next.stepData?.volume
-);
+export const TrackerGrid: React.FC<TrackerGridProps> = ({ patternId, activeStep = 0 }) => {
+  const projectState = projectController.getState();
+  
+  // Resolve pattern index safely whether patternId is passed as a string or number
+  const patternIndex = typeof patternId === 'number' ? patternId : parseInt(patternId, 10) || 0;
+  const currentPattern = projectState.tracker.patterns[patternIndex] || projectState.tracker.patterns[0];
 
-TrackerStepCell.displayName = 'TrackerStepCell';
-
-interface TrackerGridProps {
-  patternId?: string;
-  currentStepIndex: number;
-  onStepSelect: (step: number) => void;
-}
-
-export const TrackerGrid: React.FC<TrackerGridProps> = ({
-  currentStepIndex,
-  onStepSelect,
-}) => {
-  const handleStepSelect = useCallback(
-    (step: number) => {
-      onStepSelect(step);
-    },
-    [onStepSelect]
-  );
+  const steps = currentPattern ? currentPattern.steps : [];
 
   return (
-    <div className="flex flex-col bg-zinc-950 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl">
-      {/* Tracker Column Headers */}
-      <div className="flex items-center justify-between px-3 py-2 bg-zinc-900 text-[10px] font-bold text-zinc-400 border-b border-zinc-800 uppercase tracking-wider">
-        <span>Stp</span>
-        <span>Note</span>
-        <span>Ins</span>
-        <span>Vol</span>
+    <div className="flex flex-col gap-3 p-4 bg-zinc-900/50 border border-zinc-800 rounded-xl flex-1 font-mono select-none">
+      <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+        <h2 className="text-xs font-bold text-zinc-400">
+          TRACKER MATRIX — {currentPattern ? currentPattern.name : `PATTERN ${patternId}`}
+        </h2>
+        <span className="text-[10px] text-cyan-400 font-bold">64 STEPS</span>
       </div>
 
-      {/* 64-Step Scrollable Tracker View */}
-      <div className="flex flex-col max-h-[380px] overflow-y-auto overscroll-contain">
-        {Array.from({ length: 64 }).map((_, index) => (
-          <TrackerStepCell
-            key={index}
-            stepIndex={index}
-            isActivePlayhead={currentStepIndex === index}
-            onStepSelect={handleStepSelect}
-          />
-        ))}
+      {/* Grid container for step sequencer cells */}
+      <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5 overflow-y-auto max-h-64 p-1">
+        {steps.map((step, idx) => {
+          const isActive = idx === activeStep;
+          const hasNote = step.note && step.note !== '---';
+
+          return (
+            <div
+              key={idx}
+              className={`flex flex-col items-center justify-center p-2 rounded border text-[10px] transition-all ${
+                isActive
+                  ? 'bg-cyan-950 border-cyan-400 text-cyan-300 shadow-sm shadow-cyan-500/20'
+                  : hasNote
+                  ? 'bg-zinc-800 border-zinc-700 text-zinc-200'
+                  : 'bg-zinc-950/80 border-zinc-800/80 text-zinc-600'
+              }`}
+            >
+              <span className="text-[8px] text-zinc-500 mb-0.5">
+                {String(idx + 1).padStart(2, '0')}
+              </span>
+              <span className="font-bold tracking-wider">{step.note || '---'}</span>
+              <span className="text-[8px] text-zinc-400 mt-0.5">{step.sampleId || '--'}</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 };
+
+export default TrackerGrid;
