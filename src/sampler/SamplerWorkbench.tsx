@@ -10,7 +10,7 @@ interface SamplerWorkbenchProps {
   selectedPadId?: string;
   selectedPad?: any;
   onUpdatePad?: (updatedPad: any) => void;
-  onTriggerPad?: (padId: number | string) => Promise<void>;
+  onTriggerPad?: (padId: number) => Promise<void>;
 }
 
 export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
@@ -28,7 +28,8 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
   const handlePreviewSlice = async () => {
     console.log(`[SamplerWorkbench] Previewing slice for Pad ${activePadLabel} [${startPoint}% - ${endPoint}%]`);
     if (onTriggerPad) {
-      await onTriggerPad(activePadLabel);
+      const numericId = typeof activePadLabel === 'number' ? activePadLabel : parseInt(String(activePadLabel).replace(/\D/g, ''), 10) || 1;
+      await onTriggerPad(numericId);
     } else {
       audioEngine.triggerVoice(String(activePadLabel));
     }
