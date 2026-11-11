@@ -90,6 +90,7 @@ export function migrateLegacyProject(input: LegacyProjectInput): SPProject {
       steps: legacyPattern.steps.map((step, index) => ({
         id: `pattern-${legacyPattern.id}-step-${index}`,
         stepIndex: index,
+        subTickOffset: 0, // Added micro-tick default for migrated legacy steps
         note: step.note ?? '---',
         velocity: Math.max(0, Math.min(127, finiteOr(step.volume, 0))),
         instrumentAssignmentId:
