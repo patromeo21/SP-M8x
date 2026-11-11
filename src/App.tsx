@@ -1,11 +1,12 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * App.tsx — Master Shell Container & View Controller
+ * App.tsx — Master Shell Container & View Controller (Updated with FX Strip)
  */
 
 import React, { useState } from 'react';
 import { Pad, SamplerMode, BankId } from './types';
 import { SamplerWorkspace } from './sampler/SamplerWorkspace';
+import { FxStrip } from './fx/FxStrip';
 
 // Initialize 16 pads for Bank A
 const createInitialPads = (): Pad[] => {
@@ -133,13 +134,13 @@ export const App: React.FC = () => {
           />
         )}
         {activeTab === 'fx' && (
-          <div className="flex items-center justify-center h-full text-zinc-500 text-sm">
-            FX Matrix Workspace (Coming Soon in Phase 3)
+          <div className="h-full p-4">
+            <FxStrip />
           </div>
         )}
         {activeTab === 'tracker' && (
           <div className="flex items-center justify-center h-full text-zinc-500 text-sm">
-            M8 Tracker Workspace (Coming Soon in Phase 4)
+            M8 Tracker Workspace (Coming Up Next)
           </div>
         )}
       </main>
