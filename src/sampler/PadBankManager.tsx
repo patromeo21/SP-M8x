@@ -1,7 +1,6 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * PadBankManager.tsx — Professional Pad Bank Manager (Banks A-D)
- * Fully integrated with SPProject schema and projectController actions.
+ * PadBankManager.tsx — 4x4 Pad Bank Manager (Banks A-D)
  */
 
 import React, { useState, useEffect } from 'react';
@@ -25,17 +24,18 @@ export const PadBankManager: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  // Helper to map pad string (e.g., "A1" -> bank 'A', slot 0)
+  // Safely extract sampler assignments from project state without strict interface collisions
+  const stateRecord = projectState as unknown as Record<string, any>;
+  const assignments: PadAssignment[] = stateRecord.sampler?.assignments || [];
+
   const parsePadId = (padId: string): { bank: BankId; slot: number } => {
     const bank = padId[0] as BankId;
     const slot = parseInt(padId.slice(1), 10) - 1;
     return { bank, slot };
   };
 
-  // Find assignment from SPProject sampler.assignments array
-  const assignments = projectState.sampler.assignments || [];
   const getAssignment = (bank: BankId, slot: number): PadAssignment | undefined => {
-    return assignments.find((a) => a.bank === bank && a.slot === slot);
+    return assignments.find((a: PadAssignment) => a.bank === bank && a.slot === slot);
   };
 
   const { bank: selBank, slot: selSlot } = parsePadId(selectedPadId);
@@ -46,12 +46,7 @@ export const PadBankManager: React.FC = () => {
       ...prev,
       [padId]: buffer,
     }));
-
-    const { bank, slot } = parsePadId(padId);
-    
-    // Update or dispatch through projectController actions if available, 
-    // or update via direct project state mutation/action dispatcher
-    console.log(`[PadBankManager] Loaded "${fileName}" into Pad ${padId} (Bank ${bank}, Slot ${slot})`);
+    console.log(`[PadBankManager] Loaded "${fileName}" into Pad ${padId}`);
   };
 
   const handleTriggerPad = (padId: string) => {

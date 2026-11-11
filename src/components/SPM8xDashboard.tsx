@@ -8,8 +8,7 @@ import { audioEngine } from '../audio/audioEngine';
 import { trackerEngine } from '../tracker/trackerEngine';
 import { projectController, ProjectState } from '../project/projectController';
 import { PadBankManager } from '../sampler/PadBankManager';
-// Assuming TrackerGrid is imported from your tracker module:
-// import { TrackerGrid } from '../tracker/TrackerGrid';
+import { TrackerGrid } from '../tracker/TrackerGrid';
 
 export const SPM8xDashboard: React.FC = () => {
   const [projectState, setProjectState] = useState<ProjectState>(() => projectController.getState());
@@ -82,7 +81,7 @@ export const SPM8xDashboard: React.FC = () => {
           <PadBankManager />
         </div>
 
-        {/* Right Column: Transport, Sequencer & Master FX */}
+        {/* Right Column: Transport & Tracker Matrix */}
         <div className="flex flex-col gap-4">
           {/* Transport Controls */}
           <div className="flex flex-col gap-3 p-4 bg-zinc-900/50 border border-zinc-800 rounded-xl">
@@ -110,16 +109,7 @@ export const SPM8xDashboard: React.FC = () => {
           </div>
 
           {/* Tracker Grid Component Integration with String-Cast Pattern ID */}
-          <div className="flex flex-col gap-3 p-4 bg-zinc-900/50 border border-zinc-800 rounded-xl flex-1">
-            <h2 className="text-xs font-bold text-zinc-400">TRACKER STEP MATRIX</h2>
-            {/* 
-              Pass activePatternIndex as a string to satisfy TrackerGridProps.patternId:
-              <TrackerGrid patternId={String(activePatternIndex)} /> 
-            */}
-            <div className="text-[10px] text-zinc-500">
-              Active Pattern ID: <span className="text-cyan-400 font-bold">{String(activePatternIndex)}</span>
-            </div>
-          </div>
+          <TrackerGrid patternId={String(activePatternIndex)} activeStep={activeStep} />
         </div>
       </div>
     </div>
