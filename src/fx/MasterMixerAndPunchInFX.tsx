@@ -1,6 +1,7 @@
 /**
  * SP-M8x Hybrid Music Production Suite
  * MasterMixerAndPunchInFX.tsx — Master Volume, Dynamics, & SP-404 Style Punch-In FX Panel
+ * Located in src/fx/
  */
 
 import React, { useState } from 'react';
@@ -31,7 +32,6 @@ export const MasterMixerAndPunchInFX: React.FC<MasterMixerProps> = ({
   onMasterVolumeChange,
   onFxToggle,
 }) => {
-  const projectState = projectController.getState();
   const [masterVolume, setMasterVolume] = useState<number>(0.85);
   const [limiterEnabled, setLimiterEnabled] = useState<boolean>(true);
   const [activeFx, setActiveFx] = useState<Record<string, boolean>>({});
