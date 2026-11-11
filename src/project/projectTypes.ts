@@ -5,121 +5,178 @@
 
 export type BankId = 'A' | 'B' | 'C' | 'D';
 
-export interface ProjectMeta {
+export const PROJECT_SCHEMA_VERSION = 1;
+
+export interface ProjectMetadata {
+  id: string;
   name: string;
-  version: string;
-  createdAt: number;
-  updatedAt: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ProjectSettings {
   bpm: number;
   masterVolume: number; // 0.0 to 1.0
-  swing: number;        // 0 to 100
-  timeSignatureNum: number;
-  timeSignatureDen: number;
+  samplerMode: 'SAMPLE_TRIGGER' | string;
+  theme: string;
+  swing?: number;
+  timeSignatureNum?: number;
+  timeSignatureDen?: number;
 }
 
 export interface SampleAsset {
   id: string;
   name: string;
-  duration: number;
+  originalFilename: string | null;
+  mimeType: string | null;
+  durationSeconds: number;
   sampleRate: number;
-  channels: number;
-  // Binary buffer reference stored in runtime audio cache, NOT serialized to JSON
+  channelCount: number;
+  storageKey: string | null;
 }
 
 export interface SliceDefinition {
   id: string;
-  startSample: number;
-  endSample: number;
-  cuePoint: number;
+  sampleAssetId: string;
+  startSeconds: number;
+  endSeconds: number;
 }
 
 export interface PadAssignment {
   id: string;
   bank: BankId;
-  padIndex: number; // 0 to 15
+  slot: number; // 0 to 15
+  name: string;
   sampleAssetId: string | null;
   sliceId: string | null;
-  pitchOffset: number; // Semitones
+  sliceStartSeconds: number;
+  sliceEndSeconds: number | null;
   volume: number;      // 0.0 to 1.0
   pan: number;         // -1.0 to 1.0
-  loopMode: 'none' | 'forward' | 'toggle';
+  reverse: boolean;
+  loop: boolean;
+  chromaticRootNote: number;
+  pitchOffset: number; // Semitones
 }
 
-export interface SamplerModel {
-  sampleAssets: Record<string, SampleAsset>;
-  padBanks: Record<BankId, PadAssignment[]>;
-}
-
-export interface TrackerStep {
-  row: number;
+export interface TrackerStepItem {
+  id: string;
+  stepIndex: number;
   note: string;       // e.g., "C-4", "---"
   velocity: number;   // 0 to 127
-  instrument: number; // Hex or index
-  command: string;    // e.g., "PIT", "VOL", "---"
-  value: number;      // Command parameter value
-  // Table columns (Unified Tracker Model)
-  tableVolume?: number;
-  tablePitch?: number;
-  tableCommand?: string;
-  tableValue?: number;
+  instrumentAssignmentId: string | null;
+  phraseFx: string;   // Command string
+  phraseFxValue: number;
+  tableVolume: number | null;
+  tablePitch: number | null;
+  tableFx: string;
+  tableFxValue: number;
 }
 
-export interface TrackerPattern {
+export interface ProjectPattern {
   id: string;
   name: string;
-  length: number; // e.g., 16, 32, 64
-  steps: TrackerStep[];
+  length: number;     // e.g., 16, 32, 64
+  steps: TrackerStepItem[];
 }
 
-export interface TrackerModel {
-  activePatternIndex: number;
-  patterns: TrackerPattern[];
+export interface SongCell {
+  patternId: string | null;
 }
 
 export interface SongTrack {
   id: string;
   name: string;
-  rows: string[]; // Array of Pattern IDs or hex references per song row (32 rows)
+  rows: SongCell[]; // 32 rows per track
 }
 
-export interface SongArrangement {
-  tracks: SongTrack[];
-  activeRow: number;
+export interface SongArrangementState {
+  rowCount: number;
+  tracks: SongTrack[]; // 8 tracks
 }
 
-export interface MasterTransport {
-  isPlaying: boolean;
-  isRecording: boolean;
-  currentSongRow: number;
-  currentPatternStep: number;
-  activeTrackIndex: number;
-  playbackMode: 'pattern' | 'song';
+export interface PunchInEffectsState {
+  filterCutoff: number;
+  filterResonance: number;
+  delayTime: number;
+  delayFeedback: number;
+  reverbMix: number;
+  bitcrushBits: number;
+  vinylNoise: number;
+  isolatorLow: number;
+  isolatorMid: number;
+  isolatorHigh: number;
 }
 
-export interface EffectsModel {
-  punchInFxEnabled: boolean;
-  masterFilterCutoff: number;
-  masterDelayFeedback: number;
-  masterReverbMix: number;
+export interface MasterEffectsState {
+  limiterThreshold: number;
+  compressorRatio: number;
+  masterVolume: number;
+}
+
+export interface EffectsProjectState {
+  punchIn: PunchInEffectsState;
+  master: MasterEffectsState;
 }
 
 export interface SPProject {
-  meta: ProjectMeta;
+  schemaVersion: number;
+  metadata: ProjectMetadata;
   settings: ProjectSettings;
-  sampler: SamplerModel;
-  tracker: TrackerModel;
-  song: SongArrangement;
-  effects: EffectsModel;
-  transport: MasterTransport;
+  sampler: {
+    assets: SampleAsset[];
+    slices: SliceDefinition[];
+    assignments: PadAssignment[];
+  };
+  tracker: {
+    patterns: ProjectPattern[];
+  };
+  song: SongArrangementState;
+  effects: EffectsProjectState;
 }
 
-// --- Backward Compatibility & Controller Aliases ---
-export type Project = SPProject;
-export type SamplerState = SamplerModel;
-export type TrackerState = TrackerModel;
-export type SongState = SongArrangement;
-export type TransportState = MasterTransport;
-export type Pad = PadAssignment;
+// --- Legacy Migration Input Types ---
+export interface LegacyPadInput {
+  id: number;
+  name?: string;
+  buffer?: {
+    duration: number;
+    sampleRate: number;
+    numberOfChannels: number;
+  };
+  sliceStart?: number;
+  sliceEnd?: number;
+  volume?: number;
+  pan?: number;
+  reverse?: boolean;
+  loop?: boolean;
+  chromaticRootNote?: number;
+  pitchOffset?: number;
+}
+
+export interface LegacyStepInput {
+  note?: string;
+  volume?: number;
+  instrument: number;
+  command?: string;
+  value?: number;
+}
+
+export interface LegacyPatternInput {
+  id: number;
+  length?: number;
+  steps: LegacyStepInput[];
+}
+
+export interface LegacyProjectInput {
+  now?: string;
+  projectId?: string;
+  projectName?: string;
+  bpm?: number;
+  samplerMode?: string;
+  theme?: string;
+  pads: LegacyPadInput[];
+  pattern?: LegacyPatternInput;
+  punchInFX?: Partial<PunchInEffectsState>;
+  masterFX?: Partial<MasterEffectsState>;
+}
