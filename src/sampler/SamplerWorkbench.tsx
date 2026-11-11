@@ -8,17 +8,30 @@ import { audioEngine } from '../audio/audioEngine';
 
 interface SamplerWorkbenchProps {
   selectedPadId?: string;
+  selectedPad?: any;
+  onUpdatePad?: (updatedPad: any) => void;
+  onTriggerPad?: (padId: number | string) => Promise<void>;
 }
 
-export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({ selectedPadId = 'A1' }) => {
+export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
+  selectedPadId = 'A1',
+  selectedPad,
+  onUpdatePad,
+  onTriggerPad,
+}) => {
   const [startPoint, setStartPoint] = useState<number>(0);
   const [endPoint, setEndPoint] = useState<number>(100);
   const [isLooping, setIsLooping] = useState<boolean>(false);
 
-  const handlePreviewSlice = () => {
-    console.log(`[SamplerWorkbench] Previewing slice for Pad ${selectedPadId} [${startPoint}% - ${endPoint}%]`);
-    // Use triggerVoice or a valid audio engine method to test playback
-    audioEngine.triggerVoice(selectedPadId);
+  const activePadLabel = selectedPad?.id || selectedPadId;
+
+  const handlePreviewSlice = async () => {
+    console.log(`[SamplerWorkbench] Previewing slice for Pad ${activePadLabel} [${startPoint}% - ${endPoint}%]`);
+    if (onTriggerPad) {
+      await onTriggerPad(activePadLabel);
+    } else {
+      audioEngine.triggerVoice(String(activePadLabel));
+    }
   };
 
   return (
@@ -26,7 +39,10 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({ selectedPadI
       <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
         <div>
           <h2 className="text-xs font-bold text-cyan-400">SAMPLE WORKBENCH & CHOPPER</h2>
-          <p className="text-[10px] text-zinc-500">Active Target: <span className="text-cyan-400 font-bold">{selectedPadId}</span></p>
+          <p className="text-[10px] text-zinc-500">
+            Active Target: <span className="text-cyan-400 font-bold">{activePadLabel}</span>
+            {selectedPad?.name && <span className="ml-2 text-zinc-400">({selectedPad.name})</span>}
+          </p>
         </div>
 
         <button
