@@ -1,6 +1,6 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * projectController.ts — Single Source of Truth for Global State (Sampler, Tracker, Settings)
+ * projectController.ts — Single Source of Truth for Global State & Hybrid Persistence
  */
 
 export type BankId = 'A' | 'B' | 'C' | 'D';
@@ -10,7 +10,6 @@ export interface PadProjectData {
   bank: BankId;
   name: string;
   isPolyphonic: boolean;
-  // AudioBuffer reference isn't serialized into project state JSON, but metadata is stored here
   fileName: string | null;
 }
 
@@ -44,12 +43,17 @@ export interface ProjectState {
 
 export type ProjectStateListener = (state: ProjectState) => void;
 
+const STORAGE_KEY = 'SP_M8X_PROJECT_STATE_V1';
+
 class ProjectController {
   private state: ProjectState;
   private listeners: Set<ProjectStateListener> = new Set();
 
   constructor() {
-    // Initialize default project state including 64 pads across Banks A-D
+    this.state = this.loadFromLocalStorage() || this.getDefaultState();
+  }
+
+  private getDefaultState(): ProjectState {
     const initialPads: Record<string, PadProjectData> = {};
     const banks: BankId[] = ['A', 'B', 'C', 'D'];
     
@@ -66,7 +70,7 @@ class ProjectController {
       }
     });
 
-    this.state = {
+    return {
       settings: {
         bpm: 120,
         masterVolume: 0.8,
@@ -90,6 +94,29 @@ class ProjectController {
     };
   }
 
+  private loadFromLocalStorage(): ProjectState | null {
+    try {
+      if (typeof window === 'undefined') return null;
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        console.log('[ProjectController] Loaded project state from localStorage.');
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.error('[ProjectController] Failed to load from localStorage:', e);
+    }
+    return null;
+  }
+
+  private saveToLocalStorage(): void {
+    try {
+      if (typeof window === 'undefined') return;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
+    } catch (e) {
+      console.error('[ProjectController] Failed to save to localStorage:', e);
+    }
+  }
+
   public getState(): ProjectState {
     return this.state;
   }
@@ -100,6 +127,7 @@ class ProjectController {
   }
 
   private notify(): void {
+    this.saveToLocalStorage(); // Auto-save on every state change
     this.listeners.forEach((listener) => listener(this.state));
   }
 
@@ -133,6 +161,32 @@ class ProjectController {
       ...stepData,
     };
     this.notify();
+  }
+
+  /**
+   * Export project state as a downloadable JSON file (.spm8x)
+   */
+  public exportProjectJson(): void {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(this.state, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", `sp-m8x-project-${Date.now()}.spm8x`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  }
+
+  /**
+   * Import project state from a JSON string or parsed object
+   */
+  public importProjectJson(jsonData: ProjectState): void {
+    if (!jsonData || !jsonData.settings || !jsonData.sampler || !jsonData.tracker) {
+      console.error('[ProjectController] Invalid project file format.');
+      return;
+    }
+    this.state = jsonData;
+    this.notify();
+    console.log('[ProjectController] Project successfully imported and state updated.');
   }
 }
 
