@@ -1,153 +1,125 @@
 /**
- * SP-M8x Project Domain Model — A1.1
- *
- * Serializable project types. Runtime-only Web Audio objects (AudioBuffer,
- * AudioContext, AudioNode) must never be stored in this document.
+ * SP-M8x Hybrid Music Production Suite
+ * projectTypes.ts — Master Project Schema & Type Definitions
  */
 
-import type {
-  BankId,
-  MasterFXState,
-  PunchInFXState,
-  SamplerMode,
-  ThemeMode,
-  TrackerPattern,
-} from '../types';
+export type BankId = 'A' | 'B' | 'C' | 'D';
 
-export const PROJECT_SCHEMA_VERSION = 1 as const;
-
-export type SampleAssetId = string;
-export type PadAssignmentId = string;
-export type PatternId = string;
-
-export interface ProjectMetadata {
-  id: string;
+export interface ProjectMeta {
   name: string;
-  createdAt: string;
-  updatedAt: string;
+  version: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface ProjectSettings {
   bpm: number;
-  masterVolume: number;
-  samplerMode: SamplerMode;
-  theme: ThemeMode;
+  masterVolume: number; // 0.0 to 1.0
+  swing: number;        // 0 to 100
+  timeSignatureNum: number;
+  timeSignatureDen: number;
 }
 
 export interface SampleAsset {
-  id: SampleAssetId;
-  name: string;
-  /** Original filename when imported, if known. */
-  originalFilename: string | null;
-  /** MIME type reported by the browser, if known. */
-  mimeType: string | null;
-  /** Duration in seconds once decoded. */
-  durationSeconds: number | null;
-  /** Sample rate in Hz once decoded. */
-  sampleRate: number | null;
-  /** Number of channels once decoded. */
-  channelCount: number | null;
-  /** Future IndexedDB key; binary data is deliberately not embedded here. */
-  storageKey: string | null;
-}
-
-export interface SampleSlice {
   id: string;
   name: string;
-  startSeconds: number;
-  endSeconds: number | null;
+  duration: number;
+  sampleRate: number;
+  channels: number;
+  // Binary buffer reference stored in runtime audio cache, NOT serialized to JSON
+}
+
+export interface SliceDefinition {
+  id: string;
+  startSample: number;
+  endSample: number;
+  cuePoint: number;
 }
 
 export interface PadAssignment {
-  /** Stable identity independent of bank position or pad number. */
-  id: PadAssignmentId;
-  bank: BankId;
-  slot: number;
-  name: string;
-  sampleAssetId: SampleAssetId | null;
-  sliceId: string | null;
-  sliceStartSeconds: number;
-  sliceEndSeconds: number | null;
-  volume: number;
-  pan: number;
-  reverse: boolean;
-  loop: boolean;
-  chromaticRootNote: number;
-  pitchOffset: number;
-}
-
-export interface SamplerProjectState {
-  assets: SampleAsset[];
-  slices: SampleSlice[];
-  assignments: PadAssignment[];
-}
-
-export interface PhraseStep {
-  /** Stable row identity within its pattern; stepIndex is the playback position. */
   id: string;
-  stepIndex: number;
-  note: string;
-  velocity: number;
-  instrumentAssignmentId: PadAssignmentId | null;
-  phraseFx: string;
-  phraseFxValue: number;
-  tableVolume: number | null;
-  tablePitch: number | null;
-  tableFx: string;
-  tableFxValue: number;
+  bank: BankId;
+  padIndex: number; // 0 to 15
+  sampleAssetId: string | null;
+  sliceId: string | null;
+  pitchOffset: number; // Semitones
+  volume: number;      // 0.0 to 1.0
+  pan: number;         // -1.0 to 1.0
+  loopMode: 'none' | 'forward' | 'toggle';
 }
 
-export interface ProjectPattern {
-  id: PatternId;
+export interface SamplerModel {
+  sampleAssets: Record<string, SampleAsset>;
+  padBanks: Record<BankId, PadAssignment[]>;
+}
+
+export interface TrackerStep {
+  row: number;
+  note: string;       // e.g., "C-4", "---"
+  velocity: number;   // 0 to 127
+  instrument: number; // Hex or index
+  command: string;    // e.g., "PIT", "VOL", "---"
+  value: number;      // Command parameter value
+  // Table columns (Unified Tracker Model)
+  tableVolume?: number;
+  tablePitch?: number;
+  tableCommand?: string;
+  tableValue?: number;
+}
+
+export interface TrackerPattern {
+  id: string;
   name: string;
-  length: number;
-  steps: PhraseStep[];
+  length: number; // e.g., 16, 32, 64
+  steps: TrackerStep[];
 }
 
-export interface TrackerProjectState {
-  patterns: ProjectPattern[];
-}
-
-export interface SongCell {
-  patternId: PatternId | null;
+export interface TrackerModel {
+  activePatternIndex: number;
+  patterns: TrackerPattern[];
 }
 
 export interface SongTrack {
   id: string;
   name: string;
-  rows: SongCell[];
+  rows: string[]; // Array of Pattern IDs or hex references per song row (32 rows)
 }
 
-export interface SongProjectState {
-  rowCount: 32;
+export interface SongArrangement {
   tracks: SongTrack[];
+  activeRow: number;
 }
 
-export interface EffectsProjectState {
-  punchIn: PunchInFXState;
-  master: MasterFXState;
+export interface MasterTransport {
+  isPlaying: boolean;
+  isRecording: boolean;
+  currentSongRow: number;
+  currentPatternStep: number;
+  activeTrackIndex: number;
+  playbackMode: 'pattern' | 'song';
+}
+
+export interface EffectsModel {
+  punchInFxEnabled: boolean;
+  masterFilterCutoff: number;
+  masterDelayFeedback: number;
+  masterReverbMix: number;
 }
 
 export interface SPProject {
-  schemaVersion: typeof PROJECT_SCHEMA_VERSION;
-  metadata: ProjectMetadata;
+  meta: ProjectMeta;
   settings: ProjectSettings;
-  sampler: SamplerProjectState;
-  tracker: TrackerProjectState;
-  song: SongProjectState;
-  effects: EffectsProjectState;
+  sampler: SamplerModel;
+  tracker: TrackerModel;
+  song: SongArrangement;
+  effects: EffectsModel;
+  transport: MasterTransport;
 }
 
-/** Legacy shape accepted only at the migration boundary. */
-export interface LegacyProjectInput {
-  pads: import('../types').Pad[];
-  pattern?: TrackerPattern | null;
-  bpm?: number;
-  samplerMode?: SamplerMode;
-  theme?: ThemeMode;
-  punchInFX?: PunchInFXState;
-  masterFX?: MasterFXState;
-  projectName?: string;
-  projectId?: string;
-  now?: string;
-}
+// --- Backward Compatibility & Controller Aliases ---
+export type Project = SPProject;
+export type SamplerState = SamplerModel;
+export type TrackerState = TrackerModel;
+export type SongState = SongArrangement;
+export type TransportState = MasterTransport;
+export type Pad = PadAssignment;
