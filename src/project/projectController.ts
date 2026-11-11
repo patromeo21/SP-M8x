@@ -1,24 +1,24 @@
 /**
- * SP-M8x Hybrid Music Production Suite
- * projectController.ts — Centralized Pub/Sub Project Controller
+ * SP-M8x Project Architecture
+ * A1.2 — Centralized Pub/Sub Project Controller
  */
 
-import { Project } from './projectTypes';
-import { ProjectAction } from './projectActions';
+import type { SPProject } from './projectTypes';
+import type { ProjectAction } from './projectActions';
 import { projectReducer } from './projectReducer';
-import { initialProject } from './initialProject';
+import { createInitialProject } from './initialProject';
 
-type Listener = (state: Project) => void;
+type Listener = (state: SPProject) => void;
 
 class ProjectController {
-  private state: Project;
+  private state: SPProject;
   private listeners: Set<Listener> = new Set();
 
-  constructor(initialState: Project = initialProject) {
+  constructor(initialState: SPProject = createInitialProject()) {
     this.state = initialState;
   }
 
-  public getState = (): Project => {
+  public getState = (): SPProject => {
     return this.state;
   };
 
@@ -29,7 +29,6 @@ class ProjectController {
 
   public subscribe = (listener: Listener): (() => void) => {
     this.listeners.add(listener);
-    // Return unsubscribe callback
     return () => {
       this.listeners.delete(listener);
     };

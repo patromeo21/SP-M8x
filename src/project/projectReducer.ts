@@ -1,104 +1,129 @@
 /**
- * SP-M8x Hybrid Music Production Suite
- * projectReducer.ts — Immutable State Reducer with Strict Boundary Validation
+ * SP-M8x Project Architecture
+ * A1.2 — Immutable Project Reducer
  */
 
-import { Project } from './projectTypes';
-import { ProjectAction } from './projectActions';
-import { initialProject } from './initialProject';
+import type { SPProject } from './projectTypes';
+import type { ProjectAction } from './projectActions';
+import { createInitialProject } from './initialProject';
 
-export const projectReducer = (state: Project = initialProject, action: ProjectAction): Project => {
+export const projectReducer = (
+  state: SPProject = createInitialProject(),
+  action: ProjectAction,
+): SPProject => {
+  const now = new Date().toISOString();
+
   switch (action.type) {
-    case 'SET_PROJECT':
-      return { ...action.payload };
+    case 'PROJECT_REPLACE':
+      return { ...action.project };
 
-    case 'UPDATE_SETTINGS': {
-      const bpm = action.payload.bpm !== undefined 
-        ? Math.max(40, Math.min(999, action.payload.bpm)) 
+    case 'PROJECT_RENAME':
+      return {
+        ...state,
+        metadata: {
+          ...state.metadata,
+          name: action.name,
+          updatedAt: now,
+        },
+      };
+
+    case 'SETTINGS_UPDATE': {
+      const bpm = action.changes.bpm !== undefined
+        ? Math.max(40, Math.min(300, action.changes.bpm))
         : state.settings.bpm;
-      const masterVolume = action.payload.masterVolume !== undefined 
-        ? Math.max(0, Math.min(1, action.payload.masterVolume)) 
+      const masterVolume = action.changes.masterVolume !== undefined
+        ? Math.max(0, Math.min(1, action.changes.masterVolume))
         : state.settings.masterVolume;
 
       return {
         ...state,
         settings: {
           ...state.settings,
-          ...action.payload,
+          ...action.changes,
           bpm,
           masterVolume,
         },
+        metadata: { ...state.metadata, updatedAt: now },
       };
     }
 
-    case 'UPDATE_PAD': {
-      const { bank, index, pad } = action.payload;
-      if (!state.sampler.padBanks[bank]) return state;
-
-      const updatedBankPads = [...state.sampler.padBanks[bank]];
-      if (updatedBankPads[index]) {
-        updatedBankPads[index] = { ...updatedBankPads[index], ...pad };
-      }
-
+    case 'SAMPLE_ASSET_UPSERT': {
+      const asset = action.asset;
+      const existingAssets = state.sampler.assets.filter((a) => a.id !== asset.id);
       return {
         ...state,
         sampler: {
           ...state.sampler,
-          padBanks: {
-            ...state.sampler.padBanks,
-            [bank]: updatedBankPads,
-          },
+          assets: [...existingAssets, asset],
         },
+        metadata: { ...state.metadata, updatedAt: now },
       };
     }
 
-    case 'UPDATE_TRACKER_STEP': {
-      const { patternIndex, stepIndex, step } = action.payload;
-      const patterns = [...state.tracker.patterns];
-      if (!patterns[patternIndex]) return state;
+    case 'PAD_ASSIGNMENT_UPSERT': {
+      const assignment = action.assignment;
+      const assignments = state.sampler.assignments.map((item) =>
+        item.bank === assignment.bank && item.slot === assignment.slot ? assignment : item,
+      );
+      return {
+        ...state,
+        sampler: {
+          ...state.sampler,
+          assignments,
+        },
+        metadata: { ...state.metadata, updatedAt: now },
+      };
+    }
 
-      const steps = [...patterns[patternIndex].steps];
-      if (steps[stepIndex]) {
-        steps[stepIndex] = { ...steps[stepIndex], ...step };
+    case 'PATTERN_UPSERT': {
+      const pattern = action.pattern;
+      const patterns = state.tracker.patterns.map((p) => (p.id === pattern.id ? pattern : p));
+      if (!patterns.some((p) => p.id === pattern.id)) {
+        patterns.push(pattern);
       }
-      patterns[patternIndex] = { ...patterns[patternIndex], steps };
-
       return {
         ...state,
         tracker: {
           ...state.tracker,
           patterns,
         },
+        metadata: { ...state.metadata, updatedAt: now },
       };
     }
 
-    case 'UPDATE_SONG_TRACK': {
-      const { trackIndex, steps } = action.payload;
-      const tracks = [...state.song.tracks];
-      if (!tracks[trackIndex]) return state;
-
-      tracks[trackIndex] = { ...tracks[trackIndex], steps };
-
+    case 'SONG_CELL_SET': {
+      const { trackId, rowIndex, patternId } = action.id ? action : (action as any);
+      const tracks = state.song.tracks.map((track) => {
+        if (track.id !== action.trackId) return track;
+        const rows = [...track.rows];
+        if (rows[action.rowIndex]) {
+          rows[action.rowIndex] = { patternId: action.patternId };
+        }
+        return { ...track, rows };
+      });
       return {
         ...state,
         song: {
           ...state.song,
           tracks,
         },
+        metadata: { ...state.metadata, updatedAt: now },
       };
     }
 
-    case 'UPDATE_TRANSPORT':
+    case 'EFFECTS_REPLACE':
       return {
         ...state,
-        transport: {
-          ...state.transport,
-          ...action.payload,
+        effects: { ...action.effects },
+        settings: {
+          ...state.settings,
+          masterVolume: action.effects.master.masterVolume,
         },
+        metadata: { ...state.metadata, updatedAt: now },
       };
 
     case 'RESET_PROJECT':
-      return { ...initialProject };
+      return createInitialProject(now);
 
     default:
       return state;
