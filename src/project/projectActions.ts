@@ -3,18 +3,18 @@
  * projectActions.ts — Action Types & Creators for Centralized Project State
  */
 
-import { Project, ProjectSettings, Pad, TrackerStep, SongTrack, TransportState, BankId } from './projectTypes';
+import { SPProject, ProjectSettings, PadAssignment, TrackerStep, MasterTransport, BankId } from './projectTypes';
 
 export type ProjectAction =
-  | { type: 'SET_PROJECT'; payload: Project }
+  | { type: 'SET_PROJECT'; payload: SPProject }
   | { type: 'UPDATE_SETTINGS'; payload: Partial<ProjectSettings> }
-  | { type: 'UPDATE_PAD'; payload: { bank: BankId; index: number; pad: Partial<Pad> } }
+  | { type: 'UPDATE_PAD'; payload: { bank: BankId; index: number; pad: Partial<PadAssignment> } }
   | { type: 'UPDATE_TRACKER_STEP'; payload: { patternIndex: number; stepIndex: number; step: Partial<TrackerStep> } }
   | { type: 'UPDATE_SONG_TRACK'; payload: { trackIndex: number; steps: string[] } }
-  | { type: 'UPDATE_TRANSPORT'; payload: Partial<TransportState> }
+  | { type: 'UPDATE_TRANSPORT'; payload: Partial<MasterTransport> }
   | { type: 'RESET_PROJECT' };
 
-export const setProject = (project: Project): ProjectAction => ({
+export const setProject = (project: SPProject): ProjectAction => ({
   type: 'SET_PROJECT',
   payload: project,
 });
@@ -24,7 +24,7 @@ export const updateSettings = (settings: Partial<ProjectSettings>): ProjectActio
   payload: settings,
 });
 
-export const updatePad = (bank: BankId, index: number, pad: Partial<Pad>): ProjectAction => ({
+export const updatePad = (bank: BankId, index: number, pad: Partial<PadAssignment>): ProjectAction => ({
   type: 'UPDATE_PAD',
   payload: { bank, index, pad },
 });
@@ -39,7 +39,7 @@ export const updateSongTrack = (trackIndex: number, steps: string[]): ProjectAct
   payload: { trackIndex, steps },
 });
 
-export const updateTransport = (transport: Partial<TransportState>): ProjectAction => ({
+export const updateTransport = (transport: Partial<MasterTransport>): ProjectAction => ({
   type: 'UPDATE_TRANSPORT',
   payload: transport,
 });
