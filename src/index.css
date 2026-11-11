@@ -1,3 +1,30 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* SP-M8x Touch & Mobile Hardware Optimization */
+html, body {
+  overscroll-behavior-y: none;
+  touch-action: pan-x pan-y;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  background-color: #09090b; /* zinc-950 */
+  color: #f4f4f5; /* zinc-100 */
+}
+
+/* Instant response for interactive pads, buttons, canvas, and tracker cells */
+button, 
+canvas, 
+input,
+select,
+.touch-target {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Prevent text selection highlight during rapid multi-touch pad drumming or tracking */
+* {
+  -webkit-user-select: none;
+  user-select: none;
+}

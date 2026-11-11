@@ -1,82 +1,146 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * audioEngine.ts — Web Audio API Core Engine & Buffer Cache Integration
+ * audioEngine.ts — Web Audio DSP Engine with Polyphonic Voice Stealing & Gain Staging
+ * Located in src/audio/audioEngine.ts
  */
 
-import { projectController } from '../project/projectController';
-import { audioCache } from './audioCache';
-import type { BankId, PadAssignment } from '../project/projectTypes';
+export interface ActiveVoice {
+  id: string;
+  source: AudioBufferSourceNode;
+  gainNode: GainNode;
+  startTime: number;
+}
 
-class AudioEngine {
-  private audioContext: AudioContext | null = null;
-  private masterGainNode: GainNode | null = null;
+export class AudioEngine {
+  private ctx: AudioContext | null = null;
+  private masterGain: GainNode | null = null;
+  private compressor: DynamicsCompressorNode | null = null;
+  private analyser: AnalyserNode | null = null;
+  
+  private activeVoices: Map<string, ActiveVoice[]> = new Map();
+  private maxVoicesPerPad: number = 4; // Polyphony limit per pad before voice stealing
+  private isInitialized: boolean = false;
 
-  public getContext(): AudioContext {
-    if (!this.audioContext) {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      this.audioContext = new AudioCtx();
-      
-      this.masterGainNode = this.audioContext.createGain();
-      const state = projectController.getState();
-      this.masterGainNode.gain.setValueAtTime(state.settings.masterVolume, this.audioContext.currentTime);
-      this.masterGainNode.connect(this.audioContext.destination);
-    }
-    
-    if (this.audioContext.state === 'suspended') {
-      this.audioContext.resume();
-    }
-
-    return this.audioContext;
+  constructor() {
+    // Lazy initialization on first user interaction to satisfy mobile browser autoplay policies
   }
 
-  public updateMasterVolume(volume: number): void {
-    if (!this.masterGainNode || !this.audioContext) return;
-    this.masterGainNode.gain.setValueAtTime(Math.max(0, Math.min(1, volume)), this.audioContext.currentTime);
+  public async initialize(): Promise<AnalyserNode | null> {
+    if (this.isInitialized && this.ctx) {
+      if (this.ctx.state === 'suspended') {
+        await this.ctx.resume();
+      }
+      return this.analyser;
+    }
+
+    const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    this.ctx = new AudioContextClass();
+
+    // Master Gain Staging Protection (-6dB headroom to prevent inter-sample clipping)
+    this.masterGain = this.ctx.createGain();
+    this.masterGain.gain.setValueAtTime(0.5, this.ctx.currentTime);
+
+    // Dynamics Compressor / Limiter to clamp peaks and prevent digital distortion
+    this.compressor = this.ctx.createDynamicsCompressor();
+    this.compressor.threshold.setValueAtTime(-12, this.ctx.currentTime);
+    this.compressor.knee.setValueAtTime(6, this.ctx.currentTime);
+    this.compressor.ratio.setValueAtTime(12, this.ctx.currentTime);
+    this.compressor.attack.setValueAtTime(0.003, this.ctx.currentTime);
+    this.compressor.release.setValueAtTime(0.25, this.ctx.currentTime);
+
+    // Analyser Node for 120fps visualizer
+    this.analyser = this.ctx.createAnalyser();
+    this.analyser.fftSize = 2048;
+
+    // Connect Node Graph: MasterGain -> Compressor -> Analyser -> Destination
+    this.masterGain.connect(this.compressor);
+    this.compressor.connect(this.analyser);
+    this.analyser.connect(this.ctx.destination);
+
+    if (this.ctx.state === 'suspended') {
+      await this.ctx.resume();
+    }
+
+    this.isInitialized = true;
+    console.log('[SP-M8x AudioEngine] Initialized with gain staging protection & compressor limiter.');
+    return this.analyser;
+  }
+
+  public getAnalyser(): AnalyserNode | null {
+    return this.analyser;
   }
 
   /**
-   * Trigger a pad using stable sample asset identifiers and runtime audio cache.
+   * Trigger an audio buffer sample with voice stealing & gain staging isolation
    */
-  public triggerPad(bank: BankId, slot: number): void {
-    const ctx = this.getContext();
-    const state = projectController.getState();
+  public triggerVoice(padId: string, buffer: AudioBuffer, playbackRate: number = 1.0): void {
+    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
 
-    const pad = state.sampler.assignments.find((p: PadAssignment) => p.bank === bank && p.slot === slot);
-    if (!pad || !pad.sampleAssetId) {
-      console.warn(`[AudioEngine] No sample assigned to Pad ${bank}-${slot + 1}`);
-      return;
+    const now = this.ctx.currentTime;
+
+    // Create isolated Source and Gain nodes per trigger
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+    source.playbackRate.setValueAtTime(playbackRate, now);
+
+    const voiceGain = this.ctx.createGain();
+    voiceGain.gain.setValueAtTime(1.0, now);
+
+    // Connect voice: Source -> VoiceGain -> MasterGain
+    source.connect(voiceGain);
+    voiceGain.connect(this.masterGain);
+
+    // Retrieve existing voices for this pad slot
+    if (!this.activeVoices.has(padId)) {
+      this.activeVoices.set(padId, []);
     }
+    const voices = this.activeVoices.get(padId)!;
 
-    const buffer = audioCache.get(pad.sampleAssetId);
-    if (!buffer) {
-      console.warn(`[AudioEngine] AudioBuffer not found in cache for asset ID: ${pad.sampleAssetId}`);
-      return;
-    }
-
-    try {
-      const sourceNode = ctx.createBufferSource();
-      sourceNode.buffer = buffer;
-
-      const gainNode = ctx.createGain();
-      const targetVolume = Math.max(0, Math.min(1, pad.volume));
-      gainNode.gain.setValueAtTime(targetVolume, ctx.currentTime);
-
-      sourceNode.connect(gainNode);
-      if (this.masterGainNode) {
-        gainNode.connect(this.masterGainNode);
-      } else {
-        gainNode.connect(ctx.destination);
+    // Polyphony Voice Stealing: If max voices reached, stop and fade out the oldest voice
+    if (voices.length >= this.maxVoicesPerPad) {
+      const oldestVoice = voices.shift();
+      if (oldestVoice) {
+        try {
+          oldestVoice.gainNode.gain.linearRampToValueAtTime(0.001, now + 0.01);
+          oldestVoice.source.stop(now + 0.01);
+          oldestVoice.source.disconnect();
+          oldestVoice.gainNode.disconnect();
+        } catch {
+          // Ignore errors if node already stopped
+        }
       }
-
-      const startSec = Math.max(0, pad.sliceStartSeconds);
-      const duration = pad.sliceEndSeconds !== null && pad.sliceEndSeconds > startSec 
-        ? pad.sliceEndSeconds - startSec 
-        : buffer.duration - startSec;
-
-      sourceNode.start(ctx.currentTime, startSec, duration > 0 ? duration : undefined);
-    } catch (err) {
-      console.error('[AudioEngine] Error triggering pad audio:', err);
     }
+
+    const newVoice: ActiveVoice = {
+      id: `${padId}-${now}-${Math.random()}`,
+      source,
+      gainNode: voiceGain,
+      startTime: now,
+    };
+
+    voices.push(newVoice);
+
+    // Clean up voice reference when playback ends naturally
+    source.onended = () => {
+      source.disconnect();
+      voiceGain.disconnect();
+      const currentVoices = this.activeVoices.get(padId);
+      if (currentVoices) {
+        const index = currentVoices.findIndex((v) => v.id === newVoice.id);
+        if (index !== -1) {
+          currentVoices.splice(index, 1);
+        }
+      }
+    };
+
+    source.start(now);
+  }
+
+  public setMasterVolume(volume: number): void {
+    if (!this.ctx || !this.masterGain) return;
+    // Clamp volume between 0.0 and 1.0 with headroom safety
+    const safeVol = Math.max(0, Math.min(1, volume)) * 0.8;
+    this.masterGain.gain.setTargetAtTime(safeVol, this.ctx.currentTime, 0.05);
   }
 }
 

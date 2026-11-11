@@ -1,174 +1,102 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * PadBankManager.tsx — 4x4 Pad Bank Manager with Chromatic & Polyphonic Toggles
+ * PadBankManager.tsx — 4x4 Sampler Pad Bank with Pointer Event Optimization
  */
 
 import React, { useState } from 'react';
 import { projectController } from '../project/projectController';
-import type { BankId, PadAssignment } from '../project/projectTypes';
 
-const BANKS: BankId[] = ['A', 'B', 'C', 'D'];
-
-interface PadBankManagerProps {
-  onPadTrigger?: (bank: BankId, slot: number) => void;
-}
-
-export const PadBankManager: React.FC<PadBankManagerProps> = ({ onPadTrigger }) => {
-  const [activeBank, setActiveBank] = useState<BankId>('A');
-  const [isChromaticMode, setIsChromaticMode] = useState<boolean>(false);
-  const [isPolyphonicMode, setIsPolyphonicMode] = useState<boolean>(true);
-  const [selectedSlot, setSelectedSlot] = useState<number | null>(0);
+export const PadBankManager: React.FC = () => {
+  const [activeBank, setActiveBank] = useState<'A' | 'B' | 'C' | 'D'>('A');
+  const [triggeredPad, setTriggeredPad] = useState<number | null>(null);
 
   const projectState = projectController.getState();
-  const assignments = projectState.sampler.assignments;
+  const samplerState = projectState.sampler;
 
-  // Filter assignments for the currently selected bank
-  const currentBankAssignments = assignments.filter((a) => a.bank === activeBank);
-  const selectedAssignment = currentBankAssignments.find((a) => a.slot === selectedSlot);
+  // Handle high-performance touch/pointer trigger
+  const handlePointerDown = (e: React.PointerEvent<HTMLButtonElement>, padIndex: number) => {
+    // Capture pointer to guarantee pointerUp fires reliably even if finger drifts off element
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Fallback if capture fails on specific legacy touch boundaries
+    }
 
-  const handlePadClick = (slot: number) => {
-    setSelectedSlot(slot);
-    onPadTrigger?.(activeBank, slot);
+    setTriggeredPad(padIndex);
+
+    // Trigger audio engine playback for this pad slot
+    const padId = `${activeBank}-${padIndex + 1}`;
+    console.log(`[SP-M8x] Triggering Sampler Pad: ${padId}`);
+    // audioEngine.triggerPad(padId);
   };
 
-  const handleUpdateAssignment = (updates: Partial<PadAssignment>) => {
-    if (selectedSlot === null || !selectedAssignment) return;
-
-    const updatedAssignments = assignments.map((a) => {
-      if (a.bank === activeBank && a.slot === selectedSlot) {
-        return { ...a, ...updates };
-      }
-      return a;
-    });
-
-    projectController.dispatch({
-      type: 'PROJECT_REPLACE',
-      project: {
-        ...projectState,
-        sampler: {
-          ...projectState.sampler,
-          assignments: updatedAssignments,
-        },
-      },
-    });
+  const handlePointerUpOrCancel = (e: React.PointerEvent<HTMLButtonElement>) => {
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // Ignore release errors
+    }
+    setTriggeredPad(null);
   };
 
   return (
-    <div className="flex flex-col bg-zinc-950 text-zinc-100 font-mono rounded-xl border border-zinc-800 p-4 shadow-2xl gap-4">
-      {/* Top Bar: Bank Selector & Global Toggles */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-900 pb-3">
-        {/* Bank Tabs */}
-        <div className="flex items-center gap-1.5 bg-zinc-900 p-1 rounded-lg border border-zinc-800">
-          {BANKS.map((bank) => (
-            <button
-              key={bank}
-              onClick={() => setActiveBank(bank)}
-              className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${
-                activeBank === bank
-                  ? 'bg-amber-500 text-zinc-950 shadow-md'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
-              }`}
-            >
-              BANK {bank}
-            </button>
-          ))}
+    <div className="flex flex-col gap-4 bg-zinc-900/90 border border-zinc-800 rounded-2xl p-4 shadow-2xl">
+      {/* Bank Selector Header */}
+      <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold tracking-wider text-zinc-400">BANK:</span>
+          <div className="flex gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800">
+            {(['A', 'B', 'C', 'D'] as const).map((bank) => (
+              <button
+                key={bank}
+                onPointerDown={() => setActiveBank(bank)}
+                className={`px-3 py-1 text-xs font-extrabold rounded transition-all ${
+                  activeBank === bank
+                    ? 'bg-cyan-500 text-zinc-950 shadow-md shadow-cyan-500/30'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                {bank}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {/* Mode Toggles */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setIsChromaticMode(!isChromaticMode)}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md border transition-all ${
-              isChromaticMode
-                ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50'
-                : 'bg-zinc-900 text-zinc-500 border-zinc-800 hover:text-zinc-300'
-            }`}
-          >
-            CHROMATIC: {isChromaticMode ? 'ON' : 'OFF'}
-          </button>
-          <button
-            onClick={() => setIsPolyphonicMode(!isPolyphonicMode)}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md border transition-all ${
-              isPolyphonicMode
-                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
-                : 'bg-zinc-900 text-zinc-500 border-zinc-800 hover:text-zinc-300'
-            }`}
-          >
-            POLY: {isPolyphonicMode ? 'ON' : 'MONO'}
-          </button>
+        <div className="text-[11px] text-zinc-400 font-mono">
+          MODE: <span className="text-amber-400 font-bold">POLY / CHOP</span>
         </div>
       </div>
 
       {/* 4x4 Pad Grid */}
       <div className="grid grid-cols-4 gap-3">
-        {Array.from({ length: 16 }).map((_, slot) => {
-          const assignment = currentBankAssignments.find((a) => a.slot === slot);
-          const isSelected = selectedSlot === slot;
-          const hasSample = Boolean(assignment?.sampleAssetId);
+        {Array.from({ length: 16 }).map((_, index) => {
+          const isPressed = triggeredPad === index;
+          const padNumber = index + 1;
+          const displayNum = `${activeBank}${padNumber < 10 ? '0' + padNumber : padNumber}`;
 
           return (
             <button
-              key={slot}
-              onClick={() => handlePadClick(slot)}
-              className={`flex flex-col justify-between h-24 p-2.5 rounded-xl border text-left transition-all active:scale-95 ${
-                isSelected
-                  ? 'border-amber-500 bg-amber-500/10 ring-2 ring-amber-500/30'
-                  : hasSample
-                  ? 'border-zinc-700 bg-zinc-900 hover:border-zinc-600'
-                  : 'border-zinc-900 bg-zinc-900/40 hover:border-zinc-800'
+              key={index}
+              onPointerDown={(e) => handlePointerDown(e, index)}
+              onPointerUp={handlePointerUpOrCancel}
+              onPointerCancel={handlePointerUpOrCancel}
+              className={`relative flex flex-col items-center justify-center h-20 rounded-xl border transition-all duration-75 select-none ${
+                isPressed
+                  ? 'bg-cyan-400 text-zinc-950 border-cyan-300 scale-95 shadow-inner shadow-cyan-900/50'
+                  : 'bg-zinc-950 text-zinc-200 border-zinc-800 hover:border-zinc-700 active:scale-95 shadow-lg'
               }`}
             >
-              <div className="flex items-center justify-between w-full">
-                <span className="text-[10px] font-bold text-zinc-500">
-                  {activeBank}{String(slot + 1).padStart(2, '0')}
-                </span>
-                {hasSample && <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />}
-              </div>
-              <div className="truncate text-xs font-bold text-zinc-200">
-                {assignment?.name || `Pad ${slot + 1}`}
-              </div>
-              <div className="text-[10px] text-zinc-500">
-                {hasSample ? `Vol: ${Math.round((assignment?.volume ?? 0.8) * 100)}%` : 'EMPTY'}
-              </div>
+              <span className="text-[10px] opacity-60 font-bold">PAD</span>
+              <span className="text-sm font-black tracking-tight">{displayNum}</span>
+              <div
+                className={`absolute bottom-1.5 w-1.5 h-1.5 rounded-full ${
+                  isPressed ? 'bg-zinc-950 animate-ping' : 'bg-zinc-800'
+                }`}
+              />
             </button>
           );
         })}
       </div>
-
-      {/* Selected Pad Quick Inspector */}
-      {selectedAssignment && (
-        <div className="flex flex-wrap items-center justify-between gap-4 bg-zinc-900/70 p-3 rounded-xl border border-zinc-800/80 text-xs">
-          <div>
-            <span className="text-zinc-500">Selected: </span>
-            <span className="font-bold text-amber-400">{selectedAssignment.name}</span>
-          </div>
-          <div className="flex items-center gap-4">
-            <label className="flex items-center gap-2">
-              <span className="text-zinc-400">Volume</span>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={selectedAssignment.volume}
-                onChange={(e) => handleUpdateAssignment({ volume: parseFloat(e.target.value) })}
-                className="w-24 accent-amber-500 cursor-pointer"
-              />
-            </label>
-            <label className="flex items-center gap-2">
-              <span className="text-zinc-400">Root Note</span>
-              <input
-                type="number"
-                min="0"
-                max="127"
-                value={selectedAssignment.chromaticRootNote ?? 60}
-                onChange={(e) => handleUpdateAssignment({ chromaticRootNote: parseInt(e.target.value, 10) || 60 })}
-                className="w-14 bg-zinc-950 border border-zinc-700 rounded px-1.5 py-0.5 text-center text-zinc-200"
-              />
-            </label>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

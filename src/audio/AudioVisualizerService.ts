@@ -29,12 +29,18 @@ export class AudioVisualizerService {
 
   constructor(options: VisualizerOptions) {
     this.canvas = options.canvas;
-    this.ctx = this.canvas.getContext('2d', { alpha: false });
+    
+    // Hardware acceleration optimization for mobile Safari / A13 Bionic
+    this.ctx = this.canvas.getContext('2d', { 
+      alpha: false, 
+      desynchronized: true 
+    });
+
     this.analyser = options.analyser;
     this.mode = options.mode ?? 'waveform';
     this.lineColor = options.lineColor ?? '#38bdf8'; // Cyan-400
     this.backgroundColor = options.backgroundColor ?? '#09090b'; // Zinc-950
-    this.targetFps = options.targetFps ?? 120; // Default max resolution target
+    this.targetFps = options.targetFps ?? 120;
 
     // Configure analyser
     this.analyser.fftSize = 2048;
@@ -69,7 +75,7 @@ export class AudioVisualizerService {
     const interval = 1000 / this.targetFps;
     const delta = now - this.lastFrameTime;
 
-    // Frame pacing to match targetFps (e.g., 120fps under demand threshold)
+    // Frame pacing to match targetFps under demand threshold
     if (delta >= interval) {
       this.lastFrameTime = now - (delta % interval);
       this.draw();
@@ -99,7 +105,7 @@ export class AudioVisualizerService {
       let x = 0;
 
       for (let i = 0; i < this.dataArray.length; i++) {
-        const v = this.dataArray[i] / 128.0; // 0..255 normalized around 128
+        const v = this.dataArray[i] / 128.0;
         const y = (v * height) / 2;
 
         if (i === 0) {
