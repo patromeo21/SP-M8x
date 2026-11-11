@@ -41,7 +41,7 @@ export function useLivePhraseRecorder(patternId: string, bpm: number) {
   }, [isRecording]);
 
   /**
-   * Stops recording, quantizes events into micro-timed tracker steps, and commits to project state.
+   * Stops recording, quantizes events into micro-timed tracker steps, and dispatches to project state.
    */
   const stopAndQuantize = useCallback(() => {
     if (!isRecording) return;
@@ -64,17 +64,10 @@ export function useLivePhraseRecorder(patternId: string, bpm: number) {
       { bpm }
     );
 
-    // Commit updated pattern immutably to project controller state
-    const updatedPatterns = state.tracker.patterns.map((p) =>
-      p.id === patternId ? quantizedPattern : p
-    );
-
-    projectController.setState({
-      ...state,
-      tracker: {
-        ...state.tracker,
-        patterns: updatedPatterns,
-      },
+    // Dispatch state update via project controller action
+    projectController.dispatch({
+      type: 'UPDATE_PATTERN',
+      payload: { patternId, pattern: quantizedPattern },
     });
 
     console.log(`[useLivePhraseRecorder] Quantized ${eventsRef.current.length} performance events into pattern ${patternId}`);
