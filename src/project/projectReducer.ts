@@ -92,12 +92,12 @@ export const projectReducer = (
     }
 
     case 'SONG_CELL_SET': {
-      const { trackId, rowIndex, patternId } = action.id ? action : (action as any);
+      const { trackId, rowIndex, patternId } = action;
       const tracks = state.song.tracks.map((track) => {
-        if (track.id !== action.trackId) return track;
+        if (track.id !== trackId) return track;
         const rows = [...track.rows];
-        if (rows[action.rowIndex]) {
-          rows[action.rowIndex] = { patternId: action.patternId };
+        if (rows[rowIndex]) {
+          rows[rowIndex] = { patternId };
         }
         return { ...track, rows };
       });

@@ -21,8 +21,8 @@ function stableAssetId(bank: BankId, slot: number): string {
   return `legacy-asset-${bank}-${String(slot + 1).padStart(2, '0')}`;
 }
 
-function finiteOr(value: number, fallback: number): number {
-  return Number.isFinite(value) ? value : fallback;
+function finiteOr(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
 export function migrateLegacyProject(input: LegacyProjectInput): SPProject {
@@ -64,7 +64,7 @@ export function migrateLegacyProject(input: LegacyProjectInput): SPProject {
       sampleAssetId: assetId,
       sliceId: null,
       sliceStartSeconds: Math.max(0, finiteOr(pad.sliceStart, 0)),
-      sliceEndSeconds: Math.max(0, finiteOr(pad.sliceEnd, 0)),
+      sliceEndSeconds: pad.sliceEnd !== undefined ? Math.max(0, finiteOr(pad.sliceEnd, 0)) : null,
       volume: Math.max(0, Math.min(1, finiteOr(pad.volume, 0.8))),
       pan: Math.max(-1, Math.min(1, finiteOr(pad.pan, 0))),
       reverse: Boolean(pad.reverse),
@@ -96,8 +96,6 @@ export function migrateLegacyProject(input: LegacyProjectInput): SPProject {
           step.note && step.note !== '---'
             ? `assignment-A-${String(Math.max(0, Math.min(15, Math.trunc(step.instrument))) + 1).padStart(2, '0')}`
             : null,
-        // Preserve the old generic command/value pair without inventing
-        // unverified command semantics.
         phraseFx: step.command ?? '--',
         phraseFxValue: finiteOr(step.value, 0),
         tableVolume: null,
@@ -110,13 +108,12 @@ export function migrateLegacyProject(input: LegacyProjectInput): SPProject {
   }
 
   project.effects = {
-    punchIn: { ...(input.punchInFX ?? DEFAULT_EFFECTS.punchIn) },
-    master: { ...(input.masterFX ?? DEFAULT_EFFECTS.master) },
+    punchIn: { ...DEFAULT_EFFECTS.punchIn, ...(input.punchInFX ?? {}) },
+    master: { ...DEFAULT_EFFECTS.master, ...(input.masterFX ?? {}) },
   };
   project.settings.masterVolume = project.effects.master.masterVolume;
   project.metadata.updatedAt = now;
 
-  // Keep the bank constant referenced here as an explicit migration invariant.
   const bankOrder: BankId[] = BANKS;
   if (bankOrder[0] !== 'A') {
     throw new Error('Legacy migration invariant failed: Bank A must be the first bank.');
