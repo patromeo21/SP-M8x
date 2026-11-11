@@ -1,102 +1,159 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * PadBankManager.tsx — 4x4 Sampler Pad Bank with Pointer Event Optimization
+ * PadBankManager.tsx — 4x4 Pad Bank Manager (Banks A-D) with Global State Sync
  */
 
 import React, { useState } from 'react';
-import { projectController } from '../project/projectController';
+import { audioEngine } from '../audio/audioEngine';
+import { projectController, BankId } from '../project/projectController';
+import { AudioSampleDropzone } from '../components/AudioSampleDropzone';
+
+export interface PadRuntimeState {
+  buffer: AudioBuffer | null;
+}
+
+const BANKS: BankId[] = ['A', 'B', 'C', 'D'];
 
 export const PadBankManager: React.FC = () => {
-  const [activeBank, setActiveBank] = useState<'A' | 'B' | 'C' | 'D'>('A');
-  const [triggeredPad, setTriggeredPad] = useState<number | null>(null);
+  const [activeBank, setActiveBank] = useState<BankId>('A');
+  const [selectedPadId, setSelectedPadId] = useState<string>('A1');
+
+  // Local runtime storage for decoded AudioBuffers (buffers cannot be serialized into projectState JSON)
+  const [padBuffers, setPadBuffers] = useState<Record<string, AudioBuffer>>({});
 
   const projectState = projectController.getState();
-  const samplerState = projectState.sampler;
+  const samplerPads = projectState.sampler.pads;
 
-  // Handle high-performance touch/pointer trigger
-  const handlePointerDown = (e: React.PointerEvent<HTMLButtonElement>, padIndex: number) => {
-    // Capture pointer to guarantee pointerUp fires reliably even if finger drifts off element
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {
-      // Fallback if capture fails on specific legacy touch boundaries
-    }
+  const handleSampleLoaded = (padId: string, buffer: AudioBuffer, fileName: string) => {
+    // Store decoded audio buffer locally for playback
+    setPadBuffers((prev) => ({
+      ...prev,
+      [padId]: buffer,
+    }));
 
-    setTriggeredPad(padIndex);
+    // Update global project metadata
+    projectController.updatePadMetadata(padId, {
+      name: fileName,
+      fileName,
+    });
 
-    // Trigger audio engine playback for this pad slot
-    const padId = `${activeBank}-${padIndex + 1}`;
-    console.log(`[SP-M8x] Triggering Sampler Pad: ${padId}`);
-    // audioEngine.triggerPad(padId);
+    console.log(`[PadBankManager] Mapped sample "${fileName}" to Pad ${padId}`);
   };
 
-  const handlePointerUpOrCancel = (e: React.PointerEvent<HTMLButtonElement>) => {
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch {
-      // Ignore release errors
+  const handleTriggerPad = (padId: string) => {
+    setSelectedPadId(padId);
+    const buffer = padBuffers[padId];
+
+    if (buffer) {
+      audioEngine.triggerVoice(padId, buffer);
+    } else {
+      console.log(`[PadBankManager] Pad ${padId} has no audio buffer loaded.`);
     }
-    setTriggeredPad(null);
   };
+
+  const togglePolyphonic = (padId: string) => {
+    const currentPad = samplerPads[padId];
+    if (currentPad) {
+      projectController.updatePadMetadata(padId, {
+        isPolyphonic: !currentPad.isPolyphonic,
+      });
+    }
+  };
+
+  const activePadsList = Array.from({ length: 16 }, (_, i) => {
+    const padNumber = i + 1;
+    const padId = `${activeBank}${padNumber}`;
+    return {
+      metadata: samplerPads[padId],
+      hasBuffer: !!padBuffers[padId],
+    };
+  });
+
+  const selectedPadMeta = samplerPads[selectedPadId];
+  const isSelectedPoly = selectedPadMeta ? selectedPadMeta.isPolyphonic : true;
 
   return (
-    <div className="flex flex-col gap-4 bg-zinc-900/90 border border-zinc-800 rounded-2xl p-4 shadow-2xl">
-      {/* Bank Selector Header */}
-      <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-bold tracking-wider text-zinc-400">BANK:</span>
-          <div className="flex gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800">
-            {(['A', 'B', 'C', 'D'] as const).map((bank) => (
-              <button
-                key={bank}
-                onPointerDown={() => setActiveBank(bank)}
-                className={`px-3 py-1 text-xs font-extrabold rounded transition-all ${
-                  activeBank === bank
-                    ? 'bg-cyan-500 text-zinc-950 shadow-md shadow-cyan-500/30'
-                    : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                {bank}
-              </button>
-            ))}
-          </div>
+    <div className="flex flex-col gap-4 p-4 bg-zinc-900/60 border border-zinc-800 rounded-xl font-mono select-none">
+      {/* Top Controls: Bank Selector & Pad Inspector */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 pb-3">
+        {/* Bank Tabs */}
+        <div className="flex items-center gap-1">
+          {BANKS.map((bank) => (
+            <button
+              key={bank}
+              type="button"
+              onPointerDown={() => setActiveBank(bank)}
+              className={`px-4 py-2 text-xs font-bold rounded-lg transition-all active:scale-95 ${
+                activeBank === bank
+                  ? 'bg-cyan-500 text-zinc-950 shadow-md shadow-cyan-500/20'
+                  : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+              }`}
+            >
+              BANK {bank}
+            </button>
+          ))}
         </div>
 
-        <div className="text-[11px] text-zinc-400 font-mono">
-          MODE: <span className="text-amber-400 font-bold">POLY / CHOP</span>
+        {/* Selected Pad Info & Mode Toggle */}
+        <div className="flex items-center gap-3 text-xs">
+          <span className="text-zinc-400">
+            SEL: <strong className="text-cyan-400">{selectedPadId}</strong>
+          </span>
+          <button
+            type="button"
+            onPointerDown={() => togglePolyphonic(selectedPadId)}
+            className={`px-3 py-1 rounded text-[10px] font-bold transition-all ${
+              isSelectedPoly
+                ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                : 'bg-amber-950 text-amber-400 border border-amber-800'
+            }`}
+          >
+            {isSelectedPoly ? 'POLY' : 'MONO'}
+          </button>
         </div>
       </div>
 
-      {/* 4x4 Pad Grid */}
-      <div className="grid grid-cols-4 gap-3">
-        {Array.from({ length: 16 }).map((_, index) => {
-          const isPressed = triggeredPad === index;
+      {/* 4x4 Interactive Pad Grid */}
+      <div className="grid grid-cols-4 gap-2">
+        {activePadsList.map(({ metadata, hasBuffer }, index) => {
           const padNumber = index + 1;
-          const displayNum = `${activeBank}${padNumber < 10 ? '0' + padNumber : padNumber}`;
+          const padId = `${activeBank}${padNumber}`;
+          const isSelected = padId === selectedPadId;
 
           return (
             <button
-              key={index}
-              onPointerDown={(e) => handlePointerDown(e, index)}
-              onPointerUp={handlePointerUpOrCancel}
-              onPointerCancel={handlePointerUpOrCancel}
-              className={`relative flex flex-col items-center justify-center h-20 rounded-xl border transition-all duration-75 select-none ${
-                isPressed
-                  ? 'bg-cyan-400 text-zinc-950 border-cyan-300 scale-95 shadow-inner shadow-cyan-900/50'
-                  : 'bg-zinc-950 text-zinc-200 border-zinc-800 hover:border-zinc-700 active:scale-95 shadow-lg'
+              key={padId}
+              type="button"
+              onPointerDown={() => handleTriggerPad(padId)}
+              className={`h-20 flex flex-col items-center justify-between p-2 rounded-xl border transition-all active:scale-95 touch-none ${
+                isSelected ? 'border-cyan-400 shadow-md shadow-cyan-500/10' : 'border-zinc-800'
+              } ${
+                hasBuffer
+                  ? 'bg-zinc-800/80 text-zinc-100 hover:bg-zinc-700'
+                  : 'bg-zinc-950/60 text-zinc-600 hover:bg-zinc-900'
               }`}
             >
-              <span className="text-[10px] opacity-60 font-bold">PAD</span>
-              <span className="text-sm font-black tracking-tight">{displayNum}</span>
-              <div
-                className={`absolute bottom-1.5 w-1.5 h-1.5 rounded-full ${
-                  isPressed ? 'bg-zinc-950 animate-ping' : 'bg-zinc-800'
-                }`}
-              />
+              <div className="w-full flex justify-between text-[10px] font-bold">
+                <span className={hasBuffer ? 'text-cyan-400' : 'text-zinc-600'}>{padId}</span>
+                {hasBuffer && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />}
+              </div>
+              <span className="text-[10px] font-medium truncate max-w-full px-1">
+                {metadata ? metadata.name : `EMPTY ${padId}`}
+              </span>
+              <span className="text-[9px] text-zinc-500">
+                {metadata && metadata.isPolyphonic ? 'POLY' : 'MONO'}
+              </span>
             </button>
           );
         })}
       </div>
+
+      {/* Selected Pad Sample Uploader */}
+      <div className="mt-2 pt-3 border-t border-zinc-800/80">
+        <AudioSampleDropzone padId={selectedPadId} onSampleLoaded={handleSampleLoaded} />
+      </div>
     </div>
   );
 };
+
+export default PadBankManager;

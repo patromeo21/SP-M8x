@@ -1,153 +1,132 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * SPM8xDashboard.tsx — Master Mobile-Optimized Dashboard View
+ * SPM8xDashboard.tsx — Main Application Dashboard View
  */
 
-import React, { useState } from 'react';
-import { TrackerGrid } from '../tracker/TrackerGrid';
+import React, { useEffect, useState } from 'react';
+import { audioEngine } from '../audio/audioEngine';
+import { trackerEngine } from '../tracker/trackerEngine';
+import { projectController, ProjectState } from '../project/projectController';
 import { PadBankManager } from '../sampler/PadBankManager';
-import { MasterMixerAndPunchInFX } from '../fx/MasterMixerAndPunchInFX';
-import { useAudioVisualizer } from '../audio/useAudioVisualizer';
-import { projectController } from '../project/projectController';
 
-interface SPM8xDashboardProps {
-  analyser: AnalyserNode | null;
-}
+export const SPM8xDashboard: React.FC = () => {
+  const [projectState, setProjectState] = useState<ProjectState>(() => projectController.getState());
+  const [isAudioInitialized, setIsAudioInitialized] = useState<boolean>(false);
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [activeStep, setActiveStep] = useState<number>(0);
 
-export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ analyser }) => {
-  const [activeTab, setActiveTab] = useState<'tracker' | 'pads' | 'fx'>('tracker');
-  const [visualizerMode, setVisualizerMode] = useState<'waveform' | 'frequency'>('waveform');
-  const [currentStep, setCurrentStep] = useState<number>(0);
+  // Subscribe to projectController state changes
+  useEffect(() => {
+    const unsubscribe = projectController.subscribe((newState) => {
+      setProjectState({ ...newState });
+    });
 
-  const projectState = projectController.getState();
-  const currentPattern = projectState.tracker.patterns[0];
+    // Wire tracker step callback for playhead visual feedback
+    trackerEngine.setStepCallback((step) => {
+      setActiveStep(step);
+    });
 
-  // Initialize high-performance 120fps canvas audio visualizer
-  const { canvasRef, setMode: toggleVisualizerMode } = useAudioVisualizer({
-    analyser,
-    mode: visualizerMode,
-    targetFps: 120, // Maximize resolution for high-refresh mobile/tablet viewports
-  });
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
-  const handleModeSwitch = (mode: 'waveform' | 'frequency') => {
-    setVisualizerMode(mode);
-    toggleVisualizerMode(mode);
+  const handleInitAudio = async () => {
+    try {
+      await audioEngine.initialize();
+      setIsAudioInitialized(true);
+      console.log('[SPM8xDashboard] AudioContext successfully initialized & resumed.');
+    } catch (err) {
+      console.error('[SPM8xDashboard] Failed to initialize AudioContext:', err);
+    }
   };
 
+  const handleTogglePlay = () => {
+    const playing = trackerEngine.togglePlay();
+    setIsPlaying(playing);
+  };
+
+  const activePatternIndex = projectState.settings.activePatternIndex;
+  const currentPattern = projectState.tracker.patterns[activePatternIndex] || projectState.tracker.patterns[0];
+
   return (
-    <div className="flex flex-col min-h-screen bg-zinc-950 text-zinc-100 font-mono select-none pb-12">
-      {/* Top Header / Status Bar */}
-      <header className="flex items-center justify-between px-4 py-3 bg-zinc-900 border-b border-zinc-800 sticky top-0 z-50">
-        <div className="flex items-center gap-2.5">
-          <div className="w-3 h-3 rounded-full bg-cyan-400 animate-pulse shadow-lg shadow-cyan-500/50" />
-          <h1 className="text-sm font-extrabold tracking-wider text-zinc-100">
-            SP-M8<span className="text-amber-500">x</span>
-          </h1>
+    <div className="flex flex-col w-screen h-screen bg-zinc-950 text-zinc-100 font-mono select-none overflow-hidden p-4 gap-4">
+      {/* Header & Audio Gate */}
+      <header className="flex items-center justify-between border-b border-zinc-800 pb-3">
+        <div>
+          <h1 className="text-sm font-bold tracking-widest text-cyan-400">SP-M8x</h1>
+          <p className="text-[10px] text-zinc-500">Hybrid Sampler & Tracker Suite (iPad 9th Gen Target)</p>
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-zinc-400">
-          <span className="bg-zinc-950 px-2.5 py-1 rounded border border-zinc-800 font-bold text-zinc-300">
-            SP-M8x Session
-          </span>
-          <span className="bg-zinc-950 px-2 py-1 rounded border border-zinc-800 text-amber-400 font-bold">
-            {projectState.settings.bpm} BPM
-          </span>
-        </div>
+        {!isAudioInitialized ? (
+          <button
+            type="button"
+            onPointerDown={handleInitAudio}
+            className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-zinc-950 font-bold text-xs rounded-lg transition-all active:scale-95 shadow-lg shadow-cyan-900/30"
+          >
+            INITIALIZE AUDIO GATE
+          </button>
+        ) : (
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-[10px] text-emerald-400 font-bold">AUDIO READY</span>
+          </div>
+        )}
       </header>
 
-      {/* Visualizer & Header Canvas */}
-      <div className="p-4 bg-zinc-950 border-b border-zinc-900">
-        <div className="relative flex flex-col rounded-xl overflow-hidden border border-zinc-800 bg-zinc-900 shadow-xl">
-          <div className="absolute top-2 right-2 z-10 flex items-center gap-1.5 bg-zinc-950/80 backdrop-blur px-2 py-1 rounded-lg border border-zinc-800 text-[10px]">
-            <button
-              onClick={() => handleModeSwitch('waveform')}
-              className={`px-2 py-0.5 rounded font-bold transition-all ${
-                visualizerMode === 'waveform' ? 'bg-cyan-500 text-zinc-950' : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              WAVE
-            </button>
-            <button
-              onClick={() => handleModeSwitch('frequency')}
-              className={`px-2 py-0.5 rounded font-bold transition-all ${
-                visualizerMode === 'frequency' ? 'bg-cyan-500 text-zinc-950' : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              SPECTRUM
-            </button>
+      {/* Main Grid Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 flex-1 overflow-y-auto">
+        {/* Left Column: Sampler Pads (Banks A-D) */}
+        <div className="flex flex-col gap-3">
+          <h2 className="text-xs font-bold text-zinc-400">SAMPLER PAD BANKS (A - D)</h2>
+          <PadBankManager />
+        </div>
+
+        {/* Right Column: Transport, Sequencer & Master FX */}
+        <div className="flex flex-col gap-4">
+          {/* Transport Controls */}
+          <div className="flex flex-col gap-3 p-4 bg-zinc-900/50 border border-zinc-800 rounded-xl">
+            <h2 className="text-xs font-bold text-zinc-400">TRANSPORT CONTROLS</h2>
+            <div className="flex items-center justify-between">
+              <button
+                type="button"
+                onPointerDown={handleTogglePlay}
+                disabled={!isAudioInitialized}
+                className={`px-6 py-3 rounded-xl font-bold text-xs transition-all active:scale-95 ${
+                  isPlaying
+                    ? 'bg-amber-600 hover:bg-amber-500 text-zinc-950'
+                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200'
+                } ${!isAudioInitialized ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                {isPlaying ? 'STOP TRACKER' : 'PLAY TRACKER'}
+              </button>
+              <div className="flex flex-col items-end text-xs">
+                <span className="text-zinc-500 text-[10px]">PATTERN: {currentPattern.name}</span>
+                <span>
+                  STEP: <span className="text-cyan-400 font-bold">{activeStep} / 63</span>
+                </span>
+              </div>
+            </div>
           </div>
 
-          <canvas
-            ref={canvasRef}
-            width={800}
-            height={140}
-            className="w-full h-28 object-cover bg-zinc-950"
-          />
+          {/* Project Status Info */}
+          <div className="flex flex-col gap-3 p-4 bg-zinc-900/50 border border-zinc-800 rounded-xl flex-1">
+            <h2 className="text-xs font-bold text-zinc-400">SYSTEM METRICS</h2>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="p-3 bg-zinc-950 rounded-lg border border-zinc-800/80">
+                <span className="text-zinc-500 text-[10px] block">BPM</span>
+                <span className="font-bold text-cyan-400">{projectState.settings.bpm}</span>
+              </div>
+              <div className="p-3 bg-zinc-950 rounded-lg border border-zinc-800/80">
+                <span className="text-zinc-500 text-[10px] block">MASTER VOLUME</span>
+                <span className="font-bold text-emerald-400">{Math.round(projectState.settings.masterVolume * 100)}%</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
-
-      {/* Navigation Tabs (Mobile View Switcher) */}
-      <div className="flex items-center px-4 gap-2 py-2">
-        <button
-          onClick={() => setActiveTab('tracker')}
-          className={`flex-1 py-2.5 text-xs font-bold rounded-xl border transition-all ${
-            activeTab === 'tracker'
-              ? 'bg-amber-500 text-zinc-950 border-amber-500 shadow-lg shadow-amber-500/20'
-              : 'bg-zinc-900/60 text-zinc-400 border-zinc-800 hover:bg-zinc-900'
-          }`}
-        >
-          TRACKER VIEW
-        </button>
-        <button
-          onClick={() => setActiveTab('pads')}
-          className={`flex-1 py-2.5 text-xs font-bold rounded-xl border transition-all ${
-            activeTab === 'pads'
-              ? 'bg-cyan-500 text-zinc-950 border-cyan-500 shadow-lg shadow-cyan-500/20'
-              : 'bg-zinc-900/60 text-zinc-400 border-zinc-800 hover:bg-zinc-900'
-          }`}
-        >
-          PAD BANK
-        </button>
-        <button
-          onClick={() => setActiveTab('fx')}
-          className={`flex-1 py-2.5 text-xs font-bold rounded-xl border transition-all ${
-            activeTab === 'fx'
-              ? 'bg-emerald-500 text-zinc-950 border-emerald-500 shadow-lg shadow-emerald-500/20'
-              : 'bg-zinc-900/60 text-zinc-400 border-zinc-800 hover:bg-zinc-900'
-          }`}
-        >
-          MIXER & FX
-        </button>
-      </div>
-
-      {/* Main Viewport Content Area */}
-      <main className="flex-1 px-4 py-2">
-        {activeTab === 'tracker' && (
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between text-xs text-zinc-400 px-1">
-              <span>PATTERN: {currentPattern?.name ?? 'Pattern 1'}</span>
-              <span>STEP: {String(currentStep + 1).padStart(2, '0')} / 64</span>
-            </div>
-            <TrackerGrid
-              patternId={currentPattern?.id}
-              currentStepIndex={currentStep}
-              onStepSelect={(step) => setCurrentStep(step)}
-            />
-          </div>
-        )}
-
-        {activeTab === 'pads' && (
-          <div className="flex flex-col gap-3">
-            <PadBankManager />
-          </div>
-        )}
-
-        {activeTab === 'fx' && (
-          <div className="flex flex-col gap-3">
-            <MasterMixerAndPunchInFX />
-          </div>
-        )}
-      </main>
     </div>
   );
 };
+
+export default SPM8xDashboard;
