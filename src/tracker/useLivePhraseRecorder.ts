@@ -67,7 +67,7 @@ export function useLivePhraseRecorder(patternId: string, bpm: number) {
     // Dispatch state update via project controller action
     projectController.dispatch({
       type: 'PATTERN_UPSERT',
-      payload: { pattern: quantizedPattern },
+      pattern: quantizedPattern,
     });
 
     console.log(`[useLivePhraseRecorder] Quantized ${eventsRef.current.length} performance events into pattern ${patternId}`);
