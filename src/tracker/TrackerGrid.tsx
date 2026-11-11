@@ -1,112 +1,101 @@
 /**
- * SP-M8x M8 Tracker Grid View
- * TrackerGrid.tsx — Vertical pattern step editor and playback display
+ * SP-M8x Hybrid Music Production Suite
+ * TrackerGrid.tsx — M8-Style Tracker Grid Component with Micro-Timing Sub-Tick Display
  */
 
-import React, { useEffect, useState } from 'react';
-import { TrackerPattern } from '../types';
-import { trackerEngine } from './trackerEngine';
+import React from 'react';
+import { projectController } from '../project/projectController';
+import { selectPatternById } from '../project/trackerSelectors';
+import type { TrackerStepItem } from '../project/projectTypes';
 
-export const TrackerGrid: React.FC = () => {
-  const [pattern, setPattern] = useState<TrackerPattern>(trackerEngine.getPattern());
-  const [currentStep, setCurrentStep] = useState<number>(0);
-  const [isPlaying, setIsPlaying] = useState<boolean>(false);
-  const [bpm, setBpm] = useState<number>(trackerEngine.getBpm());
+interface TrackerGridProps {
+  patternId: string;
+  currentStepIndex?: number;
+  onStepSelect?: (stepIndex: number) => void;
+}
 
-  useEffect(() => {
-    trackerEngine.setOnStepCallback((step) => {
-      setCurrentStep(step);
-    });
-  }, []);
+export const TrackerGrid: React.FC<TrackerGridProps> = ({
+  patternId,
+  currentStepIndex = -1,
+  onStepSelect,
+}) => {
+  const projectState = projectController.getState();
+  const pattern = selectPatternById(projectState, patternId);
 
-  const handleTogglePlay = () => {
-    const playing = trackerEngine.togglePlay();
-    setIsPlaying(playing);
-  };
-
-  const handleBpmChange = (newBpm: number) => {
-    trackerEngine.setBpm(newBpm);
-    setBpm(trackerEngine.getBpm());
-  };
+  if (!pattern) {
+    return (
+      <div className="p-4 bg-zinc-900 text-zinc-400 font-mono text-sm rounded-lg border border-zinc-800">
+        Pattern {patternId} not found.
+      </div>
+    );
+  }
 
   return (
-    <div className="flex flex-col h-full bg-zinc-900 border border-zinc-800 rounded-xl p-4 shadow-2xl font-mono text-zinc-200 overflow-hidden">
-      {/* Tracker Transport Header */}
-      <div className="flex items-center justify-between pb-3 border-b border-zinc-800 mb-3">
-        <div className="flex items-center space-x-3">
-          <div>
-            <span className="text-xs text-zinc-500 uppercase tracking-wider">M8 Sequencer</span>
-            <h2 className="text-sm font-bold text-amber-400">Pattern 00 / 64 Steps</h2>
-          </div>
-        </div>
-
-        {/* Transport & Tempo Controls */}
-        <div className="flex items-center space-x-3">
-          <div className="flex items-center space-x-2 bg-zinc-950 px-3 py-1 rounded border border-zinc-800 text-xs">
-            <span className="text-zinc-500">BPM:</span>
-            <input
-              type="number"
-              min={40}
-              max={300}
-              value={bpm}
-              onChange={(e) => handleBpmChange(parseInt(e.target.value) || 125)}
-              className="w-12 bg-zinc-900 text-amber-400 font-bold text-center rounded border border-zinc-700 outline-none"
-            />
-          </div>
-
-          <button
-            type="button"
-            onClick={handleTogglePlay}
-            className={`px-4 py-1.5 text-xs font-bold rounded transition-all ${
-              isPlaying
-                ? 'bg-rose-500 hover:bg-rose-600 text-zinc-950 animate-pulse'
-                : 'bg-emerald-500 hover:bg-emerald-600 text-zinc-950'
-            }`}
-          >
-            {isPlaying ? 'STOP (SPACE)' : 'PLAY (SPACE)'}
-          </button>
-        </div>
+    <div className="flex flex-col bg-zinc-950 text-zinc-100 font-mono rounded-xl border border-zinc-800 overflow-hidden shadow-2xl">
+      {/* Grid Header */}
+      <div className="flex items-center bg-zinc-900 px-3 py-2 text-xs font-semibold text-zinc-400 border-b border-zinc-800 tracking-wider">
+        <div className="w-12 text-center">STEP</div>
+        <div className="w-16 text-center">NOTE</div>
+        <div className="w-12 text-center">SUB</div>
+        <div className="w-16 text-center">VEL</div>
+        <div className="w-24 text-center">INST</div>
+        <div className="w-20 text-center">FX</div>
+        <div className="flex-1 text-left px-2">TABLE / STATUS</div>
       </div>
 
-      {/* Tracker Grid Matrix */}
-      <div className="flex-1 bg-zinc-950 rounded-lg border border-zinc-800 overflow-y-auto font-mono text-xs select-none">
-        <div className="grid grid-cols-6 text-center py-2 bg-zinc-900/90 text-zinc-400 border-b border-zinc-800 sticky top-0 z-10">
-          <div>ROW</div>
-          <div>NOTE</div>
-          <div>INST</div>
-          <div>VOL</div>
-          <div>CMD</div>
-          <div>VAL</div>
-        </div>
+      {/* Grid Rows Scroll Container */}
+      <div className="max-h-[400px] overflow-y-auto divide-y divide-zinc-900/50">
+        {pattern.steps.map((step: TrackerStepItem) => {
+          const isCurrent = step.stepIndex === currentStepIndex;
+          const hasMicroTiming = step.subTickOffset > 0;
 
-        <div className="divide-y divide-zinc-900">
-          {pattern.steps.map((step, idx) => {
-            const isCurrentRow = idx === currentStep;
-            return (
-              <div
-                key={idx}
-                className={`grid grid-cols-6 text-center py-1.5 transition-colors ${
-                  isCurrentRow
-                    ? 'bg-amber-500/20 text-amber-300 font-bold border-y border-amber-500/40'
-                    : idx % 4 === 0
-                    ? 'bg-zinc-900/40 text-zinc-300'
-                    : 'text-zinc-500 hover:bg-zinc-900/20'
-                }`}
-              >
-                <div className="text-zinc-600 font-mono">
-                  {idx.toString().padStart(2, '0')}
-                </div>
-                <div className={step.note !== '---' ? 'text-cyan-400 font-bold' : ''}>
-                  {step.note}
-                </div>
-                <div>{step.instrument.toString(16).toUpperCase()}</div>
-                <div>{step.volume.toString(16).toUpperCase()}</div>
-                <div>{step.command}</div>
-                <div>{step.value.toString(16).toUpperCase()}</div>
+          return (
+            <div
+              key={step.id}
+              onClick={() => onStepSelect?.(step.stepIndex)}
+              className={`flex items-center px-3 py-1.5 text-xs transition-colors cursor-pointer ${
+                isCurrent
+                  ? 'bg-amber-500/20 text-amber-300 font-bold border-l-2 border-amber-500'
+                  : 'hover:bg-zinc-900/80 text-zinc-300'
+              }`}
+            >
+              {/* Step Index */}
+              <div className="w-12 text-center text-zinc-500">
+                {String(step.stepIndex).padStart(2, '0')}
               </div>
-            );
-          })}
-        </div>
+
+              {/* Note */}
+              <div className={`w-16 text-center font-bold ${step.note !== '---' ? 'text-cyan-400' : 'text-zinc-600'}`}>
+                {step.note}
+              </div>
+
+              {/* Sub-Tick Micro-Timing Offset */}
+              <div className={`w-12 text-center ${hasMicroTiming ? 'text-emerald-400 font-bold' : 'text-zinc-600'}`}>
+                {step.subTickOffset > 0 ? `+${step.subTickOffset}` : '-'}
+              </div>
+
+              {/* Velocity */}
+              <div className="w-16 text-center text-zinc-400">
+                {step.velocity}
+              </div>
+
+              {/* Instrument Assignment */}
+              <div className="w-24 text-center text-zinc-400 truncate">
+                {step.instrumentAssignmentId ? step.instrumentAssignmentId.replace('assignment-', '') : '--'}
+              </div>
+
+              {/* Phrase FX */}
+              <div className="w-20 text-center text-amber-400/90">
+                {step.phraseFx !== '--' ? `${step.phraseFx} ${step.phraseFxValue}` : '--'}
+              </div>
+
+              {/* Table FX / Extra */}
+              <div className="flex-1 text-left px-2 text-zinc-500 truncate">
+                {step.tableFx !== '--' ? `Tbl: ${step.tableFx}` : '---'}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
