@@ -65,7 +65,7 @@ class TrackerEngine {
 
   public start(): void {
     if (this.isPlaying) return;
-    this.isPlaying = this.runLoop.bind(this);
+    this.isPlaying = true; // Fixed: correctly assigned boolean flag
 
     // Calculate interval for 16th note steps based on BPM
     // 60 seconds / BPM / 4 steps per beat = interval in seconds
