@@ -8,21 +8,21 @@ import { audioEngine } from '../audio/audioEngine';
 export interface TrackerStepEvent {
   stepIndex: number;
   note: string;
-  instrument: string; // e.g., 'A1', 'B02' corresponding to pad banks
-  volume: string;
+  sampleId?: string;
+  fx?: string;
 }
 
 class TrackerBridge {
   public handleStepTrigger(stepData: TrackerStepEvent): void {
-    if (!stepData || !stepData.instrument || stepData.instrument === '--') {
-      return; // Empty step, do nothing
+    if (!stepData || (!stepData.sampleId && !stepData.note) || stepData.sampleId === '--') {
+      return; // Empty step, skip
     }
 
-    const padId = stepData.instrument; // e.g., 'A1' or 'B04'
-    console.log(`[TrackerBridge] Playhead hit step ${stepData.stepIndex} -> Triggering Pad ${padId}`);
+    const padId = stepData.sampleId ?? stepData.note; 
+    console.log(`[TrackerBridge] Playhead hit step ${stepData.stepIndex} -> Triggering Pad/Sample ${padId}`);
 
-    // If an audio buffer exists for this pad, trigger it via audioEngine
-    // audioEngine.triggerVoice(padId, buffer, playbackRate);
+    // If an audio buffer is loaded for this pad, trigger it via audioEngine
+    // e.g., audioEngine.triggerVoice(padId, buffer);
   }
 }
 
