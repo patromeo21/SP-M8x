@@ -1,12 +1,13 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * App.tsx — Master Shell Container & View Controller (Updated with FX Strip)
+ * App.tsx — Master Shell Container & View Controller (Updated with TrackerGrid)
  */
 
 import React, { useState } from 'react';
 import { Pad, SamplerMode, BankId } from './types';
 import { SamplerWorkspace } from './sampler/SamplerWorkspace';
 import { FxStrip } from './fx/FxStrip';
+import { TrackerGrid } from './tracker/TrackerGrid';
 
 // Initialize 16 pads for Bank A
 const createInitialPads = (): Pad[] => {
@@ -139,8 +140,8 @@ export const App: React.FC = () => {
           </div>
         )}
         {activeTab === 'tracker' && (
-          <div className="flex items-center justify-center h-full text-zinc-500 text-sm">
-            M8 Tracker Workspace (Coming Up Next)
+          <div className="h-full p-4">
+            <TrackerGrid />
           </div>
         )}
       </main>
