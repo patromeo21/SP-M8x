@@ -1,89 +1,120 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * fxEngine.ts — Punch-In Performance FX DSP Chain
+ * FxStrip.tsx — Effects Strip & Punch-In Control Interface
  */
 
-export type FXType = 'filter' | 'bitcrush' | 'delay' | 'none';
+import React, { useState, useEffect } from 'react';
+import { projectController } from '../project/projectController';
+import { fxEngine } from './fxEngine';
 
-export class FXEngine {
-  private ctx: AudioContext | null = null;
-  private inputNode: GainNode | null = null;
-  private outputNode: GainNode | null = null;
+export const FxStrip: React.FC = () => {
+  const [projectState, setProjectState] = useState(() => projectController.getState());
+  const [activeEffect, setActiveEffect] = useState<string>('FILTER');
 
-  // Effect Nodes
-  private filterNode: BiquadFilterNode | null = null;
-  private delayNode: DelayNode | null = null;
-  private delayFeedback: GainNode | null = null;
-  private distortionNode: WaveShaperNode | null = null;
-  
-  private activeFx: FXType = 'none';
+  useEffect(() => {
+    const unsubscribe = projectController.subscribe((newState) => {
+      setProjectState(newState);
+    });
+    return () => unsubscribe();
+  }, []);
 
-  public initialize(ctx: AudioContext, destination: AudioNode): void {
-    this.ctx = ctx;
-    this.inputNode = this.ctx.createGain();
-    this.outputNode = this.ctx.createGain();
+  const stateRecord = projectState as unknown as Record<string, any>;
+  const masterVolume = stateRecord.effects?.master?.masterVolume ?? 0.8;
+  const filterCutoff = stateRecord.effects?.master?.filterCutoff ?? 20000;
+  const bitCrushDepth = stateRecord.effects?.master?.bitCrushDepth ?? 16;
 
-    // Initialize Biquad Filter (Lowpass sweep)
-    this.filterNode = this.ctx.createBiquadFilter();
-    this.filterNode.type = 'lowpass';
-    this.filterNode.frequency.setValueAtTime(20000, this.ctx.currentTime);
-    this.filterNode.Q.setValueAtTime(4, this.ctx.currentTime);
+  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = parseFloat(e.target.value);
+    projectController.setMasterVolume(val);
+    fxEngine.setMasterVolume(val);
+  };
 
-    // Initialize Delay (Throw effect)
-    this.delayNode = this.ctx.createDelay(2.0);
-    this.delayNode.delayTime.setValueAtTime(0.375, this.ctx.currentTime);
-    this.delayFeedback = this.ctx.createGain();
-    this.delayFeedback.gain.setValueAtTime(0.4, this.ctx.currentTime);
-    this.delayNode.connect(this.delayFeedback);
-    this.delayFeedback.connect(this.delayNode);
+  const handleFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = parseFloat(e.target.value);
+    fxEngine.setFilterCutoff(val);
+  };
 
-    // Initialize Distortion / Bitcrush simulator via WaveShaper
-    this.distortionNode = this.ctx.createWaveShaper();
-    this.distortionNode.curve = this.makeDistortionCurve(0) as unknown as Float32Array<ArrayBuffer>;
+  const handleBitCrushChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = parseInt(e.target.value, 10);
+    fxEngine.setBitCrushDepth(val);
+  };
 
-    // Wire default dry path: Input -> Output
-    this.inputNode.connect(this.outputNode);
-    this.outputNode.connect(destination);
-  }
+  return (
+    <div className="flex flex-col gap-4 p-4 bg-zinc-900/60 border border-zinc-800 rounded-xl font-mono select-none">
+      <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+        <h2 className="text-xs font-bold text-cyan-400">FX STRIP & MASTER MIXER</h2>
+        <div className="flex items-center gap-1">
+          {['FILTER', 'CRUSH', 'DELAY'].map((fx) => (
+            <button
+              key={fx}
+              type="button"
+              onPointerDown={() => setActiveEffect(fx)}
+              className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all active:scale-95 ${
+                activeEffect === fx
+                  ? 'bg-cyan-500 text-zinc-950 shadow-md shadow-cyan-500/20'
+                  : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+              }`}
+            >
+              {fx}
+            </button>
+          ))}
+        </div>
+      </div>
 
-  public setEffect(fx: FXType, intensity: number = 0.5): void {
-    if (!this.ctx || !this.inputNode || !this.outputNode) return;
-    const now = this.ctx.currentTime;
-    
-    this.inputNode.disconnect();
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Master Volume */}
+        <div className="flex flex-col gap-2 p-3 bg-zinc-950/60 border border-zinc-800/80 rounded-lg">
+          <div className="flex justify-between text-[10px] text-zinc-400">
+            <span>MASTER VOL</span>
+            <span className="text-cyan-400 font-bold">{Math.round(masterVolume * 100)}%</span>
+          </div>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={masterVolume}
+            onChange={handleVolumeChange}
+            className="w-full accent-cyan-500 bg-zinc-800 rounded-lg h-2 cursor-pointer"
+          />
+        </div>
 
-    if (fx === 'filter' && this.filterNode) {
-      const freq = 200 + intensity * 17800;
-      this.filterNode.frequency.setTargetAtTime(freq, now, 0.02);
-      this.inputNode.connect(this.filterNode);
-      this.filterNode.connect(this.outputNode);
-    } else if (fx === 'bitcrush' && this.distortionNode) {
-      this.distortionNode.curve = this.makeDistortionCurve(intensity * 50) as unknown as Float32Array<ArrayBuffer>;
-      this.inputNode.connect(this.distortionNode);
-      this.distortionNode.connect(this.outputNode);
-    } else if (fx === 'delay' && this.delayNode) {
-      this.inputNode.connect(this.delayNode);
-      this.delayNode.connect(this.outputNode);
-      this.inputNode.connect(this.outputNode);
-    } else {
-      this.inputNode.connect(this.outputNode);
-    }
+        {/* Filter Cutoff */}
+        <div className="flex flex-col gap-2 p-3 bg-zinc-950/60 border border-zinc-800/80 rounded-lg">
+          <div className="flex justify-between text-[10px] text-zinc-400">
+            <span>FILTER CUTOFF</span>
+            <span className="text-cyan-400 font-bold">{Math.round(filterCutoff)} Hz</span>
+          </div>
+          <input
+            type="range"
+            min="100"
+            max="20000"
+            step="100"
+            value={filterCutoff}
+            onChange={handleFilterChange}
+            className="w-full accent-cyan-500 bg-zinc-800 rounded-lg h-2 cursor-pointer"
+          />
+        </div>
 
-    this.activeFx = fx;
-  }
+        {/* Bitcrush Resolution */}
+        <div className="flex flex-col gap-2 p-3 bg-zinc-950/60 border border-zinc-800/80 rounded-lg">
+          <div className="flex justify-between text-[10px] text-zinc-400">
+            <span>BIT CRUSH</span>
+            <span className="text-cyan-400 font-bold">{bitCrushDepth} BIT</span>
+          </div>
+          <input
+            type="range"
+            min="4"
+            max="16"
+            step="1"
+            value={bitCrushDepth}
+            onChange={handleBitCrushChange}
+            className="w-full accent-cyan-500 bg-zinc-800 rounded-lg h-2 cursor-pointer"
+          />
+        </div>
+      </div>
+    </div>
+  );
+};
 
-  private makeDistortionCurve(amount: number): Float32Array {
-    const k = typeof amount === 'number' ? amount : 50;
-    const n_samples = 44100;
-    const curve = new Float32Array(n_samples);
-    const deg = Math.PI / 180;
-    for (let i = 0; i < n_samples; ++i) {
-      const x = (i * 2) / n_samples - 1;
-      curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
-    }
-    return curve;
-  }
-}
-
-// Export singleton instance as requested by FxStrip imports
-export const fxEngine = new FXEngine();
+export default FxStrip;
