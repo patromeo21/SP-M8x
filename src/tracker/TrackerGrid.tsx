@@ -9,7 +9,7 @@ import { selectPatternById } from '../project/trackerSelectors';
 import type { TrackerStepItem } from '../project/projectTypes';
 
 interface TrackerGridProps {
-  patternId: string;
+  patternId?: string; // Optional — defaults to first pattern if omitted
   currentStepIndex?: number;
   onStepSelect?: (stepIndex: number) => void;
 }
@@ -20,12 +20,13 @@ export const TrackerGrid: React.FC<TrackerGridProps> = ({
   onStepSelect,
 }) => {
   const projectState = projectController.getState();
-  const pattern = selectPatternById(projectState, patternId);
+  const targetPatternId = patternId ?? projectState.tracker.patterns[0]?.id ?? 'pattern-00';
+  const pattern = selectPatternById(projectState, targetPatternId);
 
   if (!pattern) {
     return (
       <div className="p-4 bg-zinc-900 text-zinc-400 font-mono text-sm rounded-lg border border-zinc-800">
-        Pattern {patternId} not found.
+        No tracker patterns found in project.
       </div>
     );
   }
