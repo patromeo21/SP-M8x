@@ -1,81 +1,91 @@
 /**
- * SP-M8x FX Engine
- * fxEngine.ts — Web Audio DSP processing chain for Punch-In FX and Master Buss
+ * SP-M8x Hybrid Music Production Suite
+ * fxEngine.ts — Punch-In Performance FX DSP Chain
  */
 
-import { PunchInFXState, MasterFXState } from '../types';
+export type FXType = 'filter' | 'bitcrush' | 'delay' | 'none';
 
-class FXEngine {
-  private ctx: AudioContext | null = null;
-  private inputNode: GainNode | null = null;
-  private outputNode: GainNode | null = null;
+export class FXEngine {
+  private ctx: AudioContext;
+  private inputNode: GainNode;
+  private outputNode: GainNode;
 
-  // Punch-In FX Nodes
-  private filterNode: BiquadFilterNode | null = null;
-  private delayNode: DelayNode | null = null;
-  private delayFeedbackGain: GainNode | null = null;
-  private compressorNode: DynamicsCompressorNode | null = null;
+  // Effect Nodes
+  private filterNode: BiquadFilterNode;
+  private delayNode: DelayNode;
+  private delayFeedback: GainNode;
+  private distortionNode: WaveShaperNode;
+  
+  private activeFx: FXType = 'none';
 
-  constructor() {
-    // Initialized lazily via audioEngine context
-  }
-
-  public init(context: AudioContext, destinationNode: AudioNode): AudioNode {
-    this.ctx = context;
-
-    // Create primary biquad filter
-    this.filterNode = this.ctx.createBiquadFilter();
-    this.filterNode.type = 'lowpass';
-    this.filterNode.frequency.value = 20000;
-    this.filterNode.Q.value = 1.0;
-
-    // Create delay and feedback nodes
-    this.delayNode = this.ctx.createDelay(2.0);
-    this.delayNode.delayTime.value = 0.375; // Default dotted 8th or similar musical timing
-    this.delayFeedbackGain = this.ctx.createGain();
-    this.delayFeedbackGain.gain.value = 0.3;
-
-    // Route delay loop
-    this.delayNode.connect(this.delayFeedbackGain);
-    this.delayFeedbackGain.connect(this.delayNode);
-
-    // Create master dynamics compressor / limiter
-    this.compressorNode = this.ctx.createDynamicsCompressor();
-    this.compressorNode.threshold.value = -12;
-    this.compressorNode.ratio.value = 4;
-
-    // Input / Output gain wrappers
+  constructor(ctx: AudioContext, destination: AudioNode) {
+    this.ctx = ctx;
     this.inputNode = this.ctx.createGain();
     this.outputNode = this.ctx.createGain();
 
-    // Chain: Input -> Filter -> Compressor -> Destination
-    this.inputNode.connect(this.filterNode);
-    this.filterNode.connect(this.compressorNode);
-    this.compressorNode.connect(this.outputNode);
-    this.outputNode.connect(destinationNode);
+    // Initialize Biquad Filter (Lowpass sweep)
+    this.filterNode = this.ctx.createBiquadFilter();
+    this.filterNode.type = 'lowpass';
+    this.filterNode.frequency.setValueAtTime(20000, this.ctx.currentTime);
+    this.filterNode.Q.setValueAtTime(4, this.ctx.currentTime);
 
+    // Initialize Delay (Throw effect)
+    this.delayNode = this.ctx.createDelay(2.0);
+    this.delayNode.delayTime.setValueAtTime(0.375, this.ctx.currentTime); // dotted 8th note feel
+    this.delayFeedback = this.ctx.createGain();
+    this.delayFeedback.gain.setValueAtTime(0.4, this.ctx.currentTime);
+    this.delayNode.connect(this.delayFeedback);
+    this.delayFeedback.connect(this.delayNode);
+
+    // Initialize Distortion / Bitcrush simulator via WaveShaper
+    this.distortionNode = this.ctx.createWaveShaper();
+    this.distortionNode.curve = this.makeDistortionCurve(0) as unknown as Float32Array<ArrayBuffer>;
+
+    // Wire default dry path: Input -> Output
+    this.inputNode.connect(this.outputNode);
+    this.outputNode.connect(destination);
+  }
+
+  public getInputNode(): AudioNode {
     return this.inputNode;
   }
 
-  public updatePunchInFX(state: PunchInFXState): void {
-    if (!this.ctx || !this.filterNode || !this.delayFeedbackGain) return;
+  public setEffect(fx: FXType, intensity: number = 0.5): void {
     const now = this.ctx.currentTime;
+    // Disconnect current routing
+    this.inputNode.disconnect();
 
-    // Update Filter Cutoff and Resonance smoothly
-    this.filterNode.frequency.setTargetAtTime(state.filterCutoff, now, 0.02);
-    this.filterNode.Q.setTargetAtTime(state.filterResonance, now, 0.02);
+    if (fx === 'filter') {
+      // Sweep cutoff from 200Hz to 18kHz based on intensity
+      const freq = 200 + intensity * 17800;
+      this.filterNode.frequency.setTargetAtTime(freq, now, 0.02);
+      this.inputNode.connect(this.filterNode);
+      this.filterNode.connect(this.outputNode);
+    } else if (fx === 'bitcrush') {
+      this.distortionNode.curve = this.makeDistortionCurve(intensity * 50) as unknown as Float32Array<ArrayBuffer>;
+      this.inputNode.connect(this.distortionNode);
+      this.distortionNode.connect(this.outputNode);
+    } else if (fx === 'delay') {
+      this.inputNode.connect(this.delayNode);
+      this.delayNode.connect(this.outputNode);
+      this.inputNode.connect(this.outputNode); // Dry + Wet
+    } else {
+      // Bypass
+      this.inputNode.connect(this.outputNode);
+    }
 
-    // Update Delay feedback
-    this.delayFeedbackGain.gain.setTargetAtTime(state.delayFeedback, now, 0.02);
+    this.activeFx = fx;
   }
 
-  public updateMasterFX(state: MasterFXState): void {
-    if (!this.ctx || !this.compressorNode) return;
-    const now = this.ctx.currentTime;
-
-    this.compressorNode.threshold.setTargetAtTime(state.limiterThreshold, now, 0.02);
-    this.compressorNode.ratio.setTargetAtTime(state.compressorRatio, now, 0.02);
+  private makeDistortionCurve(amount: number): Float32Array {
+    const k = typeof amount === 'number' ? amount : 50;
+    const n_samples = 44100;
+    const curve = new Float32Array(n_samples);
+    const deg = Math.PI / 180;
+    for (let i = 0; i < n_samples; ++i) {
+      const x = (i * 2) / n_samples - 1;
+      curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
+    }
+    return curve;
   }
 }
-
-export const fxEngine = new FXEngine();
