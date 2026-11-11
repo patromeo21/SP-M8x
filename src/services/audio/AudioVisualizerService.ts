@@ -23,7 +23,7 @@ export class AudioVisualizerService {
 
   private animationFrameId: number | null = null;
   private lastFrameTime: number = 0;
-  private dataArray: Uint8Array;
+  private dataArray: Uint8Array<ArrayBuffer>;
   private isRunning: boolean = false;
 
   constructor(options: VisualizerOptions) {
@@ -38,7 +38,7 @@ export class AudioVisualizerService {
     // Configure analyser
     this.analyser.fftSize = 2048;
     const bufferLength = this.analyser.frequencyBinCount;
-    this.dataArray = new Uint8Array(bufferLength);
+    this.dataArray = new Uint8Array(new ArrayBuffer(bufferLength));
   }
 
   public setMode(mode: 'waveform' | 'frequency'): void {
