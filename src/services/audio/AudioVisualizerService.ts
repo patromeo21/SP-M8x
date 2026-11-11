@@ -1,4 +1,4 @@
-p/**
+/**
  * SP-M8x Hybrid Music Production Suite
  * useAudioVisualizer.ts — React Hook for Audio Visualizer Service Lifecycle
  */
