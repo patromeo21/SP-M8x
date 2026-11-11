@@ -62,10 +62,11 @@ export interface PadAssignment {
 export interface TrackerStepItem {
   id: string;
   stepIndex: number;
+  subTickOffset: number; // 0 to 5 ticks for micro-timing / groove translation
   note: string;       // e.g., "C-4", "---"
   velocity: number;   // 0 to 127
   instrumentAssignmentId: string | null;
-  phraseFx: string;   // Command string
+  phraseFx: string;   // Command string (e.g., filter, delay, bitcrush)
   phraseFxValue: number;
   tableVolume: number | null;
   tablePitch: number | null;
