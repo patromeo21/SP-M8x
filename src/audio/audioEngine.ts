@@ -3,9 +3,9 @@
  * audioEngine.ts — Web Audio API Core Engine & Buffer Cache Integration
  */
 
-import { projectController } from './project/projectController';
-import { audioCache } from './audio/audioCache';
-import type { BankId } from './project/projectTypes';
+import { projectController } from '../project/projectController';
+import { audioCache } from './audioCache';
+import type { BankId, PadAssignment } from '../project/projectTypes';
 
 class AudioEngine {
   private audioContext: AudioContext | null = null;
@@ -41,7 +41,7 @@ class AudioEngine {
     const ctx = this.getContext();
     const state = projectController.getState();
 
-    const pad = state.sampler.assignments.find((p) => p.bank === bank && p.slot === slot);
+    const pad = state.sampler.assignments.find((p: PadAssignment) => p.bank === bank && p.slot === slot);
     if (!pad || !pad.sampleAssetId) {
       console.warn(`[AudioEngine] No sample assigned to Pad ${bank}-${slot + 1}`);
       return;
