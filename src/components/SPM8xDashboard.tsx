@@ -7,7 +7,7 @@ import React, { useState } from 'react';
 import { TrackerGrid } from '../tracker/TrackerGrid';
 import { PadBankManager } from '../sampler/PadBankManager';
 import { MasterMixerAndPunchInFX } from '../fx/MasterMixerAndPunchInFX';
-import { useAudioVisualizer } from '../audio/useAudioVisualizer';
+import { useAudioVisualizer } from '../services/audio/useAudioVisualizer';
 import { projectController } from '../project/projectController';
 
 interface SPM8xDashboardProps {
@@ -47,7 +47,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ analyser }) => {
 
         <div className="flex items-center gap-2 text-xs text-zinc-400">
           <span className="bg-zinc-950 px-2.5 py-1 rounded border border-zinc-800 font-bold text-zinc-300">
-            {projectState.id ?? 'SP-M8x Project'}
+            {projectState.projectId ?? 'SP-M8x Project'}
           </span>
           <span className="bg-zinc-950 px-2 py-1 rounded border border-zinc-800 text-amber-400 font-bold">
             {projectState.settings.bpm} BPM
