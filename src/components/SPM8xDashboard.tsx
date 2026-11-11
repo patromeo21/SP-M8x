@@ -47,7 +47,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ analyser }) => {
 
         <div className="flex items-center gap-2 text-xs text-zinc-400">
           <span className="bg-zinc-950 px-2.5 py-1 rounded border border-zinc-800 font-bold text-zinc-300">
-            {projectState.projectId ?? 'SP-M8x Project'}
+            SP-M8x Session
           </span>
           <span className="bg-zinc-950 px-2 py-1 rounded border border-zinc-800 text-amber-400 font-bold">
             {projectState.settings.bpm} BPM
