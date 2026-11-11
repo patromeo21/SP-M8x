@@ -7,7 +7,7 @@ import React, { useState } from 'react';
 import { TrackerGrid } from '../tracker/TrackerGrid';
 import { PadBankManager } from '../sampler/PadBankManager';
 import { MasterMixerAndPunchInFX } from '../fx/MasterMixerAndPunchInFX';
-import { useAudioVisualizer } from '../services/audio/useAudioVisualizer';
+import { useAudioVisualizer } from '../audio/useAudioVisualizer';
 import { projectController } from '../project/projectController';
 
 interface SPM8xDashboardProps {
