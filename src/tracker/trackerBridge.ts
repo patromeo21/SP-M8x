@@ -4,26 +4,42 @@
  */
 
 import { audioEngine } from '../audio/audioEngine';
+import { projectController } from '../project/projectController';
 
 export interface TrackerStepEvent {
   stepIndex: number;
-  note: string;
+  note?: string;
   sampleId?: string;
   fx?: string;
 }
 
 class TrackerBridge {
-  public handleStepTrigger(stepData: TrackerStepEvent): void {
-    if (!stepData || (!stepData.sampleId && !stepData.note) || stepData.sampleId === '--') {
-      return; // Empty step, skip
+  /**
+   * Evaluates the active pattern step at the given index and triggers sample playback.
+   */
+  public handleStepTrigger(stepIndex: number): void {
+    const state = projectController.getState();
+    const activePatternIdx = state.settings.activePatternIndex ?? 0;
+    const currentPattern = state.tracker.patterns[activePatternIdx];
+
+    if (!currentPattern || !currentPattern.steps[stepIndex]) return;
+
+    const step = currentPattern.steps[stepIndex];
+
+    // Skip empty or unassigned steps
+    if (!step || (!step.sampleId && !step.note) || step.sampleId === '--' || step.note === '---') {
+      return;
     }
 
-    const padId = stepData.sampleId ?? stepData.note; 
-    console.log(`[TrackerBridge] Playhead hit step ${stepData.stepIndex} -> Triggering Pad/Sample ${padId}`);
+    // Resolve target pad ID (e.g. "A1")
+    const padId = step.sampleId && step.sampleId !== '--' ? step.sampleId : 'A1';
 
-    // If an audio buffer is loaded for this pad, trigger it via audioEngine
-    // e.g., audioEngine.triggerVoice(padId, buffer);
+    console.log(`[TrackerBridge] Step ${stepIndex} -> Triggering Pad ${padId} (Note: ${step.note})`);
+
+    // Execute polyphonic/monophonic voice trigger in Web Audio API
+    audioEngine.triggerVoice(padId);
   }
 }
 
 export const trackerBridge = new TrackerBridge();
+export default trackerBridge;

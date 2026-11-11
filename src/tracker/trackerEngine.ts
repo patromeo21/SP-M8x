@@ -3,7 +3,7 @@
  * trackerEngine.ts — Step Sequencer Playhead & Tracker Bridge Integration
  */
 
-import { trackerBridge, TrackerStepEvent } from './trackerBridge';
+import { trackerBridge } from './trackerBridge';
 
 export class TrackerEngine {
   private currentStep: number = 0;
@@ -32,7 +32,7 @@ export class TrackerEngine {
     if (this.isPlaying) return;
     this.isPlaying = true;
 
-    // Calculate interval in ms based on 16th note steps (60000 / bpm / 4)
+    // Calculate 16th-note step interval: (60000ms / BPM) / 4
     const intervalMs = (60000 / this.bpm) / 4;
 
     this.timerId = window.setInterval(() => {
@@ -66,18 +66,13 @@ export class TrackerEngine {
       this.onStepCallback(this.currentStep);
     }
 
-    // Safely structure step event with fallback for flexible step item schemas
-    const eventData: TrackerStepEvent = {
-      stepIndex: this.currentStep,
-      note: 'C-3',
-      sampleId: 'A1',
-    };
+    // Pass the active playhead index to the bridge for real-time sample execution
+    trackerBridge.handleStepTrigger(this.currentStep);
 
-    trackerBridge.handleStepTrigger(eventData);
-
-    // Advance step pointer (64-step loop)
+    // Advance step pointer across 64-step pattern loop
     this.currentStep = (this.currentStep + 1) % 64;
   }
 }
 
 export const trackerEngine = new TrackerEngine();
+export default trackerEngine;
