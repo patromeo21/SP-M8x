@@ -1,6 +1,6 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * trackerEngine.ts — Lookahead scheduler for the 16-step phrase sequencer
+ * trackerEngine.ts — Lookahead scheduler with swing and visual step sync
  */
 
 import { audioEngine } from '../audio/audioEngine';
@@ -38,8 +38,11 @@ export class TrackerEngine {
 
     try {
       const context = audioEngine.initialize();
+      const state = projectController.getState();
       this.isPlaying = true;
       this.nextStepTime = context.currentTime + START_AHEAD_SECONDS;
+      this.currentStep = 0;
+      this.bpm = Number.isFinite(state.settings.bpm) ? state.settings.bpm : this.bpm;
       this.scheduleAhead();
       this.timerId = window.setInterval(() => this.scheduleAhead(), SCHEDULER_INTERVAL_MS);
     } catch (error) {
@@ -82,11 +85,13 @@ export class TrackerEngine {
     const patternLength = Math.max(1, Math.min(STEP_COUNT, pattern?.steps.length ?? STEP_COUNT));
     const bpm = Number.isFinite(state.settings.bpm) ? state.settings.bpm : this.bpm;
     const stepDuration = 60 / Math.max(40, Math.min(300, bpm)) / 4;
+    const swing = Number.isFinite(state.settings.swing) ? state.settings.swing ?? 0 : 0;
     const scheduleUntil = context.currentTime + LOOKAHEAD_SECONDS;
 
     while (this.nextStepTime < scheduleUntil) {
       const step = this.currentStep % patternLength;
-      trackerBridge.handleStepTrigger(step, this.nextStepTime);
+      const swingOffset = step % 2 === 1 && swing > 0 ? stepDuration * 0.15 * swing : 0;
+      trackerBridge.handleStepTrigger(step, this.nextStepTime + swingOffset);
       this.onStepCallback?.(step);
 
       this.currentStep = (step + 1) % patternLength;
