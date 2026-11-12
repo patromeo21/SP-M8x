@@ -1,117 +1,151 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * SamplerWorkbench.tsx — Sample Chopping & Waveform Editor Workbench
+ * SamplerWorkbench.tsx — M8 Big Font Mode Waveform / Slicing Workbench
  */
 
 import React, { useState } from 'react';
-import { audioEngine } from '../audio/audioEngine';
 
-interface SamplerWorkbenchProps {
-  selectedPadId?: string;
-  selectedPad?: any;
-  onUpdatePad?: (updatedPad: any) => void;
-  onTriggerPad?: (padId: number) => Promise<void>;
+export interface SamplerWorkbenchProps {
+  sampleName?: string;
+  sampleDuration?: number; // in seconds
+  sampleRate?: number;    // e.g., 44100
+  startPoint?: number;    // 0 - 100%
+  endPoint?: number;      // 0 - 100%
+  pitchShift?: number;    // semitones (-12 to +12)
+  onParameterChange?: (param: string, value: number) => void;
 }
 
 export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
-  selectedPadId = 'A1',
-  selectedPad,
-  onUpdatePad,
-  onTriggerPad,
+  sampleName = 'NO SAMPLE LOADED',
+  sampleDuration = 0.0,
+  sampleRate = 44100,
+  startPoint = 0,
+  endPoint = 100,
+  pitchShift = 0,
+  onParameterChange,
 }) => {
-  const [startPoint, setStartPoint] = useState<number>(0);
-  const [endPoint, setEndPoint] = useState<number>(100);
-  const [isLooping, setIsLooping] = useState<boolean>(false);
+  const [start, setStart] = useState<number>(startPoint);
+  const [end, setEnd] = useState<number>(endPoint);
+  const [pitch, setPitch] = useState<number>(pitchShift);
 
-  const activePadLabel = selectedPad?.id || selectedPadId;
+  const handleStartChange = (val: number) => {
+    setStart(val);
+    if (onParameterChange) onParameterChange('start', val);
+  };
 
-  const handlePreviewSlice = async () => {
-    console.log(`[SamplerWorkbench] Previewing slice for Pad ${activePadLabel} [${startPoint}% - ${endPoint}%]`);
-    if (onTriggerPad) {
-      const numericId = typeof activePadLabel === 'number' ? activePadLabel : parseInt(String(activePadLabel).replace(/\D/g, ''), 10) || 1;
-      await onTriggerPad(numericId);
-    } else {
-      audioEngine.triggerVoice(String(activePadLabel));
-    }
+  const handleEndChange = (val: number) => {
+    setEnd(val);
+    if (onParameterChange) onParameterChange('end', val);
+  };
+
+  const handlePitchChange = (val: number) => {
+    setPitch(val);
+    if (onParameterChange) onParameterChange('pitch', val);
   };
 
   return (
-    <div className="flex flex-col gap-4 p-4 bg-zinc-900/60 border border-zinc-800 rounded-xl font-mono select-none">
-      <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-        <div>
-          <h2 className="text-xs font-bold text-cyan-400">SAMPLE WORKBENCH & CHOPPER</h2>
-          <p className="text-[10px] text-zinc-500">
-            Active Target: <span className="text-cyan-400 font-bold">{activePadLabel}</span>
-            {selectedPad?.name && <span className="ml-2 text-zinc-400">({selectedPad.name})</span>}
-          </p>
+    <div className="flex flex-col h-full bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 font-mono select-none shadow-xl">
+      
+      {/* Workbench Header & Telemetry */}
+      <div className="flex items-center justify-between border-b border-[var(--border-grid)] pb-2 mb-3">
+        <div className="flex items-center space-x-2">
+          <span className="text-[10px] font-extrabold tracking-widest text-[var(--accent-table)] drop-shadow-[0_0_8px_rgba(192,132,252,0.3)]">
+            SAMPLER WORKBENCH
+          </span>
+          <span className="text-[9px] bg-purple-950 text-[var(--accent-table)] border border-purple-500/40 px-1.5 py-0.5 rounded font-bold">
+            EDIT & SLICE
+          </span>
         </div>
-
-        <button
-          type="button"
-          onPointerDown={() => setIsLooping(!isLooping)}
-          className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all active:scale-95 ${
-            isLooping ? 'bg-amber-500 text-zinc-950 shadow-md shadow-amber-500/20' : 'bg-zinc-800 text-zinc-400'
-          }`}
-        >
-          LOOP: {isLooping ? 'ON' : 'OFF'}
-        </button>
+        <div className="text-[9px] text-zinc-400">
+          RATE: <strong className="text-zinc-200">{sampleRate}HZ</strong>
+        </div>
       </div>
 
-      {/* Waveform Display Box */}
-      <div className="relative h-36 bg-zinc-950/80 border border-zinc-800 rounded-xl flex items-center justify-center overflow-hidden">
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="w-full h-1 bg-zinc-800 flex items-center justify-between px-4">
-            <span className="w-2 h-2 rounded-full bg-cyan-500 animate-ping" />
-            <span className="text-[10px] text-zinc-600 tracking-widest">WAVEFORM DENSITY STREAM</span>
-            <span className="w-2 h-2 rounded-full bg-cyan-500 animate-ping" />
-          </div>
+      {/* Waveform Display Canvas Scaffold */}
+      <div className="relative flex flex-col items-center justify-center h-28 bg-zinc-950 border border-zinc-800 rounded-lg p-2 mb-3 overflow-hidden group">
+        {/* Simulated Waveform Grid Lines */}
+        <div className="absolute inset-0 grid grid-cols-8 grid-rows-4 pointer-events-none opacity-20">
+          {Array.from({ length: 32 }).map((_, i) => (
+            <div key={i} className="border-[0.5px] border-zinc-700/40" />
+          ))}
         </div>
-        <span className="z-10 text-[10px] text-zinc-500 bg-zinc-900/80 px-3 py-1 rounded-full border border-zinc-800">
-          Drop Audio Sample or Record via Line-In
+
+        {/* Center Sample Name / Status */}
+        <span className="text-xs font-black tracking-wider text-zinc-300 z-10 truncate max-w-[220px]">
+          {sampleName}
         </span>
-      </div>
 
-      {/* Chop & Range Sliders */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="flex flex-col gap-2 p-3 bg-zinc-950/60 border border-zinc-800/80 rounded-lg">
-          <div className="flex justify-between text-[10px] text-zinc-400">
-            <span>START POINT</span>
-            <span className="text-cyan-400 font-bold">{startPoint}%</span>
-          </div>
-          <input
-            type="range"
-            min="0"
-            max="95"
-            value={startPoint}
-            onChange={(e) => setStartPoint(Number(e.target.value))}
-            className="w-full accent-cyan-500 bg-zinc-800 rounded-lg h-2 cursor-pointer"
-          />
+        {/* Waveform Visualizer Placeholder Bars */}
+        <div className="absolute bottom-2 left-3 right-3 flex items-end justify-between h-10 gap-0.5 pointer-events-none">
+          {Array.from({ length: 36 }).map((_, i) => {
+            const heightFactor = Math.sin(i * 0.4) * 50 + 50;
+            return (
+              <div 
+                key={i} 
+                className="w-1 bg-[var(--accent-table)] opacity-70 rounded-t"
+                style={{ height: `${Math.max(15, heightFactor)}%` }}
+              />
+            );
+          })}
         </div>
 
-        <div className="flex flex-col gap-2 p-3 bg-zinc-950/60 border border-zinc-800/80 rounded-lg">
-          <div className="flex justify-between text-[10px] text-zinc-400">
-            <span>END POINT</span>
-            <span className="text-cyan-400 font-bold">{endPoint}%</span>
-          </div>
-          <input
-            type="range"
-            min="5"
-            max="100"
-            value={endPoint}
-            onChange={(e) => setEndPoint(Number(e.target.value))}
-            className="w-full accent-cyan-500 bg-zinc-800 rounded-lg h-2 cursor-pointer"
-          />
+        {/* Duration / Telemetry Footer inside screen */}
+        <div className="absolute top-1.5 left-2 text-[8px] text-purple-400 font-bold">
+          DUR: {sampleDuration.toFixed(2)}S
         </div>
       </div>
 
-      {/* Action Trigger */}
-      <button
-        type="button"
-        onPointerDown={handlePreviewSlice}
-        className="w-full py-3 bg-cyan-600 hover:bg-cyan-500 text-zinc-950 font-bold text-xs rounded-xl transition-all active:scale-95 shadow-lg shadow-cyan-900/30"
-      >
-        PREVIEW SLICE RANGE
-      </button>
+      {/* Parameter Control Sliders (Start, End, Pitch) */}
+      <div className="grid grid-cols-3 gap-2 mt-auto">
+        {/* Start Point */}
+        <div className="flex flex-col bg-zinc-900/60 border border-zinc-800 rounded p-1.5">
+          <div className="flex justify-between text-[8px] mb-1">
+            <span className="text-zinc-400 font-bold">START</span>
+            <span className="text-[var(--accent-table)]">{start}%</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={start}
+            onChange={(e) => handleStartChange(Number(e.target.value))}
+            className="w-full accent-[var(--accent-table)] cursor-pointer h-1 bg-zinc-800 rounded"
+          />
+        </div>
+
+        {/* End Point */}
+        <div className="flex flex-col bg-zinc-900/60 border border-zinc-800 rounded p-1.5">
+          <div className="flex justify-between text-[8px] mb-1">
+            <span className="text-zinc-400 font-bold">END</span>
+            <span className="text-[var(--accent-table)]">{end}%</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={end}
+            onChange={(e) => handleEndChange(Number(e.target.value))}
+            className="w-full accent-[var(--accent-table)] cursor-pointer h-1 bg-zinc-800 rounded"
+          />
+        </div>
+
+        {/* Pitch Shift */}
+        <div className="flex flex-col bg-zinc-900/60 border border-zinc-800 rounded p-1.5">
+          <div className="flex justify-between text-[8px] mb-1">
+            <span className="text-zinc-400 font-bold">PITCH</span>
+            <span className="text-[var(--accent-table)]">{pitch > 0 ? `+${pitch}` : pitch}ST</span>
+          </div>
+          <input
+            type="range"
+            min={-12}
+            max={12}
+            value={pitch}
+            onChange={(e) => handlePitchChange(Number(e.target.value))}
+            className="w-full accent-[var(--accent-table)] cursor-pointer h-1 bg-zinc-800 rounded"
+          />
+        </div>
+      </div>
+
     </div>
   );
 };
