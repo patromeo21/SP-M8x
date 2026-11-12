@@ -1,129 +1,136 @@
 /**
- * SP-M8x Sampler Workspace
- * PadGrid.tsx — 16-Pad Performance Grid with MPC Chromatic & Sample Trigger support
+ * SP-M8x Hybrid Music Production Suite
+ * PadGrid.tsx — M8 Big Font Mode Sampler Pad Matrix (Banks A-D)
  */
 
 import React, { useState } from 'react';
-import { Pad, SamplerMode, BankId } from '../types';
-import { audioEngine } from '../audioEngine';
+import { projectController } from '../project/projectController';
 
-interface PadGridProps {
-  pads: Pad[];
-  mode: SamplerMode;
-  activeBank: BankId;
-  onPadSelect: (padId: number) => void;
-  selectedPadId: number;
+export interface PadGridProps {
+  onTriggerPad?: (bank: string, padIndex: number) => void;
+  onLoadSample?: (bank: string, padIndex: number, file: File) => void;
 }
 
-export const PadGrid: React.FC<PadGridProps> = ({
-  pads,
-  mode,
-  activeBank,
-  onPadSelect,
-  selectedPadId,
-}) => {
-  const [triggeredPads, setTriggeredPads] = useState<Record<number, boolean>>({});
+export const PadGrid: React.FC<PadGridProps> = ({ onTriggerPad, onLoadSample }) => {
+  const [activeBank, setActiveBank] = useState<'A' | 'B' | 'C' | 'D'>('A');
+  const [triggeredPad, setTriggeredPad] = useState<number | null>(null);
 
-  // Handle pad trigger for mobile touch and desktop click
-  const handlePadTrigger = async (padId: number) => {
-    await audioEngine.init();
+  // 16 pads per bank (4x4 grid configuration)
+  const pads = Array.from({ length: 16 }, (_, i) => {
+    const padNum = i + 1;
+    const padId = `${activeBank}${padNum}`;
+    return {
+      id: padId,
+      index: i,
+      label: `PAD ${padNum < 10 ? '0' + padNum : padNum}`,
+      sampleName: 'EMPTY', // Will reflect project state if bound
+      hasSample: false,
+    };
+  });
 
-    // If in MPC Chromatic mode, calculate semitone offset across the 16 pads
-    const semitoneOffset = mode === 'MPC_CHROMATIC' ? padId - 8 : 0;
+  const handlePadPress = (index: number) => {
+    setTriggeredPad(index);
+    // Visual flash timeout for tactile feedback
+    setTimeout(() => setTriggeredPad(null), 120);
 
-    // Fixed array lookup using .find() instead of direct callback indexing
-    const pad = pads.find((p) => p.id === padId) || pads[padId];
-    if (!pad) return;
+    if (onTriggerPad) {
+      onTriggerPad(activeBank, index);
+    }
+  };
 
-    audioEngine.triggerPad(padId, {
-      sliceStart: pad.sliceStart,
-      sliceEnd: pad.sliceEnd,
-      volume: pad.volume,
-      semitoneOffset: mode === 'MPC_CHROMATIC' ? semitoneOffset + (pad.pitchOffset || 0) : pad.pitchOffset || 0,
-      loop: pad.loop,
-    });
-
-    // Visual trigger state
-    setTriggeredPads((prev) => ({ ...prev, [padId]: true }));
-    setTimeout(() => {
-      setTriggeredPads((prev) => ({ ...prev, [padId]: false }));
-    }, 120);
-
-    onPadSelect(padId);
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, index: number) => {
+    const file = e.target.files?.[0];
+    if (file && onLoadSample) {
+      onLoadSample(activeBank, index, file);
+    }
   };
 
   return (
-    <div className="flex flex-col h-full bg-zinc-900 border border-zinc-800 rounded-xl p-4 shadow-2xl">
-      {/* Header bar indicating current mode and bank */}
-      <div className="flex items-center justify-between mb-3 px-1">
+    <div className="flex flex-col h-full bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 font-mono select-none shadow-xl">
+      
+      {/* Header & Bank Selector Controls */}
+      <div className="flex items-center justify-between border-b border-[var(--border-grid)] pb-2 mb-3">
         <div className="flex items-center space-x-2">
-          <span className="text-xs font-mono uppercase tracking-wider text-zinc-400">
-            Bank <strong className="text-amber-400">{activeBank}</strong>
+          <span className="text-[10px] font-extrabold tracking-widest text-[var(--accent-phrase)]">
+            SAMPLER PADS
           </span>
-          <span className="text-zinc-600">|</span>
-          <span className="text-xs font-mono uppercase tracking-wider text-zinc-400">
-            Mode: <strong className="text-cyan-400">{mode.replace('_', ' ')}</strong>
+          <span className="text-[9px] bg-cyan-950 text-[var(--accent-phrase)] border border-cyan-500/40 px-1.5 py-0.5 rounded font-bold">
+            SEL: BANK {activeBank}
           </span>
         </div>
-        <div className="text-xs font-mono text-zinc-500">
-          16-Pad Matrix (A13 Optimized)
+
+        {/* Bank Toggles (A, B, C, D) */}
+        <div className="flex space-x-1 bg-zinc-950 p-1 rounded border border-[var(--border-grid)]">
+          {(['A', 'B', 'C', 'D'] as const).map((bank) => (
+            <button
+              key={bank}
+              onClick={() => setActiveBank(bank)}
+              className={`px-2 py-0.5 text-[9px] font-bold rounded transition-all ${
+                activeBank === bank
+                  ? 'bg-[var(--accent-phrase)] text-zinc-950 shadow-[0_0_8px_rgba(34,211,238,0.5)]'
+                  : 'text-zinc-500 hover:text-zinc-300'
+              }`}
+            >
+              {bank}
+            </button>
+          ))}
         </div>
       </div>
 
       {/* 4x4 Pad Grid Matrix */}
-      <div className="grid grid-cols-4 gap-3 flex-1 min-h-[320px]">
-        {pads.slice(0, 16).map((pad, index) => {
-          const isSelected = selectedPadId === pad.id;
-          const isTriggered = triggeredPads[pad.id];
-          const hasBuffer = !!pad.buffer;
+      <div className="grid grid-cols-4 gap-2 flex-1">
+        {pads.map((pad, idx) => {
+          const isTriggered = triggeredPad === idx;
 
           return (
-            <button
+            <div
               key={pad.id}
-              type="button"
-              onPointerDown={() => handlePadTrigger(pad.id)}
-              className={`
-                relative flex flex-col justify-between p-3 rounded-lg border font-mono transition-all duration-75
-                touch-none select-none focus:outline-none
-                ${
-                  isTriggered
-                    ? 'bg-amber-500 border-amber-300 text-zinc-950 scale-[0.98] shadow-inner shadow-amber-900'
-                    : isSelected
-                    ? 'bg-zinc-800 border-amber-500/80 text-zinc-100 shadow-lg shadow-zinc-950'
-                    : hasBuffer
-                    ? 'bg-zinc-800/80 border-zinc-700 text-zinc-200 hover:border-zinc-500'
-                    : 'bg-zinc-900/60 border-zinc-800/80 text-zinc-600 hover:border-zinc-700'
-                }
-              `}
+              onClick={() => handlePadPress(idx)}
+              className={`relative flex flex-col items-center justify-between p-2 rounded-lg border cursor-pointer transition-all duration-75 select-none ${
+                isTriggered
+                  ? 'bg-[var(--accent-phrase)] border-[var(--accent-phrase)] text-zinc-950 scale-95 shadow-[0_0_12px_rgba(34,211,238,0.7)]'
+                  : 'bg-zinc-900/60 border-zinc-800 text-zinc-300 hover:border-zinc-700 hover:bg-zinc-900'
+              }`}
             >
-              <div className="flex items-center justify-between w-full">
-                <span className="text-xs opacity-70 font-semibold">
-                  {(index + 1).toString().padStart(2, '0')}
+              {/* Pad Identification Tag */}
+              <div className="w-full flex justify-between items-center text-[8px]">
+                <span className={`font-bold ${isTriggered ? 'text-zinc-900' : 'text-zinc-500'}`}>
+                  {pad.id}
                 </span>
-                {hasBuffer && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                )}
+                {/* Hidden file input overlay for loading audio directly to pad */}
+                <label 
+                  onClick={(e) => e.stopPropagation()} 
+                  className="cursor-pointer text-[7px] text-zinc-500 hover:text-[var(--accent-phrase)] underline"
+                >
+                  LOAD
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    className="hidden"
+                    onChange={(e) => handleFileChange(e, idx)}
+                  />
+                </label>
               </div>
 
-              <div className="text-left my-auto truncate w-full">
-                <div className="text-xs font-bold truncate">
-                  {pad.name || `Pad ${index + 1}`}
-                </div>
-                {mode === 'MPC_CHROMATIC' && (
-                  <div className="text-[10px] opacity-60">
-                    {index - 8 >= 0 ? `+${index - 8}` : index - 8} st
-                  </div>
-                )}
+              {/* Center Sample Label / Status */}
+              <div className="my-auto text-center">
+                <span className={`text-[10px] font-extrabold tracking-wider truncate block max-w-[70px] ${
+                  isTriggered ? 'text-zinc-950' : pad.hasSample ? 'text-zinc-100' : 'text-zinc-600'
+                }`}>
+                  {pad.hasSample ? pad.sampleName : 'EMPTY'}
+                </span>
               </div>
 
-              <div className="flex items-center justify-between text-[10px] opacity-50 w-full pt-1 border-t border-white/5">
-                <span>{pad.reverse ? 'REV' : 'FWD'}</span>
-                <span>{Math.round(pad.volume * 100)}%</span>
-              </div>
-            </button>
+              {/* Bottom Indicator Bar */}
+              <div className={`w-full h-1 rounded-full mt-1 ${
+                isTriggered ? 'bg-zinc-950' : pad.hasSample ? 'bg-[var(--accent-phrase)]' : 'bg-zinc-800'
+              }`} />
+            </div>
           );
         })}
       </div>
     </div>
   );
 };
+
+export default PadGrid;
