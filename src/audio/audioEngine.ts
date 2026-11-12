@@ -71,6 +71,7 @@ export class AudioEngine {
       volume?: number;
       semitoneOffset?: number;
       loop?: boolean;
+      scheduledTime?: number;
     } = {},
   ): string | null {
     const context = this.initialize();
@@ -94,12 +95,21 @@ export class AudioEngine {
     const semitones = clamp(options.semitoneOffset ?? 0, -48, 48);
     source.playbackRate.value = Math.pow(2, semitones / 12);
 
+    const startTime = Math.max(context.currentTime, options.scheduledTime ?? context.currentTime);
     const voiceGain = context.createGain();
-    voiceGain.gain.setValueAtTime(clamp(options.volume ?? 1, 0, 1), context.currentTime);
+    voiceGain.gain.setValueAtTime(clamp(options.volume ?? 1, 0, 1), startTime);
     source.connect(voiceGain);
     voiceGain.connect(this.masterGain);
 
-    return this.startVoice(source, voiceGain, normalizePadKey(padId), sliceStart, duration, source.loop);
+    return this.startVoice(
+      source,
+      voiceGain,
+      normalizePadKey(padId),
+      sliceStart,
+      duration,
+      source.loop,
+      startTime,
+    );
   }
 
   /** Legacy named-voice entry point; each call creates an independently tracked voice. */
@@ -113,7 +123,6 @@ export class AudioEngine {
     if (selectedBuffer) {
       source.buffer = selectedBuffer;
     } else {
-      // Retain the existing test-preview sound when a pad has no loaded sample.
       const fallbackBuffer = context.createBuffer(1, context.sampleRate * 0.1, context.sampleRate);
       const data = fallbackBuffer.getChannelData(0);
       for (let i = 0; i < data.length; i++) {
@@ -173,12 +182,14 @@ export class AudioEngine {
     offset: number,
     duration: number | undefined,
     loop: boolean,
+    scheduledTime?: number,
   ): string | null {
     const context = this.ctx;
     if (!context) return null;
 
+    const startTime = Math.max(context.currentTime, scheduledTime ?? context.currentTime);
     const voiceId = `spm8x_${padId}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-    const voice: ActiveVoice = { source, gainNode, padId, startTime: context.currentTime };
+    const voice: ActiveVoice = { source, gainNode, padId, startTime };
     this.activeVoices.set(voiceId, voice);
 
     source.onended = () => {
@@ -188,9 +199,9 @@ export class AudioEngine {
 
     try {
       if (loop || duration === undefined) {
-        source.start(context.currentTime, offset);
+        source.start(startTime, offset);
       } else {
-        source.start(context.currentTime, offset, duration);
+        source.start(startTime, offset, duration);
       }
       return voiceId;
     } catch (error) {
