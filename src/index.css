@@ -1,24 +1,26 @@
-/* Add after the existing Tailwind directives. */
+/* Add after your existing Tailwind directives */
 @layer base {
   :root {
     color-scheme: dark;
 
-    /* Canonical palette from the locked layout diagram */
-    --bg-canvas: #12121c;
+    /* Canonical palette & Instrument Display surfaces */
+    --bg-canvas: #12121C;
+    --bg-shell-deep: #09090b;
     --text-inactive: #2a2a35;
     --border-grid: #1f1f2e;
     --text-primary: #f4f4f9;
-    --accent-phrase: #22d3ee;
+
+    /* Unified Primary Accents (Aliased to prevent competing blues) */
+    --accent-phrase: #22D3EE;
+    --accent-m8-cyan: var(--accent-phrase);
+
+    /* Secondary Diagram & SP-Style Accents */
     --accent-table: #c084fc;
     --accent-song: #4ade80;
-
-    /* Additional hybrid/SP-style accents */
-    --bg-shell-deep: #09090b;
-    --accent-m8-cyan: #00efff;
     --accent-amber: #f59e0b;
     --accent-magenta: #f472b6;
 
-    /* Use these now with system fallbacks; load M8 fonts only once verified. */
+    /* Typography Stack with Robust Monospace Fallbacks */
     --font-m8-big:
       "M8BigFont", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
       "Liberation Mono", monospace;
@@ -36,5 +38,7 @@
   body {
     font-family: var(--font-m8-big);
     font-variant-numeric: tabular-nums;
+    background-color: var(--bg-shell-deep);
+    color: var(--text-primary);
   }
 }
