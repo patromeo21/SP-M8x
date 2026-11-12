@@ -1,12 +1,7 @@
-/**
- * SP-M8x Hybrid Music Production Suite
- * SPM8xDashboard.tsx — Main Hardware Layout Shell (iPad Optimized)
- */
-
 import React, { useState } from 'react';
+import { SamplerWorkbench } from '../sampler/SamplerWorkbench';
+import { HardwareDeck } from './HardwareDeck';
 import { TrackerGrid } from '../tracker/TrackerGrid';
-// Note: Additional module imports (PadGrid, SamplerWorkbench, FxStrip) 
-// can be wired here as their respective Big Font styling passes are completed.
 
 export type WorkspaceTab = 'workspace' | 'song' | 'table' | 'sampler';
 
@@ -15,6 +10,34 @@ export interface SPM8xDashboardProps {
   activeStep?: number;
 }
 
+const tabs: Array<{ id: WorkspaceTab; label: string }> = [
+  { id: 'workspace', label: 'WORKSPACE' },
+  { id: 'song', label: 'SONG' },
+  { id: 'table', label: 'PHRASE/TABLE' },
+  { id: 'sampler', label: 'SAMPLER' },
+];
+
+const PlaceholderView: React.FC<{ title: string; detail: string }> = ({ title, detail }) => (
+  <section className="flex min-h-0 flex-1 items-center justify-center border border-[var(--border-grid)] bg-[var(--bg-canvas)]">
+    <div className="text-center">
+      <h2 className="mb-2 text-sm font-bold tracking-widest text-[var(--accent-phrase)]">{title}</h2>
+      <p className="text-[10px] text-zinc-500">{detail}</p>
+      <p className="mt-1 text-[9px] text-zinc-600">VISUAL MODULE PLACEHOLDER — NO PROJECT DATA EDITED</p>
+    </div>
+  </section>
+);
+
+const WorkbenchPanel: React.FC = () => (
+  <section className="flex min-h-0 flex-col border border-[var(--border-grid)] bg-[var(--bg-canvas)]">
+    <div className="shrink-0 border-b border-[var(--border-grid)] px-3 py-2 text-[10px] font-bold tracking-wider text-[var(--accent-table)]">
+      SAMPLER WORKBENCH
+    </div>
+    <div className="min-h-0 flex-1 overflow-auto">
+      <SamplerWorkbench />
+    </div>
+  </section>
+);
+
 export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
   initialTab = 'workspace',
   activeStep = 0,
@@ -22,125 +45,65 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
   const [currentTab, setCurrentTab] = useState<WorkspaceTab>(initialTab);
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-[var(--bg-shell-deep)] text-[var(--text-primary)] font-mono overflow-hidden select-none">
-      
-      {/* 1. Persistent Top Navigation Bar */}
-      <header className="flex items-center justify-between px-4 py-2 bg-[var(--bg-canvas)] border-b border-[var(--border-grid)] shrink-0">
-        <div className="flex items-center space-x-3">
-          <h1 className="text-xs font-black tracking-widest text-[var(--accent-phrase)] drop-shadow-[0_0_8px_rgba(34,211,238,0.4)]">
-            SP-M8x <span className="text-zinc-500 font-normal">v0.9.2</span>
-          </h1>
-          <span className="text-[10px] bg-zinc-900 text-zinc-400 px-2 py-0.5 rounded border border-zinc-800">
-            IPAD 9TH GEN TARGET
-          </span>
+    <div className="flex h-[100dvh] w-screen flex-col overflow-hidden bg-[var(--bg-shell-deep)] font-mono text-[var(--text-primary)]">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[var(--border-grid)] bg-[var(--bg-canvas)] px-3 py-2">
+        <div className="flex items-center gap-3">
+          <h1 className="text-xs font-black tracking-widest text-[var(--accent-phrase)]">SP-M8x <span className="font-normal text-zinc-500">v0.9.2</span></h1>
+          <span className="border border-zinc-800 bg-zinc-900 px-2 py-1 text-[9px] text-zinc-400">IPAD 9TH GEN TARGET</span>
         </div>
-
-        {/* Workspace Tab Switcher */}
-        <nav className="flex items-center space-x-1 bg-zinc-950 p-1 rounded-lg border border-[var(--border-grid)]">
-          {(['workspace', 'song', 'table', 'sampler'] as WorkspaceTab[]).map((tab) => {
-            const isActive = currentTab === tab;
-            let activeColorClass = 'text-[var(--accent-phrase)] border-[var(--accent-phrase)] bg-cyan-950/40';
-            if (tab === 'table') activeColorClass = 'text-[var(--accent-table)] border-[var(--accent-table)] bg-purple-950/40';
-            if (tab === 'song') activeColorClass = 'text-[var(--accent-song)] border-[var(--accent-song)] bg-green-950/40';
-
+        <nav className="flex max-w-full items-center gap-1 overflow-x-auto bg-zinc-950 p-1" aria-label="Main views">
+          {tabs.map(({ id, label }) => {
+            const color = id === 'song' ? 'var(--accent-song)' : id === 'table' ? 'var(--accent-table)' : 'var(--accent-phrase)';
+            const selected = currentTab === id;
             return (
-              <button
-                key={tab}
-                onClick={() => setCurrentTab(tab)}
-                className={`px-3 py-1 text-[10px] font-bold tracking-wider rounded transition-all uppercase border ${
-                  isActive
-                    ? `${activeColorClass} shadow-[0_0_10px_rgba(0,0,0,0.5)]`
-                    : 'text-zinc-500 border-transparent hover:text-zinc-300'
-                }`}
-              >
-                [ {tab} ]
+              <button key={id} type="button" aria-current={selected ? 'page' : undefined}
+                onClick={() => setCurrentTab(id)}
+                className="min-h-10 shrink-0 border px-3 text-[9px] font-bold tracking-wider"
+                style={{ color: selected ? color : '#71717a', borderColor: selected ? color : 'transparent' }}>
+                [ {label} ]
               </button>
             );
           })}
         </nav>
       </header>
 
-      {/* 2. Main Viewport Container */}
-      <main className="flex-1 flex overflow-hidden p-3 gap-3 bg-[var(--bg-shell-deep)]">
-        {currentTab === 'workspace' ? (
-          /* 60 / 40 Split Workspace Frame */
-          <>
-            {/* Left Pane: Tracker Matrix (60%) */}
-            <section className="w-[60%] flex flex-col bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 overflow-hidden shadow-xl">
-              <div className="flex items-center justify-between mb-2 pb-2 border-b border-[var(--border-grid)]">
-                <span className="text-[10px] font-bold text-zinc-400 tracking-wider">
-                  TRACKER SEQUENCER (64 STEPS)
-                </span>
-                <span className="text-[10px] text-[var(--accent-phrase)] font-bold">
-                  STEP: {String(activeStep).padStart(2, '0')} / 63
-                </span>
+      <main className="flex min-h-0 flex-1 overflow-hidden p-2">
+        {currentTab === 'workspace' && (
+          <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 landscape:grid-cols-[3fr_2fr]">
+            <section className="flex min-h-0 flex-col overflow-hidden border border-[var(--border-grid)] bg-[var(--bg-canvas)] p-2">
+              <div className="flex shrink-0 items-center justify-between border-b border-[var(--border-grid)] px-2 py-2 text-[10px] font-bold">
+                <span className="text-zinc-400">TRACKER SEQUENCER (64 STEPS)</span>
+                <span className="text-[var(--accent-phrase)]">STEP: {String(activeStep).padStart(2, '0')} / 63</span>
               </div>
-              <div className="flex-1 overflow-hidden flex flex-col">
+              <div className="min-h-0 flex-1 overflow-auto">
                 <TrackerGrid patternId={0} activeStep={activeStep} />
               </div>
             </section>
-
-            {/* Right Pane: Module Vertical Stack (40%) */}
-            <section className="w-[40%] flex flex-col gap-3 overflow-y-auto">
-              {/* Sampler Workbench Scaffold */}
-              <div className="bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col min-h-[160px]">
-                <div className="flex items-center justify-between border-b border-[var(--border-grid)] pb-2 mb-2">
-                  <span className="text-[10px] font-bold text-purple-400 tracking-wider">
-                    SAMPLER WORKBENCH
-                  </span>
-                  <span className="text-[9px] bg-zinc-900 text-zinc-400 px-1.5 py-0.5 rounded">
-                    SLICER
-                  </span>
-                </div>
-                <div className="flex-1 flex items-center justify-center border border-dashed border-zinc-800 rounded bg-zinc-950/50 text-zinc-600 text-[11px]">
-                  Waveform View / Slicing Grid
-                </div>
-              </div>
-
-              {/* Sampler Pads / M8 Deck Matrix Container */}
-              <div className="bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col flex-1">
-                <div className="flex items-center justify-between border-b border-[var(--border-grid)] pb-2 mb-2">
-                  <span className="text-[10px] font-bold text-[var(--accent-phrase)] tracking-wider">
-                    PAD BANKS & M8 DECKS
-                  </span>
-                  <span className="text-[9px] bg-cyan-950 text-[var(--accent-phrase)] px-1.5 py-0.5 rounded font-bold">
-                    BANK A-D
-                  </span>
-                </div>
-                <div className="flex-1 flex items-center justify-center border border-dashed border-zinc-800 rounded bg-zinc-950/50 text-zinc-600 text-[11px]">
-                  5×3 Pad / Deck Grid Container
-                </div>
-              </div>
+            <section className="grid min-h-0 grid-rows-[minmax(160px,35%)_minmax(0,1fr)] gap-2 overflow-hidden">
+              <WorkbenchPanel />
+              <HardwareDeck />
             </section>
-          </>
-        ) : (
-          /* Visual Scaffolds for Unselected Tabs */
-          <div className="flex-1 flex items-center justify-center bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl">
-            <div className="text-center">
-              <h2 className="text-sm font-bold text-[var(--accent-phrase)] uppercase tracking-widest mb-1">
-                -- {currentTab} VIEW --
-              </h2>
-              <p className="text-[11px] text-zinc-500">
-                Module scaffold loaded. Core architecture remains active.
-              </p>
-            </div>
           </div>
         )}
+
+        {currentTab === 'sampler' && (
+          <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 landscape:grid-cols-2">
+            <WorkbenchPanel />
+            <HardwareDeck />
+          </div>
+        )}
+
+        {currentTab === 'song' && <PlaceholderView title="SONG VIEW" detail="8-track arrangement view is planned; no song grid is wired yet." />}
+        {currentTab === 'table' && <PlaceholderView title="PHRASE / TABLE" detail="Unified tracker columns are planned; current project state does not expose all requested fields." />}
       </main>
 
-      {/* 3. Footer Transport / Status Bar */}
-      <footer className="flex items-center justify-between px-4 py-2 bg-[var(--bg-canvas)] border-t border-[var(--border-grid)] text-[10px] text-zinc-400 shrink-0">
-        <div className="flex items-center space-x-4">
-          <span className="flex items-center space-x-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span className="text-zinc-300 font-bold">ENGINE READY</span>
-          </span>
+      <footer className="flex shrink-0 items-center justify-between border-t border-[var(--border-grid)] bg-[var(--bg-canvas)] px-3 py-2 text-[9px] text-zinc-400">
+        <div className="flex items-center gap-4">
+          <span className="flex items-center gap-1.5"><span className="h-2 w-2 bg-emerald-400" /><strong className="text-zinc-300">ENGINE READY</strong></span>
           <span>BPM: <strong className="text-zinc-200">120.0</strong></span>
           <span>CLOCK: <strong className="text-zinc-200">INTERNAL</strong></span>
         </div>
-        <div className="text-[9px] text-zinc-600">
-          SP-M8x HARDWARE INTERFACE SHELL
-        </div>
+        <span className="text-zinc-600">SP-M8x HARDWARE INTERFACE</span>
       </footer>
     </div>
   );
