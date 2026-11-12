@@ -6,41 +6,61 @@
 import React, { useState } from 'react';
 
 export interface SamplerWorkbenchProps {
+  selectedPad?: { id?: string | number; sampleName?: string; sampleDuration?: number; sampleRate?: number; startPoint?: number; endPoint?: number; pitchShift?: number; [key: string]: any };
+  onUpdatePad?: (updatedPad: any) => void;
+  onTriggerPad?: (padId: number | string) => Promise<void> | void;
   sampleName?: string;
-  sampleDuration?: number; // in seconds
-  sampleRate?: number;    // e.g., 44100
-  startPoint?: number;    // 0 - 100%
-  endPoint?: number;      // 0 - 100%
-  pitchShift?: number;    // semitones (-12 to +12)
+  sampleDuration?: number;
+  sampleRate?: number;
+  startPoint?: number;
+  endPoint?: number;
+  pitchShift?: number;
   onParameterChange?: (param: string, value: number) => void;
 }
 
 export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
-  sampleName = 'NO SAMPLE LOADED',
-  sampleDuration = 0.0,
-  sampleRate = 44100,
+  selectedPad,
+  onUpdatePad,
+  onTriggerPad,
+  sampleName: externalName,
+  sampleDuration: externalDuration,
+  sampleRate: externalRate,
   startPoint = 0,
   endPoint = 100,
   pitchShift = 0,
   onParameterChange,
 }) => {
-  const [start, setStart] = useState<number>(startPoint);
-  const [end, setEnd] = useState<number>(endPoint);
-  const [pitch, setPitch] = useState<number>(pitchShift);
+  // Fall back to selectedPad properties if provided from workspace state
+  const currentName = selectedPad?.sampleName || externalName || 'NO SAMPLE LOADED';
+  const currentDuration = selectedPad?.sampleDuration ?? externalDuration ?? 0.0;
+  const currentRate = selectedPad?.sampleRate ?? externalRate ?? 44100;
+  
+  const [start, setStart] = useState<number>(selectedPad?.startPoint ?? startPoint);
+  const [end, setEnd] = useState<number>(selectedPad?.endPoint ?? endPoint);
+  const [pitch, setPitch] = useState<number>(selectedPad?.pitchShift ?? pitchShift);
 
   const handleStartChange = (val: number) => {
     setStart(val);
     if (onParameterChange) onParameterChange('start', val);
+    if (selectedPad && onUpdatePad) {
+      onUpdatePad({ ...selectedPad, startPoint: val });
+    }
   };
 
   const handleEndChange = (val: number) => {
     setEnd(val);
     if (onParameterChange) onParameterChange('end', val);
+    if (selectedPad && onUpdatePad) {
+      onUpdatePad({ ...selectedPad, endPoint: val });
+    }
   };
 
   const handlePitchChange = (val: number) => {
     setPitch(val);
     if (onParameterChange) onParameterChange('pitch', val);
+    if (selectedPad && onUpdatePad) {
+      onUpdatePad({ ...selectedPad, pitchShift: val });
+    }
   };
 
   return (
@@ -57,7 +77,7 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
           </span>
         </div>
         <div className="text-[9px] text-zinc-400">
-          RATE: <strong className="text-zinc-200">{sampleRate}HZ</strong>
+          RATE: <strong className="text-zinc-200">{currentRate}HZ</strong>
         </div>
       </div>
 
@@ -72,7 +92,7 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
 
         {/* Center Sample Name / Status */}
         <span className="text-xs font-black tracking-wider text-zinc-300 z-10 truncate max-w-[220px]">
-          {sampleName}
+          {currentName}
         </span>
 
         {/* Waveform Visualizer Placeholder Bars */}
@@ -91,7 +111,7 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
 
         {/* Duration / Telemetry Footer inside screen */}
         <div className="absolute top-1.5 left-2 text-[8px] text-purple-400 font-bold">
-          DUR: {sampleDuration.toFixed(2)}S
+          DUR: {currentDuration.toFixed(2)}S
         </div>
       </div>
 
