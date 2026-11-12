@@ -5,10 +5,8 @@
 
 import React, { useState } from 'react';
 import { TrackerGrid } from '../tracker/TrackerGrid';
-// Note: Additional module imports (PadGrid, SamplerWorkbench, FxStrip) 
-// can be wired here as their respective Big Font styling passes are completed.
 
-export type WorkspaceTab = 'workspace' | 'song' | 'table' | 'sampler';
+export type WorkspaceTab = 'workspace' | 'song' | 'phrase/table' | 'sampler';
 
 export interface SPM8xDashboardProps {
   initialTab?: WorkspaceTab;
@@ -20,6 +18,8 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
   activeStep = 0,
 }) => {
   const [currentTab, setCurrentTab] = useState<WorkspaceTab>(initialTab);
+  const [deckMode, setDeckMode] = useState<'pads' | 'm8'>('pads');
+  const [activeBank, setActiveBank] = useState<'A' | 'B' | 'C' | 'D'>('A');
 
   return (
     <div className="flex flex-col h-screen w-screen bg-[var(--bg-shell-deep)] text-[var(--text-primary)] font-mono overflow-hidden select-none">
@@ -37,10 +37,10 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
 
         {/* Workspace Tab Switcher */}
         <nav className="flex items-center space-x-1 bg-zinc-950 p-1 rounded-lg border border-[var(--border-grid)]">
-          {(['workspace', 'song', 'table', 'sampler'] as WorkspaceTab[]).map((tab) => {
+          {(['workspace', 'song', 'phrase/table', 'sampler'] as WorkspaceTab[]).map((tab) => {
             const isActive = currentTab === tab;
             let activeColorClass = 'text-[var(--accent-phrase)] border-[var(--accent-phrase)] bg-cyan-950/40';
-            if (tab === 'table') activeColorClass = 'text-[var(--accent-table)] border-[var(--accent-table)] bg-purple-950/40';
+            if (tab === 'phrase/table') activeColorClass = 'text-[var(--accent-table)] border-[var(--accent-table)] bg-purple-950/40';
             if (tab === 'song') activeColorClass = 'text-[var(--accent-song)] border-[var(--accent-song)] bg-green-950/40';
 
             return (
@@ -88,40 +88,94 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
                   <span className="text-[10px] font-bold text-purple-400 tracking-wider">
                     SAMPLER WORKBENCH
                   </span>
-                  <span className="text-[9px] bg-zinc-900 text-zinc-400 px-1.5 py-0.5 rounded">
+                  <span className="text-[9px] bg-zinc-900 text-zinc-400 px-1.5 py-0.5 rounded cursor-pointer hover:bg-zinc-800">
                     SLICER
                   </span>
                 </div>
-                <div className="flex-1 flex items-center justify-center border border-dashed border-zinc-800 rounded bg-zinc-950/50 text-zinc-600 text-[11px]">
-                  Waveform View / Slicing Grid
+                <div className="flex-1 flex flex-col items-center justify-center border border-dashed border-zinc-800 rounded bg-zinc-950/50 text-zinc-500 text-[11px] p-4">
+                  <div className="text-zinc-400 font-bold mb-1">NO SAMPLE LOADED</div>
+                  <div className="w-full h-8 bg-zinc-900/80 rounded flex items-center justify-center border border-zinc-800 text-[9px] text-zinc-600 tracking-widest">
+                    Waveform View / Slicing Grid
+                  </div>
                 </div>
               </div>
 
               {/* Sampler Pads / M8 Deck Matrix Container */}
               <div className="bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col flex-1">
                 <div className="flex items-center justify-between border-b border-[var(--border-grid)] pb-2 mb-2">
-                  <span className="text-[10px] font-bold text-[var(--accent-phrase)] tracking-wider">
-                    PAD BANKS & M8 DECKS
-                  </span>
-                  <span className="text-[9px] bg-cyan-950 text-[var(--accent-phrase)] px-1.5 py-0.5 rounded font-bold">
-                    BANK A-D
-                  </span>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-[10px] font-bold text-[var(--accent-phrase)] tracking-wider">
+                      PAD BANKS & M8 DECKS
+                    </span>
+                  </div>
+                  <div className="flex space-x-1">
+                    <button
+                      onClick={() => setDeckMode('pads')}
+                      className={`text-[9px] px-2 py-0.5 rounded font-bold transition-all ${
+                        deckMode === 'pads' ? 'bg-cyan-950 text-[var(--accent-phrase)] border border-cyan-800' : 'bg-zinc-900 text-zinc-500'
+                      }`}
+                    >
+                      PADS
+                    </button>
+                    <button
+                      onClick={() => setDeckMode('m8')}
+                      className={`text-[9px] px-2 py-0.5 rounded font-bold transition-all ${
+                        deckMode === 'm8' ? 'bg-purple-950 text-purple-300 border border-purple-800' : 'bg-zinc-900 text-zinc-500'
+                      }`}
+                    >
+                      M8 DECK
+                    </button>
+                  </div>
                 </div>
-                <div className="flex-1 flex items-center justify-center border border-dashed border-zinc-800 rounded bg-zinc-950/50 text-zinc-600 text-[11px]">
-                  5×3 Pad / Deck Grid Container
-                </div>
+
+                {deckMode === 'pads' ? (
+                  <div className="flex flex-col flex-1 gap-2">
+                    <div className="flex justify-between items-center bg-zinc-950 px-2 py-1 rounded text-[9px]">
+                      <span className="text-zinc-400">BANK: <strong className="text-cyan-400">{activeBank}</strong></span>
+                      <div className="flex space-x-1">
+                        {(['A', 'B', 'C', 'D'] as const).map((b) => (
+                          <button
+                            key={b}
+                            onClick={() => setActiveBank(b)}
+                            className={`px-2 py-0.5 rounded ${activeBank === b ? 'bg-cyan-900 text-cyan-200' : 'bg-zinc-900 text-zinc-400'}`}
+                          >
+                            {b}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-4 gap-1.5 flex-1">
+                      {Array.from({ length: 16 }).map((_, i) => (
+                        <div key={i} className="bg-zinc-950 border border-zinc-800 rounded p-1.5 flex flex-col justify-between text-[9px] hover:border-cyan-500/50 transition-all cursor-pointer">
+                          <span className="text-zinc-500 font-bold">{activeBank}{String(i + 1).padStart(2, '0')}</span>
+                          <span className="text-zinc-600 text-[8px] truncate">EMPTY</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-4 gap-2 flex-1 items-center p-2 bg-zinc-950/40 rounded border border-zinc-800/60">
+                    {['UP', 'DOWN', 'LEFT', 'RIGHT', 'EDIT', 'PLAY', 'SHIFT', 'BND'].map((btn) => (
+                      <button key={btn} className="bg-zinc-900 border border-zinc-700 rounded py-3 text-[10px] font-bold text-zinc-300 hover:bg-cyan-950 hover:text-cyan-300 transition-all">
+                        {btn}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </section>
           </>
         ) : (
-          /* Visual Scaffolds for Unselected Tabs */
+          /* Visual Scaffolds for Unselected Tabs matching video */
           <div className="flex-1 flex items-center justify-center bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl">
             <div className="text-center">
               <h2 className="text-sm font-bold text-[var(--accent-phrase)] uppercase tracking-widest mb-1">
                 -- {currentTab} VIEW --
               </h2>
               <p className="text-[11px] text-zinc-500">
-                Module scaffold loaded. Core architecture remains active.
+                {currentTab === 'song' && '6-track arrangement view is planned. current grid in wired yet.'}
+                {currentTab === 'phrase/table' && 'Unified tracker columns are planned. current project does not expose all requested fields.'}
+                {currentTab === 'sampler' && 'Advanced sample workbench and slice editor.'}
               </p>
             </div>
           </div>
