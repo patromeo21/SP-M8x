@@ -1,27 +1,48 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * audioEngine.ts — Web Audio API Core Engine & Polyphonic Voice Allocation
+ * audioEngine.ts — Single Web Audio API authority, polyphonic voice manager, and scheduled playback
  */
+
+import { audioCache } from './audioCache';
+
+export interface ActiveVoice {
+  source: AudioBufferSourceNode;
+  gainNode: GainNode;
+  padId: string;
+  startTime: number;
+}
+
+const normalizePadKey = (padId: string | number): string => String(padId);
+const clamp = (value: number, min: number, max: number): number =>
+  Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : min;
 
 export class AudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
-  private activeVoices: Map<string, { source: AudioBufferSourceNode; gain: GainNode }> = new Map();
+  private activeVoices = new Map<string, ActiveVoice>();
 
-  constructor() {
-    // Lazy initialization on user interaction to comply with browser audio policies
-  }
-
+  /** Lazily create the one app AudioContext and request resume after user interaction. */
   public initialize(context?: AudioContext): AudioContext {
     if (!this.ctx) {
-      this.ctx = context || new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+      const AudioContextClass =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!context && !AudioContextClass) {
+        throw new Error('Web Audio API is not supported in this browser.');
+      }
+
+      this.ctx = context || new AudioContextClass({ latencyHint: 'interactive' });
       this.masterGain = this.ctx.createGain();
       this.masterGain.gain.setValueAtTime(0.8, this.ctx.currentTime);
       this.masterGain.connect(this.ctx.destination);
     }
+
     if (this.ctx.state === 'suspended') {
-      this.ctx.resume();
+      void this.ctx.resume().catch((error: unknown) => {
+        console.warn('[SP-M8x AudioEngine] AudioContext resume was blocked or failed:', error);
+      });
     }
+
     return this.ctx;
   }
 
@@ -29,24 +50,80 @@ export class AudioEngine {
     return this.ctx;
   }
 
-  /**
-     * Triggers a voice for a given pad ID.
-     * Arguments are optional to ensure seamless compatibility with workbench previews and UI triggers.
-     */
-  public triggerVoice(padId: string, buffer?: AudioBuffer, pan: number = 0): void {
+  public async decodeAudioData(arrayBuffer: ArrayBuffer): Promise<AudioBuffer> {
     const context = this.initialize();
-    
-    // Stop existing voice on this pad to prevent polyphonic clipping/overlap
-    this.stopVoice(padId);
+    return context.decodeAudioData(arrayBuffer.slice(0));
+  }
 
+  public setPadBuffer(padId: string | number, buffer: AudioBuffer): void {
+    audioCache.set(normalizePadKey(padId), buffer);
+  }
+
+  public getPadBuffer(padId: string | number): AudioBuffer | undefined {
+    return audioCache.get(normalizePadKey(padId));
+  }
+
+  public triggerPad(
+    padId: string | number,
+    options: {
+      sliceStart?: number;
+      sliceEnd?: number;
+      volume?: number;
+      semitoneOffset?: number;
+      loop?: boolean;
+      scheduledTime?: number; // Added to support lookahead sample-accurate scheduling
+    } = {},
+  ): string | null {
+    const context = this.initialize();
+    const buffer = this.getPadBuffer(padId);
+    if (!buffer || !this.masterGain) return null;
+
+    const sliceStart = clamp(options.sliceStart ?? 0, 0, buffer.duration);
+    const sliceEnd = clamp(options.sliceEnd ?? buffer.duration, 0, buffer.duration);
+    if (sliceEnd <= sliceStart) return null;
+
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.loop = options.loop ?? false;
+
+    const duration = sliceEnd - sliceStart;
+    if (source.loop) {
+      source.loopStart = sliceStart;
+      source.loopEnd = sliceEnd;
+    }
+
+    const semitones = clamp(options.semitoneOffset ?? 0, -48, 48);
+    source.playbackRate.value = Math.pow(2, semitones / 12);
+
+    const voiceGain = context.createGain();
+    const targetGainTime = options.scheduledTime ?? context.currentTime;
+    voiceGain.gain.setValueAtTime(clamp(options.volume ?? 1, 0, 1), targetGainTime);
+    
+    source.connect(voiceGain);
+    voiceGain.connect(this.masterGain);
+
+    return this.startVoice(
+      source,
+      voiceGain,
+      normalizePadKey(padId),
+      sliceStart,
+      duration,
+      source.loop,
+      options.scheduledTime,
+    );
+  }
+
+  /** Legacy named-voice entry point; each call creates an independently tracked voice. */
+  public triggerVoice(padId: string | number, buffer?: AudioBuffer, pan = 0): void {
+    const context = this.initialize();
+    if (buffer) this.setPadBuffer(padId, buffer);
+    const selectedBuffer = buffer ?? this.getPadBuffer(padId);
     if (!this.masterGain) return;
 
-    // If a buffer is provided, play it; otherwise, synthesize a clean click/preview sound
     const source = context.createBufferSource();
-    if (buffer) {
-      source.buffer = buffer;
+    if (selectedBuffer) {
+      source.buffer = selectedBuffer;
     } else {
-      // Create a short fallback buffer click for testing workbench triggers
       const fallbackBuffer = context.createBuffer(1, context.sampleRate * 0.1, context.sampleRate);
       const data = fallbackBuffer.getChannelData(0);
       for (let i = 0; i < data.length; i++) {
@@ -56,37 +133,110 @@ export class AudioEngine {
     }
 
     const voiceGain = context.createGain();
-    voiceGain.gain.setValueAtTime(1.0, context.currentTime);
+    voiceGain.gain.setValueAtTime(1, context.currentTime);
 
-    // Wire: Source -> VoiceGain -> MasterGain
-    source.connect(voiceGain);
-    voiceGain.connect(this.masterGain);
+    const safePan = clamp(pan, -1, 1);
+    if (typeof context.createStereoPanner === 'function') {
+      const panner = context.createStereoPanner();
+      panner.pan.setValueAtTime(safePan, context.currentTime);
+      source.connect(voiceGain);
+      voiceGain.connect(panner);
+      panner.connect(this.masterGain);
+    } else {
+      source.connect(voiceGain);
+      voiceGain.connect(this.masterGain);
+    }
 
-    source.start(0);
-    this.activeVoices.set(padId, { source, gain: voiceGain });
-
-    source.onended = () => {
-      this.activeVoices.delete(padId);
-    };
+    this.startVoice(source, voiceGain, normalizePadKey(padId), 0, undefined, false);
   }
 
-  public stopVoice(padId: string): void {
-    const voice = this.activeVoices.get(padId);
-    if (voice) {
-      try {
-        voice.source.stop();
-        voice.source.disconnect();
-        voice.gain.disconnect();
-      } catch {
-        // Ignore if already stopped
-      }
-      this.activeVoices.delete(padId);
+  /** Stop a returned voice ID, or all active voices belonging to the supplied pad ID. */
+  public stopVoice(target: string | number): void {
+    const key = normalizePadKey(target);
+    const exactVoice = this.activeVoices.get(key);
+    if (exactVoice) {
+      this.releaseVoice(key, exactVoice);
+      return;
+    }
+
+    for (const [voiceId, voice] of this.activeVoices) {
+      if (voice.padId === key) this.releaseVoice(voiceId, voice);
+    }
+  }
+
+  public stopAllVoices(): void {
+    for (const [voiceId, voice] of this.activeVoices) {
+      this.releaseVoice(voiceId, voice);
     }
   }
 
   public setMasterVolume(volume: number): void {
     if (this.masterGain && this.ctx) {
-      this.masterGain.gain.setTargetAtTime(Math.max(0, Math.min(1, volume)), this.ctx.currentTime, 0.01);
+      this.masterGain.gain.setTargetAtTime(clamp(volume, 0, 1), this.ctx.currentTime, 0.01);
+    }
+  }
+
+  private startVoice(
+    source: AudioBufferSourceNode,
+    gainNode: GainNode,
+    padId: string,
+    offset: number,
+    duration: number | undefined,
+    loop: boolean,
+    scheduledTime?: number,
+  ): string | null {
+    const context = this.ctx;
+    if (!context) return null;
+
+    const voiceId = `spm8x_${padId}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const startTime = scheduledTime !== undefined ? Math.max(context.currentTime, scheduledTime) : context.currentTime;
+    const voice: ActiveVoice = { source, gainNode, padId, startTime };
+    this.activeVoices.set(voiceId, voice);
+
+    source.onended = () => {
+      this.disconnectVoice(source, gainNode);
+      this.activeVoices.delete(voiceId);
+    };
+
+    try {
+      if (loop || duration === undefined) {
+        source.start(startTime, offset);
+      } else {
+        source.start(startTime, offset, duration);
+      }
+      return voiceId;
+    } catch (error) {
+      this.activeVoices.delete(voiceId);
+      this.disconnectVoice(source, gainNode);
+      console.error('[SP-M8x AudioEngine] Could not start voice:', error);
+      return null;
+    }
+  }
+
+  private releaseVoice(voiceId: string, voice: ActiveVoice): void {
+    this.activeVoices.delete(voiceId);
+    try {
+      if (this.ctx) {
+        const now = this.ctx.currentTime;
+        voice.gainNode.gain.cancelScheduledValues(now);
+        voice.gainNode.gain.setValueAtTime(voice.gainNode.gain.value, now);
+        voice.gainNode.gain.linearRampToValueAtTime(0.0001, now + 0.01);
+        voice.source.stop(now + 0.01);
+      } else {
+        voice.source.stop();
+      }
+    } catch {
+      // The source may have already ended.
+    }
+    this.disconnectVoice(voice.source, voice.gainNode);
+  }
+
+  private disconnectVoice(source: AudioBufferSourceNode, gainNode: GainNode): void {
+    try {
+      source.disconnect();
+      gainNode.disconnect();
+    } catch {
+      // Already disconnected during release or natural completion.
     }
   }
 }
