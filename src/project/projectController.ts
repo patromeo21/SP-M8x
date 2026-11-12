@@ -1,6 +1,6 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * projectController.ts — Single Source of Truth for Global State & Hybrid Persistence
+ * projectController.ts — Single source of truth for project data and persistence
  */
 
 export type BankId = 'A' | 'B' | 'C' | 'D';
@@ -28,6 +28,12 @@ export interface Pattern {
   steps: TrackerStepItem[];
 }
 
+export interface SongTrack {
+  id: number;
+  name: string;
+  rows: Array<number | null>;
+}
+
 export interface ProjectSettings {
   bpm: number;
   masterVolume: number;
@@ -37,93 +43,110 @@ export interface ProjectSettings {
 
 export interface ProjectState {
   settings: ProjectSettings;
-  sampler: {
-    pads: Record<string, PadProjectData>;
-  };
-  tracker: {
-    patterns: Pattern[];
-  };
+  sampler: { pads: Record<string, PadProjectData> };
+  tracker: { patterns: Pattern[] };
+  song: { rowCount: number; tracks: SongTrack[] };
 }
 
 export type ProjectStateListener = (state: ProjectState) => void;
 
 const STORAGE_KEY = 'SP_M8X_PROJECT_STATE_V1';
 const PHRASE_STEP_COUNT = 64;
+const SONG_ROW_COUNT = 32;
+const SONG_TRACK_COUNT = 8;
+
+const createEmptyStep = (): TrackerStepItem => ({
+  note: '---', sampleId: '--', subTickOffset: 0, velocity: 127, instrumentAssignmentId: null,
+});
 
 class ProjectController {
   private state: ProjectState;
-  private listeners: Set<ProjectStateListener> = new Set();
+  private listeners = new Set<ProjectStateListener>();
 
   constructor() {
-    const savedState = this.loadFromLocalStorage();
-    this.state = this.normalizePhraseLengths(savedState || this.getDefaultState());
+    this.state = this.normalizeProject(this.loadFromLocalStorage() ?? this.getDefaultState());
   }
 
-  private getDefaultState(): ProjectState {
-    const initialPads: Record<string, PadProjectData> = {};
+  private createDefaultPads(): Record<string, PadProjectData> {
+    const pads: Record<string, PadProjectData> = {};
     const banks: BankId[] = ['A', 'B', 'C', 'D'];
-
     banks.forEach((bank) => {
-      for (let i = 1; i <= 16; i++) {
-        const padId = `${bank}${i}`;
-        initialPads[padId] = {
-          id: padId,
-          bank,
-          name: `EMPTY ${padId}`,
-          isPolyphonic: true,
-          fileName: null,
-        };
+      for (let slot = 1; slot <= 16; slot += 1) {
+        const id = `${bank}${slot}`;
+        pads[id] = { id, bank, name: `EMPTY ${id}`, isPolyphonic: true, fileName: null };
       }
     });
+    return pads;
+  }
 
+  private createDefaultSong(): ProjectState['song'] {
     return {
-      settings: {
-        bpm: 120,
-        masterVolume: 0.8,
-        activePatternIndex: 0,
-        swing: 0,
-      },
-      sampler: {
-        pads: initialPads,
-      },
-      tracker: {
-        patterns: [
-          {
-            id: 1,
-            name: 'Pattern 01',
-            steps: Array.from({ length: PHRASE_STEP_COUNT }, (_, index) => ({
-              note: index % 4 === 0 ? 'C-4' : '---',
-              sampleId: index % 4 === 0 ? 'A1' : '--',
-              subTickOffset: 0,
-              velocity: 127,
-              instrumentAssignmentId: index % 4 === 0 ? 'A1' : null,
-            })),
-          },
-        ],
-      },
+      rowCount: SONG_ROW_COUNT,
+      tracks: Array.from({ length: SONG_TRACK_COUNT }, (_, index) => ({
+        id: index + 1,
+        name: `TRK ${index + 1}`,
+        rows: Array.from({ length: SONG_ROW_COUNT }, () => null),
+      })),
     };
   }
 
-  /** Normalize saved project data in memory while preserving existing step content. */
-  private normalizePhraseLengths(state: ProjectState): ProjectState {
-    if (!state?.tracker || !Array.isArray(state.tracker.patterns)) return this.getDefaultState();
+  private getDefaultState(): ProjectState {
+    return {
+      settings: { bpm: 120, masterVolume: 0.8, activePatternIndex: 0, swing: 0 },
+      sampler: { pads: this.createDefaultPads() },
+      tracker: {
+        patterns: [{
+          id: 1,
+          name: 'Pattern 01',
+          steps: Array.from({ length: PHRASE_STEP_COUNT }, (_, index) => ({
+            ...createEmptyStep(),
+            note: index % 4 === 0 ? 'C-4' : '---',
+            sampleId: index % 4 === 0 ? 'A1' : '--',
+            instrumentAssignmentId: index % 4 === 0 ? 'A1' : null,
+          })),
+        }],
+      },
+      song: this.createDefaultSong(),
+    };
+  }
 
-    state.tracker.patterns.forEach((pattern) => {
-      if (!Array.isArray(pattern.steps)) pattern.steps = [];
-      if (pattern.steps.length < PHRASE_STEP_COUNT) {
-        const existingSteps = pattern.steps;
-        pattern.steps = Array.from({ length: PHRASE_STEP_COUNT }, (_, index) => existingSteps[index] ?? ({
-          note: '---',
-          sampleId: '--',
-          subTickOffset: 0,
-          velocity: 127,
-          instrumentAssignmentId: null,
-        }));
-      } else if (pattern.steps.length > PHRASE_STEP_COUNT) {
-        pattern.steps = pattern.steps.slice(0, PHRASE_STEP_COUNT);
-      }
+  /** Add new schema fields to old saved projects without losing existing content. */
+  private normalizeProject(input: ProjectState): ProjectState {
+    const defaults = this.getDefaultState();
+    const state = input && typeof input === 'object' ? input : defaults;
+    state.settings = { ...defaults.settings, ...(state.settings ?? {}) };
+    state.sampler = state.sampler && typeof state.sampler === 'object' ? state.sampler : defaults.sampler;
+    state.sampler.pads = state.sampler.pads && typeof state.sampler.pads === 'object'
+      ? { ...defaults.sampler.pads, ...state.sampler.pads }
+      : defaults.sampler.pads;
+
+    if (!state.tracker || !Array.isArray(state.tracker.patterns)) {
+      state.tracker = defaults.tracker;
+    }
+    state.tracker.patterns = state.tracker.patterns.map((pattern) => {
+      const existing = Array.isArray(pattern.steps) ? pattern.steps : [];
+      return {
+        ...pattern,
+        steps: Array.from({ length: PHRASE_STEP_COUNT }, (_, index) => existing[index] ?? createEmptyStep()),
+      };
     });
 
+    const oldTracks = Array.isArray(state.song?.tracks) ? state.song.tracks : [];
+    state.song = {
+      rowCount: SONG_ROW_COUNT,
+      tracks: Array.from({ length: SONG_TRACK_COUNT }, (_, index) => {
+        const oldTrack = oldTracks[index];
+        const rows = Array.isArray(oldTrack?.rows) ? oldTrack.rows : [];
+        return {
+          id: index + 1,
+          name: oldTrack?.name || `TRK ${index + 1}`,
+          rows: Array.from({ length: SONG_ROW_COUNT }, (_, row) => {
+            const value = rows[row];
+            return Number.isInteger(value) && value >= 1 && value <= 99 ? value : null;
+          }),
+        };
+      }),
+    };
     return state;
   }
 
@@ -131,8 +154,7 @@ class ProjectController {
     try {
       if (typeof window === 'undefined') return null;
       const saved = localStorage.getItem(STORAGE_KEY);
-      if (!saved) return null;
-      return JSON.parse(saved) as ProjectState;
+      return saved ? JSON.parse(saved) as ProjectState : null;
     } catch (error) {
       console.error('[ProjectController] Failed to load from localStorage:', error);
       return null;
@@ -141,16 +163,13 @@ class ProjectController {
 
   private saveToLocalStorage(): void {
     try {
-      if (typeof window === 'undefined') return;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
+      if (typeof window !== 'undefined') localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
     } catch (error) {
       console.error('[ProjectController] Failed to save to localStorage:', error);
     }
   }
 
-  public getState(): ProjectState {
-    return this.state;
-  }
+  public getState(): ProjectState { return this.state; }
 
   public subscribe(listener: ProjectStateListener): () => void {
     this.listeners.add(listener);
@@ -190,7 +209,6 @@ class ProjectController {
   public updateStep(patternIndex: number, stepIndex: number, stepData: Partial<TrackerStepItem>): void {
     const pattern = this.state.tracker.patterns[patternIndex];
     if (!pattern || !pattern.steps[stepIndex]) return;
-
     pattern.steps[stepIndex] = {
       ...pattern.steps[stepIndex],
       ...stepData,
@@ -199,14 +217,22 @@ class ProjectController {
     this.notify();
   }
 
+  public setSongCell(trackIndex: number, rowIndex: number, patternId: number | null): void {
+    if (!Number.isInteger(trackIndex) || !Number.isInteger(rowIndex)) return;
+    if (trackIndex < 0 || trackIndex >= SONG_TRACK_COUNT || rowIndex < 0 || rowIndex >= SONG_ROW_COUNT) return;
+    if (patternId !== null && (!Number.isInteger(patternId) || patternId < 1 || patternId > 99)) return;
+    this.state.song.tracks[trackIndex].rows[rowIndex] = patternId;
+    this.notify();
+  }
+
   public exportProjectJson(): void {
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(this.state, null, 2));
-    const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', `sp-m8x-project-${Date.now()}.spm8x`);
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
+    const data = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(this.state, null, 2))}`;
+    const anchor = document.createElement('a');
+    anchor.href = data;
+    anchor.download = `sp-m8x-project-${Date.now()}.spm8x`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
   }
 
   public importProjectJson(jsonData: ProjectState): void {
@@ -214,7 +240,7 @@ class ProjectController {
       console.error('[ProjectController] Invalid project file format.');
       return;
     }
-    this.state = this.normalizePhraseLengths(jsonData);
+    this.state = this.normalizeProject(jsonData);
     this.notify();
     console.log('[ProjectController] Project successfully imported and state updated.');
   }

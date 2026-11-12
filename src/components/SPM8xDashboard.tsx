@@ -3,19 +3,15 @@ import { SamplerWorkbench } from '../sampler/SamplerWorkbench';
 import { HardwareDeck } from './HardwareDeck';
 import { TrackerGrid } from '../tracker/TrackerGrid';
 import { trackerEngine, type TrackerEngineState } from '../tracker/trackerEngine';
+import { projectController } from '../project/projectController';
+import { SongArrangement } from './SongArrangement';
 
 export type WorkspaceTab = 'workspace' | 'song' | 'table' | 'mixer' | 'sampler';
-
-export interface SPM8xDashboardProps {
-  initialTab?: WorkspaceTab;
-  activeStep?: number;
-}
+export interface SPM8xDashboardProps { initialTab?: WorkspaceTab; activeStep?: number; }
 
 const tabs: Array<{ id: Exclude<WorkspaceTab, 'sampler'>; label: string }> = [
-  { id: 'workspace', label: 'PHRASE/SAMPLER' },
-  { id: 'song', label: 'SONG' },
-  { id: 'table', label: 'PHRASE/TABLE' },
-  { id: 'mixer', label: 'MIXER' },
+  { id: 'workspace', label: 'PHRASE/SAMPLER' }, { id: 'song', label: 'SONG' },
+  { id: 'table', label: 'PHRASE/TABLE' }, { id: 'mixer', label: 'MIXER' },
 ];
 
 const PlaceholderView: React.FC<{ title: string; detail: string }> = ({ title, detail }) => (
@@ -23,7 +19,7 @@ const PlaceholderView: React.FC<{ title: string; detail: string }> = ({ title, d
     <div className="max-w-lg px-4 text-center">
       <h2 className="mb-2 text-sm font-bold tracking-widest text-[var(--accent-phrase)]">{title}</h2>
       <p className="text-[10px] text-zinc-500">{detail}</p>
-      <p className="mt-2 text-[9px] text-zinc-600">VIEW SHELL READY · PROJECT MODEL / AUDIO ROUTING NOT YET CONNECTED</p>
+      <p className="mt-2 text-[9px] text-zinc-600">VIEW SHELL READY · AUDIO ROUTING NOT YET CONNECTED</p>
     </div>
   </section>
 );
@@ -36,34 +32,29 @@ const WorkbenchPanel: React.FC = () => (
 );
 
 export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'workspace', activeStep = 0 }) => {
-  const normalizedInitialTab = initialTab === 'sampler' ? 'workspace' : initialTab;
-  const [currentTab, setCurrentTab] = useState<Exclude<WorkspaceTab, 'sampler'>>(normalizedInitialTab);
+  const normalizedTab = initialTab === 'sampler' ? 'workspace' : initialTab;
+  const [currentTab, setCurrentTab] = useState<Exclude<WorkspaceTab, 'sampler'>>(normalizedTab);
   const [transport, setTransport] = useState<TrackerEngineState>(() => trackerEngine.getState());
+  const [projectRevision, setProjectRevision] = useState(0);
   const stepReadoutRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => trackerEngine.subscribe(setTransport), []);
-
-  // Read the audio-clock playhead directly into the DOM; no React render per step/frame.
+  useEffect(() => projectController.subscribe(() => setProjectRevision((revision) => revision + 1)), []);
   useEffect(() => {
     let frameId = 0;
     let mounted = true;
     const updateReadout = () => {
       if (!mounted) return;
-      const step = trackerEngine.getPlayheadPosition().stepIndex;
-      if (stepReadoutRef.current) stepReadoutRef.current.textContent = String(step).padStart(2, '0');
+      const position = trackerEngine.getPlayheadPosition();
+      if (stepReadoutRef.current) stepReadoutRef.current.textContent = String(position.stepIndex).padStart(2, '0');
       frameId = window.requestAnimationFrame(updateReadout);
     };
     frameId = window.requestAnimationFrame(updateReadout);
-    return () => {
-      mounted = false;
-      window.cancelAnimationFrame(frameId);
-    };
+    return () => { mounted = false; window.cancelAnimationFrame(frameId); };
   }, []);
 
-  const handleTransportToggle = () => {
-    if (transport.isPlaying) trackerEngine.stop();
-    else trackerEngine.start();
-  };
+  const handleTransportToggle = () => transport.isPlaying ? trackerEngine.stop() : trackerEngine.start();
+  const accent = (id: string) => id === 'song' ? 'var(--accent-song)' : id === 'table' || id === 'mixer' ? 'var(--accent-table)' : 'var(--accent-phrase)';
 
   return (
     <div className="flex h-[100dvh] w-screen flex-col overflow-hidden bg-[var(--bg-shell-deep)] font-mono text-[var(--text-primary)]">
@@ -75,17 +66,14 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'wo
         <div className="flex items-center gap-2">
           <span className="text-[9px] text-zinc-500">{transport.bpm.toFixed(1)} BPM</span>
           <button type="button" onClick={handleTransportToggle} aria-label={transport.isPlaying ? 'Stop playback' : 'Start playback'}
-            className="min-h-10 rounded border border-cyan-500 bg-cyan-500/10 px-4 text-[10px] font-bold tracking-widest text-cyan-300 transition hover:bg-cyan-500/20">
-            {transport.isPlaying ? 'STOP' : 'PLAY'}
-          </button>
+            className="min-h-10 rounded border border-cyan-500 bg-cyan-500/10 px-4 text-[10px] font-bold tracking-widest text-cyan-300 transition hover:bg-cyan-500/20">{transport.isPlaying ? 'STOP' : 'PLAY'}</button>
         </div>
         <nav className="flex max-w-full items-center gap-1 overflow-x-auto bg-zinc-950 p-1" aria-label="Main views">
           {tabs.map(({ id, label }) => {
-            const color = id === 'song' ? 'var(--accent-song)' : id === 'table' ? 'var(--accent-table)' : id === 'mixer' ? 'var(--accent-table)' : 'var(--accent-phrase)';
             const selected = currentTab === id;
             return <button key={id} type="button" aria-current={selected ? 'page' : undefined} onClick={() => setCurrentTab(id)}
               className="min-h-10 shrink-0 border px-3 text-[9px] font-bold tracking-wider"
-              style={{ color: selected ? color : '#71717a', borderColor: selected ? color : 'transparent' }}>[ {label} ]</button>;
+              style={{ color: selected ? accent(id) : '#71717a', borderColor: selected ? accent(id) : 'transparent' }}>[ {label} ]</button>;
           })}
         </nav>
       </header>
@@ -100,15 +88,12 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'wo
               </div>
               <div className="min-h-0 flex-1 overflow-auto"><TrackerGrid patternId={0} activeStep={activeStep} /></div>
             </section>
-            <section className="grid min-h-0 grid-rows-[minmax(160px,35%)_minmax(0,1fr)] gap-2 overflow-hidden">
-              <WorkbenchPanel />
-              <HardwareDeck />
-            </section>
+            <section className="grid min-h-0 grid-rows-[minmax(160px,35%)_minmax(0,1fr)] gap-2 overflow-hidden"><WorkbenchPanel /><HardwareDeck /></section>
           </div>
         )}
-        {currentTab === 'song' && <PlaceholderView title="SONG ARRANGEMENT" detail="The 8-track × 32-row arrangement view is staged next; arrangement cells need a persisted song model before they can safely edit project data." />}
-        {currentTab === 'table' && <PlaceholderView title="PHRASE / TABLE EDITOR" detail="Full-screen phrase parameters, macro curves, and automation lanes are staged after the tracker data model and scheduler event pipeline are unified." />}
-        {currentTab === 'mixer' && <PlaceholderView title="MIXER / MASTER BUS" detail="Eight track strips, master controls, and Punch-In FX routing require track-channel audio routing; this view remains a safe shell until that graph exists." />}
+        {currentTab === 'song' && <SongArrangement revision={projectRevision} />}
+        {currentTab === 'table' && <PlaceholderView title="PHRASE / TABLE EDITOR" detail="Full-screen phrase parameters, macro curves, and automation lanes are staged after the scheduler event pipeline is unified." />}
+        {currentTab === 'mixer' && <PlaceholderView title="MIXER / MASTER BUS" detail="Track strips and Punch-In FX routing require track-channel audio routing; this view remains a safe shell until that graph exists." />}
       </main>
 
       <footer className="flex shrink-0 items-center justify-between border-t border-[var(--border-grid)] bg-[var(--bg-canvas)] px-3 py-2 text-[9px] text-zinc-400">
