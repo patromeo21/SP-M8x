@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { SamplerWorkbench } from '../sampler/SamplerWorkbench';
 import { HardwareDeck } from './HardwareDeck';
 import { TrackerGrid } from '../tracker/TrackerGrid';
+import { trackerEngine, type TrackerEngineState } from '../tracker/trackerEngine';
 
 export type WorkspaceTab = 'workspace' | 'song' | 'table' | 'sampler';
 
@@ -43,6 +44,14 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
   activeStep = 0,
 }) => {
   const [currentTab, setCurrentTab] = useState<WorkspaceTab>(initialTab);
+  const [playheadState, setPlayheadState] = useState<TrackerEngineState>(() => trackerEngine.getState());
+
+  useEffect(() => {
+    const unsubscribe = trackerEngine.subscribe(setPlayheadState);
+    return unsubscribe;
+  }, []);
+
+  const visibleStep = playheadState.activeStep ?? activeStep;
 
   return (
     <div className="flex h-[100dvh] w-screen flex-col overflow-hidden bg-[var(--bg-shell-deep)] font-mono text-[var(--text-primary)]">
@@ -72,11 +81,11 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
           <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 landscape:grid-cols-[3fr_2fr]">
             <section className="flex min-h-0 flex-col overflow-hidden border border-[var(--border-grid)] bg-[var(--bg-canvas)] p-2">
               <div className="flex shrink-0 items-center justify-between border-b border-[var(--border-grid)] px-2 py-2 text-[10px] font-bold">
-                <span className="text-zinc-400">TRACKER SEQUENCER (64 STEPS)</span>
-                <span className="text-[var(--accent-phrase)]">STEP: {String(activeStep).padStart(2, '0')} / 63</span>
+                <span className="text-zinc-400">TRACKER SEQUENCER (16 STEPS)</span>
+                <span className="text-[var(--accent-phrase)]">STEP: {String(visibleStep).padStart(2, '0')} / 15</span>
               </div>
               <div className="min-h-0 flex-1 overflow-auto">
-                <TrackerGrid patternId={0} activeStep={activeStep} />
+                <TrackerGrid patternId={0} activeStep={visibleStep} />
               </div>
             </section>
             <section className="grid min-h-0 grid-rows-[minmax(160px,35%)_minmax(0,1fr)] gap-2 overflow-hidden">
@@ -100,8 +109,8 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
       <footer className="flex shrink-0 items-center justify-between border-t border-[var(--border-grid)] bg-[var(--bg-canvas)] px-3 py-2 text-[9px] text-zinc-400">
         <div className="flex items-center gap-4">
           <span className="flex items-center gap-1.5"><span className="h-2 w-2 bg-emerald-400" /><strong className="text-zinc-300">ENGINE READY</strong></span>
-          <span>BPM: <strong className="text-zinc-200">120.0</strong></span>
-          <span>CLOCK: <strong className="text-zinc-200">INTERNAL</strong></span>
+          <span>BPM: <strong className="text-zinc-200">{String(trackerEngine.getState().isPlaying ? 'LIVE' : '120.0')}</strong></span>
+          <span>CLOCK: <strong className="text-zinc-200">{trackerEngine.getState().isPlaying ? 'RUNNING' : 'INTERNAL'}</strong></span>
         </div>
         <span className="text-zinc-600">SP-M8x HARDWARE INTERFACE</span>
       </footer>
