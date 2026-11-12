@@ -8,7 +8,7 @@ import React, { useState } from 'react';
 export interface SamplerWorkbenchProps {
   selectedPad?: { id?: string | number; sampleName?: string; sampleDuration?: number; sampleRate?: number; startPoint?: number; endPoint?: number; pitchShift?: number; [key: string]: any };
   onUpdatePad?: (updatedPad: any) => void;
-  onTriggerPad?: (padId: number | string) => Promise<void> | void;
+  onTriggerPad?: (padId: number) => Promise<void> | void;
   sampleName?: string;
   sampleDuration?: number;
   sampleRate?: number;
@@ -30,7 +30,6 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
   pitchShift = 0,
   onParameterChange,
 }) => {
-  // Fall back to selectedPad properties if provided from workspace state
   const currentName = selectedPad?.sampleName || externalName || 'NO SAMPLE LOADED';
   const currentDuration = selectedPad?.sampleDuration ?? externalDuration ?? 0.0;
   const currentRate = selectedPad?.sampleRate ?? externalRate ?? 44100;
