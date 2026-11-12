@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 
 export interface PadGridProps {
-  pads?: Array<{ id: string; index?: number; label?: string; sampleName?: string; hasSample?: boolean; [key: string]: any }>;
+  pads?: Array<{ id: string | number; index?: number; label?: string; sampleName?: string; hasSample?: boolean; [key: string]: any }>;
   mode?: string;
   activeBank?: string;
   onPadSelect?: (index: number) => void | React.Dispatch<React.SetStateAction<number>>;
@@ -84,10 +84,11 @@ export const PadGrid: React.FC<PadGridProps> = ({
           const isTriggered = triggeredPad === idx;
           const isSelected = selectedPadId === idx;
           const displayLabel = pad.sampleName || pad.label || `PAD ${idx + 1}`;
+          const padDisplayId = String(pad.id ?? `${activeBank}${idx + 1}`);
 
           return (
             <div
-              key={pad.id || idx}
+              key={pad.id ?? idx}
               onClick={() => handlePadClick(idx)}
               className={`relative flex flex-col items-center justify-between p-2 rounded-lg border cursor-pointer transition-all duration-75 select-none ${
                 isTriggered
@@ -100,7 +101,7 @@ export const PadGrid: React.FC<PadGridProps> = ({
               {/* Pad Identification Tag */}
               <div className="w-full flex justify-between items-center text-[8px]">
                 <span className={`font-bold ${isTriggered ? 'text-zinc-900' : 'text-zinc-500'}`}>
-                  {pad.id || `${activeBank}${idx + 1}`}
+                  {padDisplayId}
                 </span>
                 <label 
                   onClick={(e) => e.stopPropagation()} 
