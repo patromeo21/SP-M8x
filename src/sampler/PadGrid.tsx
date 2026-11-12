@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 
 export interface PadGridProps {
-  pads?: Array<{ id: string; index: number; label: string; sampleName?: string; hasSample?: boolean; [key: string]: any }>;
+  pads?: Array<{ id: string; index?: number; label?: string; sampleName?: string; hasSample?: boolean; [key: string]: any }>;
   mode?: string;
   activeBank?: string;
   onPadSelect?: (index: number) => void | React.Dispatch<React.SetStateAction<number>>;
@@ -83,6 +83,7 @@ export const PadGrid: React.FC<PadGridProps> = ({
         {padsToDisplay.map((pad, idx) => {
           const isTriggered = triggeredPad === idx;
           const isSelected = selectedPadId === idx;
+          const displayLabel = pad.sampleName || pad.label || `PAD ${idx + 1}`;
 
           return (
             <div
@@ -120,7 +121,7 @@ export const PadGrid: React.FC<PadGridProps> = ({
                 <span className={`text-[10px] font-extrabold tracking-wider truncate block max-w-[70px] ${
                   isTriggered ? 'text-zinc-950' : pad.hasSample ? 'text-zinc-100' : 'text-zinc-600'
                 }`}>
-                  {pad.sampleName || pad.label || 'EMPTY'}
+                  {displayLabel}
                 </span>
               </div>
 
