@@ -1,20 +1,26 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * trackerEngine.ts — Step Sequencer Playhead & Tracker Bridge Integration
+ * trackerEngine.ts — Lookahead scheduler for the 16-step phrase sequencer
  */
 
 import { audioEngine } from '../audio/audioEngine';
 import { projectController } from '../project/projectController';
 import { trackerBridge } from './trackerBridge';
 
+const SCHEDULER_INTERVAL_MS = 25;
+const LOOKAHEAD_SECONDS = 0.12;
+const START_AHEAD_SECONDS = 0.05;
+const STEP_COUNT = 16;
+
 export class TrackerEngine {
-  private currentStep: number = 0;
-  private isPlaying: boolean = false;
+  private currentStep = 0;
+  private isPlaying = false;
   private timerId: number | null = null;
-  private bpm: number = 120;
+  private nextStepTime = 0;
+  private bpm = 120;
   private onStepCallback?: (step: number) => void;
 
-  constructor(bpm: number = 120) {
+  constructor(bpm = 120) {
     this.bpm = bpm;
   }
 
@@ -23,55 +29,69 @@ export class TrackerEngine {
   }
 
   public setBpm(bpm: number): void {
-    this.bpm = bpm;
-    if (this.isPlaying) {
-      this.stop();
-      this.start();
-    }
+    if (!Number.isFinite(bpm)) return;
+    this.bpm = Math.max(40, Math.min(300, bpm));
   }
 
   public start(): void {
     if (this.isPlaying) return;
-    this.isPlaying = true;
 
-    const intervalMs = (60000 / this.bpm) / 4;
-    this.timerId = window.setInterval(() => {
-      this.tick();
-    }, intervalMs);
+    try {
+      const context = audioEngine.initialize();
+      this.isPlaying = true;
+      this.nextStepTime = context.currentTime + START_AHEAD_SECONDS;
+      this.scheduleAhead();
+      this.timerId = window.setInterval(() => this.scheduleAhead(), SCHEDULER_INTERVAL_MS);
+    } catch (error) {
+      this.isPlaying = false;
+      console.error('[TrackerEngine] Could not start audio playback:', error);
+    }
   }
 
   public stop(): void {
-    if (!this.isPlaying) return;
     this.isPlaying = false;
     if (this.timerId !== null) {
-      clearInterval(this.timerId);
+      window.clearInterval(this.timerId);
       this.timerId = null;
     }
+    this.nextStepTime = 0;
+    this.currentStep = 0;
   }
 
   public togglePlay(): boolean {
-    if (this.isPlaying) {
-      this.stop();
-    } else {
-      this.start();
-    }
+    if (this.isPlaying) this.stop();
+    else this.start();
     return this.isPlaying;
   }
 
-  private tick(): void {
-    const state = projectController.getState();
-    const patternIndex = state.settings.activePatternIndex ?? 0;
-    const currentPattern = state.tracker.patterns[patternIndex];
-    const patternLength = Math.max(1, Math.min(16, currentPattern?.steps.length ?? 16));
+  public getIsPlaying(): boolean {
+    return this.isPlaying;
+  }
 
-    if (this.onStepCallback) {
-      this.onStepCallback(this.currentStep);
+  private scheduleAhead(): void {
+    if (!this.isPlaying) return;
+    const context = audioEngine.getContext();
+    if (!context) {
+      this.stop();
+      return;
     }
 
-    const now = audioEngine.getContext()?.currentTime ?? 0;
-    trackerBridge.handleStepTrigger(this.currentStep, now);
+    const state = projectController.getState();
+    const patternIndex = state.settings.activePatternIndex ?? 0;
+    const pattern = state.tracker.patterns[patternIndex];
+    const patternLength = Math.max(1, Math.min(STEP_COUNT, pattern?.steps.length ?? STEP_COUNT));
+    const bpm = Number.isFinite(state.settings.bpm) ? state.settings.bpm : this.bpm;
+    const stepDuration = 60 / Math.max(40, Math.min(300, bpm)) / 4;
+    const scheduleUntil = context.currentTime + LOOKAHEAD_SECONDS;
 
-    this.currentStep = (this.currentStep + 1) % patternLength;
+    while (this.nextStepTime < scheduleUntil) {
+      const step = this.currentStep % patternLength;
+      trackerBridge.handleStepTrigger(step, this.nextStepTime);
+      this.onStepCallback?.(step);
+
+      this.currentStep = (step + 1) % patternLength;
+      this.nextStepTime += stepDuration;
+    }
   }
 }
 
