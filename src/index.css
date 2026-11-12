@@ -1,30 +1,40 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* Add after the existing Tailwind directives. */
+@layer base {
+  :root {
+    color-scheme: dark;
 
-/* SP-M8x Touch & Mobile Hardware Optimization */
-html, body {
-  overscroll-behavior-y: none;
-  touch-action: pan-x pan-y;
-  -webkit-touch-callout: none;
-  -webkit-user-select: none;
-  user-select: none;
-  background-color: #09090b; /* zinc-950 */
-  color: #f4f4f5; /* zinc-100 */
-}
+    /* Canonical palette from the locked layout diagram */
+    --bg-canvas: #12121c;
+    --text-inactive: #2a2a35;
+    --border-grid: #1f1f2e;
+    --text-primary: #f4f4f9;
+    --accent-phrase: #22d3ee;
+    --accent-table: #c084fc;
+    --accent-song: #4ade80;
 
-/* Instant response for interactive pads, buttons, canvas, and tracker cells */
-button, 
-canvas, 
-input,
-select,
-.touch-target {
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
+    /* Additional hybrid/SP-style accents */
+    --bg-shell-deep: #09090b;
+    --accent-m8-cyan: #00efff;
+    --accent-amber: #f59e0b;
+    --accent-magenta: #f472b6;
 
-/* Prevent text selection highlight during rapid multi-touch pad drumming or tracking */
-* {
-  -webkit-user-select: none;
-  user-select: none;
+    /* Use these now with system fallbacks; load M8 fonts only once verified. */
+    --font-m8-big:
+      "M8BigFont", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      "Liberation Mono", monospace;
+    --font-m8-standard:
+      "M8StandardFont", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      "Liberation Mono", monospace;
+  }
+
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  body {
+    font-family: var(--font-m8-big);
+    font-variant-numeric: tabular-nums;
+  }
 }
