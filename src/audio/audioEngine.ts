@@ -95,9 +95,9 @@ export class AudioEngine {
     const semitones = clamp(options.semitoneOffset ?? 0, -48, 48);
     source.playbackRate.value = Math.pow(2, semitones / 12);
 
-    const startTime = Math.max(context.currentTime, options.scheduledTime ?? context.currentTime);
+    const scheduledTime = Math.max(context.currentTime, options.scheduledTime ?? context.currentTime);
     const voiceGain = context.createGain();
-    voiceGain.gain.setValueAtTime(clamp(options.volume ?? 1, 0, 1), startTime);
+    voiceGain.gain.setValueAtTime(clamp(options.volume ?? 1, 0, 1), scheduledTime);
     source.connect(voiceGain);
     voiceGain.connect(this.masterGain);
 
@@ -108,7 +108,7 @@ export class AudioEngine {
       sliceStart,
       duration,
       source.loop,
-      startTime,
+      scheduledTime,
     );
   }
 
