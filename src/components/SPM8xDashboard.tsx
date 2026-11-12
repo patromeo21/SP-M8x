@@ -52,6 +52,10 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
   }, []);
 
   const visibleStep = playheadState.activeStep ?? activeStep;
+  const handleTransportToggle = () => {
+    if (playheadState.isPlaying) trackerEngine.stop();
+    else trackerEngine.start();
+  };
 
   return (
     <div className="flex h-[100dvh] w-screen flex-col overflow-hidden bg-[var(--bg-shell-deep)] font-mono text-[var(--text-primary)]">
@@ -59,6 +63,15 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
         <div className="flex items-center gap-3">
           <h1 className="text-xs font-black tracking-widest text-[var(--accent-phrase)]">SP-M8x <span className="font-normal text-zinc-500">v0.9.2</span></h1>
           <span className="border border-zinc-800 bg-zinc-900 px-2 py-1 text-[9px] text-zinc-400">IPAD 9TH GEN TARGET</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleTransportToggle}
+            className="min-h-8 rounded border border-cyan-500 bg-cyan-500/10 px-3 text-[9px] font-bold tracking-widest text-cyan-300 transition hover:bg-cyan-500/20"
+          >
+            {playheadState.isPlaying ? 'STOP' : 'PLAY'}
+          </button>
         </div>
         <nav className="flex max-w-full items-center gap-1 overflow-x-auto bg-zinc-950 p-1" aria-label="Main views">
           {tabs.map(({ id, label }) => {
@@ -109,8 +122,8 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
       <footer className="flex shrink-0 items-center justify-between border-t border-[var(--border-grid)] bg-[var(--bg-canvas)] px-3 py-2 text-[9px] text-zinc-400">
         <div className="flex items-center gap-4">
           <span className="flex items-center gap-1.5"><span className="h-2 w-2 bg-emerald-400" /><strong className="text-zinc-300">ENGINE READY</strong></span>
-          <span>BPM: <strong className="text-zinc-200">{String(trackerEngine.getState().isPlaying ? 'LIVE' : '120.0')}</strong></span>
-          <span>CLOCK: <strong className="text-zinc-200">{trackerEngine.getState().isPlaying ? 'RUNNING' : 'INTERNAL'}</strong></span>
+          <span>BPM: <strong className="text-zinc-200">120.0</strong></span>
+          <span>CLOCK: <strong className="text-zinc-200">{playheadState.isPlaying ? 'RUNNING' : 'INTERNAL'}</strong></span>
         </div>
         <span className="text-zinc-600">SP-M8x HARDWARE INTERFACE</span>
       </footer>
