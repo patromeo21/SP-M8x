@@ -3,6 +3,8 @@
  * trackerEngine.ts — Step Sequencer Playhead & Tracker Bridge Integration
  */
 
+import { audioEngine } from '../audio/audioEngine';
+import { projectController } from '../project/projectController';
 import { trackerBridge } from './trackerBridge';
 
 export class TrackerEngine {
@@ -32,14 +34,10 @@ export class TrackerEngine {
     if (this.isPlaying) return;
     this.isPlaying = true;
 
-    // Calculate 16th-note step interval: (60000ms / BPM) / 4
     const intervalMs = (60000 / this.bpm) / 4;
-
     this.timerId = window.setInterval(() => {
       this.tick();
     }, intervalMs);
-
-    console.log(`[TrackerEngine] Started playback at ${this.bpm} BPM`);
   }
 
   public stop(): void {
@@ -49,7 +47,6 @@ export class TrackerEngine {
       clearInterval(this.timerId);
       this.timerId = null;
     }
-    console.log('[TrackerEngine] Stopped playback');
   }
 
   public togglePlay(): boolean {
@@ -62,15 +59,19 @@ export class TrackerEngine {
   }
 
   private tick(): void {
+    const state = projectController.getState();
+    const patternIndex = state.settings.activePatternIndex ?? 0;
+    const currentPattern = state.tracker.patterns[patternIndex];
+    const patternLength = Math.max(1, Math.min(16, currentPattern?.steps.length ?? 16));
+
     if (this.onStepCallback) {
       this.onStepCallback(this.currentStep);
     }
 
-    // Pass the active playhead index to the bridge for real-time sample execution
-    trackerBridge.handleStepTrigger(this.currentStep);
+    const now = audioEngine.getContext()?.currentTime ?? 0;
+    trackerBridge.handleStepTrigger(this.currentStep, now);
 
-    // Advance step pointer across 64-step pattern loop
-    this.currentStep = (this.currentStep + 1) % 64;
+    this.currentStep = (this.currentStep + 1) % patternLength;
   }
 }
 
