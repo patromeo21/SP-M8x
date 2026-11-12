@@ -51,7 +51,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
     return unsubscribe;
   }, []);
 
-  const visibleStep = playheadState.activeStep ?? activeStep;
+  const visibleStep = activeStep;
   const handleTransportToggle = () => {
     if (playheadState.isPlaying) trackerEngine.stop();
     else trackerEngine.start();
@@ -94,8 +94,8 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
           <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 landscape:grid-cols-[3fr_2fr]">
             <section className="flex min-h-0 flex-col overflow-hidden border border-[var(--border-grid)] bg-[var(--bg-canvas)] p-2">
               <div className="flex shrink-0 items-center justify-between border-b border-[var(--border-grid)] px-2 py-2 text-[10px] font-bold">
-                <span className="text-zinc-400">TRACKER SEQUENCER (16 STEPS)</span>
-                <span className="text-[var(--accent-phrase)]">STEP: {String(visibleStep).padStart(2, '0')} / 15</span>
+                <span className="text-zinc-400">TRACKER SEQUENCER (64 STEPS)</span>
+                <span className="text-[var(--accent-phrase)]">STEP: {String(visibleStep).padStart(2, '0')} / 63</span>
               </div>
               <div className="min-h-0 flex-1 overflow-auto">
                 <TrackerGrid patternId={0} activeStep={visibleStep} />
