@@ -19,7 +19,7 @@ export interface ProjectSettings {
   masterVolume: number; // 0.0 to 1.0
   samplerMode: 'SAMPLE_TRIGGER' | string;
   theme: string;
-  swing?: number;
+  swing?: number; // 0.0 to 1.0 (applied dynamically by scheduler math, not baked into notes)
   timeSignatureNum?: number;
   timeSignatureDen?: number;
 }
@@ -62,11 +62,11 @@ export interface PadAssignment {
 export interface TrackerStepItem {
   id: string;
   stepIndex: number;
-  subTickOffset: number; // 0 to 5 ticks for micro-timing / groove translation
-  note: string;       // e.g., "C-4", "---"
-  velocity: number;   // 0 to 127
+  subTickOffset: number; // 0 to 7 for micro-timing within the step (8 fixed subdivisions, slots 0-7)
+  note: string;          // e.g., "C-4", "---"
+  velocity: number;      // 0 to 127
   instrumentAssignmentId: string | null;
-  phraseFx: string;   // Command string (e.g., filter, delay, bitcrush)
+  phraseFx: string;      // Command string (e.g., filter, delay, bitcrush)
   phraseFxValue: number;
   tableVolume: number | null;
   tablePitch: number | null;
@@ -77,7 +77,7 @@ export interface TrackerStepItem {
 export interface ProjectPattern {
   id: string;
   name: string;
-  length: number;     // e.g., 16, 32, 64
+  length: number;        // e.g., 16, 32, 64 (with 16-step view anchor)
   steps: TrackerStepItem[];
 }
 
@@ -134,50 +134,4 @@ export interface SPProject {
   };
   song: SongArrangementState;
   effects: EffectsProjectState;
-}
-
-// --- Legacy Migration Input Types ---
-export interface LegacyPadInput {
-  id: number;
-  name?: string;
-  buffer?: {
-    duration: number;
-    sampleRate: number;
-    numberOfChannels: number;
-  };
-  sliceStart?: number;
-  sliceEnd?: number;
-  volume?: number;
-  pan?: number;
-  reverse?: boolean;
-  loop?: boolean;
-  chromaticRootNote?: number;
-  pitchOffset?: number;
-}
-
-export interface LegacyStepInput {
-  note?: string;
-  volume?: number;
-  instrument: number;
-  command?: string;
-  value?: number;
-}
-
-export interface LegacyPatternInput {
-  id: number;
-  length?: number;
-  steps: LegacyStepInput[];
-}
-
-export interface LegacyProjectInput {
-  now?: string;
-  projectId?: string;
-  projectName?: string;
-  bpm?: number;
-  samplerMode?: string;
-  theme?: string;
-  pads: LegacyPadInput[];
-  pattern?: LegacyPatternInput;
-  punchInFX?: Partial<PunchInEffectsState>;
-  masterFX?: Partial<MasterEffectsState>;
 }

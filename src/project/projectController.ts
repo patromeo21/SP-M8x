@@ -17,6 +17,9 @@ export interface TrackerStepItem {
   note: string;
   sampleId: string;
   fx?: string;
+  subTickOffset?: number; // 0 to 7 fixed subdivisions within step
+  velocity?: number;      // 0 to 127
+  instrumentAssignmentId?: string | null;
 }
 
 export interface Pattern {
@@ -29,6 +32,7 @@ export interface ProjectSettings {
   bpm: number;
   masterVolume: number;
   activePatternIndex: number;
+  swing?: number; // 0.0 to 1.0 applied by scheduler
 }
 
 export interface ProjectState {
@@ -75,6 +79,7 @@ class ProjectController {
         bpm: 120,
         masterVolume: 0.8,
         activePatternIndex: 0,
+        swing: 0.0,
       },
       sampler: {
         pads: initialPads,
@@ -87,6 +92,8 @@ class ProjectController {
             steps: Array.from({ length: 64 }, () => ({
               note: '---',
               sampleId: '--',
+              subTickOffset: 0,
+              velocity: 127,
             })),
           },
         ],
@@ -127,7 +134,7 @@ class ProjectController {
   }
 
   private notify(): void {
-    this.saveToLocalStorage(); // Auto-save on every state change
+    this.saveToLocalStorage();
     this.listeners.forEach((listener) => listener(this.state));
   }
 
@@ -140,6 +147,12 @@ class ProjectController {
   public setMasterVolume(volume: number): void {
     const clampedVol = Math.max(0, Math.min(1, volume));
     this.state.settings.masterVolume = clampedVol;
+    this.notify();
+  }
+
+  public setSwing(swing: number): void {
+    const clampedSwing = Math.max(0, Math.min(1, swing));
+    this.state.settings.swing = clampedSwing;
     this.notify();
   }
 
@@ -163,9 +176,6 @@ class ProjectController {
     this.notify();
   }
 
-  /**
-   * Export project state as a downloadable JSON file (.spm8x)
-   */
   public exportProjectJson(): void {
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(this.state, null, 2));
     const downloadAnchor = document.createElement('a');
@@ -176,9 +186,6 @@ class ProjectController {
     downloadAnchor.remove();
   }
 
-  /**
-   * Import project state from a JSON string or parsed object
-   */
   public importProjectJson(jsonData: ProjectState): void {
     if (!jsonData || !jsonData.settings || !jsonData.sampler || !jsonData.tracker) {
       console.error('[ProjectController] Invalid project file format.');
@@ -191,3 +198,4 @@ class ProjectController {
 }
 
 export const projectController = new ProjectController();
+export default projectController;
