@@ -1,6 +1,6 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * trackerEngine.ts — Lookahead scheduler with swing and visual step sync
+ * trackerEngine.ts — Audio-clock lookahead scheduler for 64-step phrases
  */
 
 import { audioEngine } from '../audio/audioEngine';
@@ -10,32 +10,51 @@ import { trackerBridge } from './trackerBridge';
 const SCHEDULER_INTERVAL_MS = 25;
 const LOOKAHEAD_SECONDS = 0.12;
 const START_AHEAD_SECONDS = 0.05;
-const STEP_COUNT = 16;
+const PHRASE_STEP_COUNT = 64;
+const PAGE_STEP_COUNT = 16;
+const SUBDIVISION_COUNT = 8;
+const MAX_TIMING_OFFSET_RATIO = 0.999;
 
 export interface TrackerEngineState {
   isPlaying: boolean;
-  activeStep: number;
+}
+
+export interface TrackerPlayheadPosition {
+  stepIndex: number;
+  pageIndex: number;
+  pageStepIndex: number;
+  scheduledTime: number;
+  progress: number;
+}
+
+interface ScheduledVisualStep {
+  stepIndex: number;
+  scheduledTime: number;
+  stepDuration: number;
 }
 
 export class TrackerEngine {
   private currentStep = 0;
-  private activeStep = 0;
   private isPlaying = false;
   private timerId: number | null = null;
   private nextStepTime = 0;
   private bpm = 120;
+  private swing = 0;
   private onStepCallback?: (step: number) => void;
   private listeners = new Set<(state: TrackerEngineState) => void>();
-  private pendingVisualSteps: Array<{ step: number; time: number }> = [];
+  private scheduledSteps: ScheduledVisualStep[] = [];
+  private lastVisualStep: ScheduledVisualStep = { stepIndex: 0, scheduledTime: 0, stepDuration: 0.125 };
 
   constructor(bpm = 120) {
     this.bpm = bpm;
   }
 
+  /** Legacy callback, invoked by the audio scheduler; do not use it to update React per step. */
   public setStepCallback(callback: (step: number) => void): void {
     this.onStepCallback = callback;
   }
 
+  /** Subscribe to transport changes only; this does not emit on every sequencer step. */
   public subscribe(listener: (state: TrackerEngineState) => void): () => void {
     this.listeners.add(listener);
     listener(this.getState());
@@ -43,10 +62,34 @@ export class TrackerEngine {
   }
 
   public getState(): TrackerEngineState {
-    return { isPlaying: this.isPlaying, activeStep: this.activeStep };
+    return { isPlaying: this.isPlaying };
   }
 
-  private notify(): void {
+  /** Read from requestAnimationFrame to animate the playhead without React renders. */
+  public getPlayheadPosition(): TrackerPlayheadPosition {
+    const context = audioEngine.getContext();
+    const now = context?.currentTime ?? 0;
+
+    while (this.scheduledSteps.length > 0 && this.scheduledSteps[0].scheduledTime <= now) {
+      this.lastVisualStep = this.scheduledSteps.shift() as ScheduledVisualStep;
+    }
+
+    const event = this.lastVisualStep;
+    const progress = event.stepDuration > 0
+      ? Math.max(0, Math.min(1, (now - event.scheduledTime) / event.stepDuration))
+      : 0;
+    const stepIndex = event.stepIndex % PHRASE_STEP_COUNT;
+
+    return {
+      stepIndex,
+      pageIndex: Math.floor(stepIndex / PAGE_STEP_COUNT),
+      pageStepIndex: stepIndex % PAGE_STEP_COUNT,
+      scheduledTime: event.scheduledTime,
+      progress,
+    };
+  }
+
+  private notifyTransport(): void {
     const state = this.getState();
     this.listeners.forEach((listener) => listener(state));
   }
@@ -61,24 +104,30 @@ export class TrackerEngine {
 
     try {
       const context = audioEngine.initialize();
-      const state = projectController.getState();
+      const settings = projectController.getState().settings;
       this.isPlaying = true;
-      this.nextStepTime = context.currentTime + START_AHEAD_SECONDS;
       this.currentStep = 0;
-      this.activeStep = 0;
-      this.pendingVisualSteps = [];
-      this.bpm = Number.isFinite(state.settings.bpm) ? state.settings.bpm : this.bpm;
-      this.notify();
+      this.nextStepTime = context.currentTime + START_AHEAD_SECONDS;
+      this.scheduledSteps = [];
+      this.lastVisualStep = {
+        stepIndex: 0,
+        scheduledTime: this.nextStepTime,
+        stepDuration: 60 / Math.max(40, Math.min(300, settings.bpm || this.bpm)) / 4,
+      };
+      this.bpm = Number.isFinite(settings.bpm) ? settings.bpm : this.bpm;
+      this.swing = Number.isFinite(settings.swing) ? Math.max(0, Math.min(1, settings.swing ?? 0)) : 0;
+      this.notifyTransport();
       this.scheduleAhead();
       this.timerId = window.setInterval(() => this.scheduleAhead(), SCHEDULER_INTERVAL_MS);
     } catch (error) {
       this.isPlaying = false;
-      this.notify();
+      this.notifyTransport();
       console.error('[TrackerEngine] Could not start audio playback:', error);
     }
   }
 
   public stop(): void {
+    if (!this.isPlaying) return;
     this.isPlaying = false;
     if (this.timerId !== null) {
       window.clearInterval(this.timerId);
@@ -86,9 +135,8 @@ export class TrackerEngine {
     }
     this.nextStepTime = 0;
     this.currentStep = 0;
-    this.activeStep = 0;
-    this.pendingVisualSteps = [];
-    this.notify();
+    this.scheduledSteps = [];
+    this.notifyTransport();
   }
 
   public togglePlay(): boolean {
@@ -112,33 +160,37 @@ export class TrackerEngine {
     const state = projectController.getState();
     const patternIndex = state.settings.activePatternIndex ?? 0;
     const pattern = state.tracker.patterns[patternIndex];
-    const patternLength = Math.max(1, Math.min(STEP_COUNT, pattern?.steps.length ?? STEP_COUNT));
+    const phraseLength = Math.max(1, Math.min(PHRASE_STEP_COUNT, pattern?.steps.length ?? PHRASE_STEP_COUNT));
     const bpm = Number.isFinite(state.settings.bpm) ? state.settings.bpm : this.bpm;
     const stepDuration = 60 / Math.max(40, Math.min(300, bpm)) / 4;
-    const swing = Number.isFinite(state.settings.swing) ? Math.max(0, Math.min(1, state.settings.swing ?? 0)) : 0;
+    const swing = Number.isFinite(state.settings.swing)
+      ? Math.max(0, Math.min(1, state.settings.swing ?? this.swing))
+      : this.swing;
     const scheduleUntil = context.currentTime + LOOKAHEAD_SECONDS;
 
     while (this.nextStepTime < scheduleUntil) {
-      const step = this.currentStep % patternLength;
-      const swingOffset = step % 2 === 1 ? stepDuration * 0.15 * swing : 0;
-      const stepTime = this.nextStepTime + swingOffset;
-      trackerBridge.handleStepTrigger(step, this.nextStepTime);
-      this.pendingVisualSteps.push({ step, time: stepTime });
+      const stepIndex = this.currentStep % phraseLength;
+      const stepData = pattern?.steps[stepIndex];
+      const swingOffset = stepIndex % 2 === 1 ? stepDuration * 0.15 * swing : 0;
+      const subTick = Math.max(0, Math.min(SUBDIVISION_COUNT - 1, stepData?.subTickOffset ?? 0));
+      const subTickOffset = stepDuration * (subTick / SUBDIVISION_COUNT);
+      const timingOffset = Math.min(stepDuration * MAX_TIMING_OFFSET_RATIO, swingOffset + subTickOffset);
+      const eventTime = this.nextStepTime + timingOffset;
 
-      this.currentStep = (step + 1) % patternLength;
+      trackerBridge.handleStepTrigger(stepIndex, eventTime);
+      const scheduledStep = { stepIndex, scheduledTime: eventTime, stepDuration };
+      this.scheduledSteps.push(scheduledStep);
+      this.onStepCallback?.(stepIndex);
+
+      this.currentStep = (stepIndex + 1) % phraseLength;
       this.nextStepTime += stepDuration;
     }
 
-    let visualStateChanged = false;
-    while (this.pendingVisualSteps.length > 0 && this.pendingVisualSteps[0].time <= context.currentTime) {
-      const dueStep = this.pendingVisualSteps.shift();
-      if (dueStep) {
-        this.activeStep = dueStep.step;
-        this.onStepCallback?.(dueStep.step);
-        visualStateChanged = true;
-      }
+    // Keep only future steps; getPlayheadPosition consumes due steps at animation-frame cadence.
+    const oldestUsefulTime = context.currentTime - stepDuration;
+    while (this.scheduledSteps.length > 1 && this.scheduledSteps[1].scheduledTime < oldestUsefulTime) {
+      this.lastVisualStep = this.scheduledSteps.shift() as ScheduledVisualStep;
     }
-    if (visualStateChanged) this.notify();
   }
 }
 

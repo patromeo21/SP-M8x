@@ -1,6 +1,6 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * trackerBridge.ts — Connects Tracker Playhead Steps to Sampler Audio Triggers
+ * trackerBridge.ts — Translates tracker events into scheduled audio triggers
  */
 
 import { audioEngine } from '../audio/audioEngine';
@@ -20,29 +20,19 @@ const clamp = (value: number, min: number, max: number): number =>
   Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : min;
 
 class TrackerBridge {
-  /**
-   * Evaluates the active pattern step at the given index and triggers a scheduled sample playback.
-   */
+  /** The scheduler supplies the final event time, including swing and sub-tick timing. */
   public handleStepTrigger(stepIndex: number, scheduledTime?: number): void {
     const state = projectController.getState();
     const activePatternIdx = state.settings.activePatternIndex ?? 0;
     const currentPattern = state.tracker.patterns[activePatternIdx];
+    const step = currentPattern?.steps[stepIndex];
 
-    if (!currentPattern || !currentPattern.steps[stepIndex]) return;
-
-    const step = currentPattern.steps[stepIndex];
-    if (!step || (!step.sampleId && !step.note) || step.sampleId === '--' || step.note === '---') {
-      return;
-    }
+    if (!step || (!step.sampleId && !step.note) || step.sampleId === '--' || step.note === '---') return;
 
     const padId = step.sampleId && step.sampleId !== '--' ? step.sampleId : 'A1';
-    const baseBpm = state.settings.bpm || 120;
-    const stepDurationSeconds = 60 / baseBpm / 4;
-    const subdivisionCount = 8;
-    const microOffset = clamp(step.subTickOffset ?? 0, 0, subdivisionCount - 1);
-    const stepTime = typeof scheduledTime === 'number' ? scheduledTime : (audioEngine.getContext()?.currentTime ?? 0);
-    const microStepDuration = stepDurationSeconds / subdivisionCount;
-    const targetTime = stepTime + microOffset * microStepDuration;
+    const targetTime = typeof scheduledTime === 'number'
+      ? scheduledTime
+      : (audioEngine.getContext()?.currentTime ?? 0);
     const gain = clamp((step.velocity ?? 127) / 127, 0, 1) * 0.8;
 
     audioEngine.triggerPad(padId, {
