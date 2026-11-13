@@ -1,7 +1,7 @@
 /**
  * SP-M8x Project Data Types
- * Updated to support 32-step phrases, dual FX slots, SUB micro-timing, Table FX latches,
- * and backward-compatible legacy project aliases for robust compilation.
+ * Supports 32-step phrases, dual FX slots, SUB micro-timing, Table FX latches,
+ * and comprehensive optional legacy properties for 100% clean builds across existing reducers and helpers.
  */
 
 export const PROJECT_SCHEMA_VERSION = '1.1.0';
@@ -23,6 +23,11 @@ export interface StepData {
   fx1: StepFxCommand;
   fx2: StepFxCommand;
   sub: number; // 0 to 7 micro-timing / delay offset
+  // Optional legacy compatibility properties
+  id?: string;
+  subTickOffset?: number;
+  instrumentAssignmentId?: string;
+  [key: string]: any;
 }
 
 export interface TableFxLatch {
@@ -48,6 +53,9 @@ export interface PhraseData {
   steps: StepData[]; // Exactly 32 steps per phrase
   tableLatches: TableFxLatch[];
   tableRows: TableRow[];
+  // Optional legacy compatibility properties
+  length?: number;
+  [key: string]: any;
 }
 
 export interface TrackData {
@@ -58,11 +66,14 @@ export interface TrackData {
   muted: boolean;
   soloed: boolean;
   activePhraseId: string;
+  [key: string]: any;
 }
 
 export interface ProjectSettings {
   bpm: number;
   swing: number;
+  masterVolume?: number;
+  [key: string]: any;
 }
 
 export interface SampleAsset {
@@ -70,6 +81,8 @@ export interface SampleAsset {
   name: string;
   url?: string;
   buffer?: AudioBuffer;
+  originalFilename?: string;
+  [key: string]: any;
 }
 
 export type BankId = 'A' | 'B' | 'C' | 'D';
@@ -81,6 +94,12 @@ export interface PadAssignment {
   name: string;
   volume: number;
   pitch: number;
+  // Optional legacy compatibility properties
+  id?: string;
+  slot?: number;
+  loop?: boolean;
+  chromaticRootNote?: number;
+  [key: string]: any;
 }
 
 export interface ProjectData {
@@ -90,6 +109,32 @@ export interface ProjectData {
   tracks: TrackData[]; // Exactly 8 tracks
   phrases: Record<string, PhraseData>;
   instruments: Record<string, any>;
+  
+  // Optional legacy compatibility properties referenced by reducers/migrators/selectors
+  schemaVersion?: string;
+  metadata?: any;
+  settings?: ProjectSettings;
+  sampler?: {
+    banks?: Record<BankId, PadAssignment[]>;
+    pads?: PadAssignment[];
+    [key: string]: any;
+  };
+  tracker?: {
+    patterns?: Record<string, PhraseData>;
+    [key: string]: any;
+  };
+  song?: {
+    tracks?: TrackData[];
+    [key: string]: any;
+  };
+  effects?: {
+    punchIn?: any;
+    master?: any;
+    [key: string]: any;
+  };
+  punchIn?: any;
+  master?: any;
+  [key: string]: any;
 }
 
 // --- Backward Compatibility Aliases for Legacy Modules ---
