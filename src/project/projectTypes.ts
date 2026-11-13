@@ -1,184 +1,67 @@
 /**
- * SP-M8x Hybrid Music Production Suite
- * projectTypes.ts — Master Project Schema & Type Definitions
+ * SP-M8x Project Data Types
+ * Updated to support 32-step phrases, dual FX slots, SUB micro-timing, and Table FX latches.
  */
 
-export type BankId = 'A' | 'B' | 'C' | 'D';
+export type StepNote = string | null; // e.g., "C-4", "OFF", null
+export type InstrumentId = string | null; // e.g., "A01"
+export type VolumeValue = number | null; // 0x00 to 0x7F
 
-export const PROJECT_SCHEMA_VERSION = 1;
+export interface StepFxCommand {
+  opcode: string; // e.g., "STA", "PIT", "PAN", "VOL", "REP", "HOP", "CHA", "---"
+  value: number;  // 0x00 to 0xFF
+}
 
-export interface ProjectMetadata {
+export interface StepData {
+  stepIndex: number; // 0 to 31 (2 bars / 32 steps)
+  note: StepNote;
+  instrument: InstrumentId;
+  volume: VolumeValue;
+  fx1: StepFxCommand;
+  fx2: StepFxCommand;
+  sub: number; // 0 to 7 micro-timing / delay offset
+}
+
+export interface TableFxLatch {
+  id: string;
+  fxType: 'KILL' | 'RET' | 'CUT' | 'DEG' | 'SDL';
+  targetTrack: number; // 0 to 7 (or -1 for Master Bus)
+  engageStep: number;  // 0 to 31
+  engageSub: number;   // 0 to 7
+  releaseStep: number; // 0 to 31
+  releaseSub: number;  // 0 to 7
+  parameterValues?: number[]; // Captured control knob values during hold
+}
+
+export interface TableRow {
+  rowIndex: number; // 0 to 15
+  command: string;  // e.g., "STA", "PIT", "VOL", "---"
+  value: number;
+}
+
+export interface PhraseData {
   id: string;
   name: string;
-  createdAt: string;
-  updatedAt: string;
+  steps: StepData[]; // Exactly 32 steps per phrase
+  tableLatches: TableFxLatch[];
+  tableRows: TableRow[];
 }
 
-export interface ProjectSettings {
-  bpm: number;
-  masterVolume: number; // 0.0 to 1.0
-  samplerMode: 'SAMPLE_TRIGGER' | string;
-  theme: string;
-  swing?: number; // 0.0 to 1.0 (applied dynamically by scheduler math)
-  timeSignatureNum?: number;
-  timeSignatureDen?: number;
-}
-
-export interface SampleAsset {
-  id: string;
+export interface TrackData {
+  trackIndex: number; // 0 to 7
   name: string;
-  originalFilename: string | null;
-  mimeType: string | null;
-  durationSeconds: number;
-  sampleRate: number;
-  channelCount: number;
-  storageKey: string | null;
-}
-
-export interface SliceDefinition {
-  id: string;
-  sampleAssetId: string;
-  startSeconds: number;
-  endSeconds: number;
-}
-
-export interface PadAssignment {
-  id: string;
-  bank: BankId;
-  slot: number; // 0 to 15
-  name: string;
-  sampleAssetId: string | null;
-  sliceId: string | null;
-  sliceStartSeconds: number;
-  sliceEndSeconds: number | null;
   volume: number; // 0.0 to 1.0
-  pan: number; // -1.0 to 1.0
-  reverse: boolean;
-  loop: boolean;
-  chromaticRootNote: number;
-  pitchOffset: number; // Semitones
+  pan: number;    // -1.0 to 1.0
+  muted: boolean;
+  soloed: boolean;
+  activePhraseId: string;
 }
 
-export interface TrackerStepItem {
-  id: string;
-  stepIndex: number;
-  subTickOffset: number; // 0 to 7 for micro-timing within the step (8 fixed subdivisions, slots 0-7)
-  note: string; // e.g., "C-4", "---"
-  velocity: number; // 0 to 127
-  instrumentAssignmentId: string | null;
-  phraseFx: string; // Command string (e.g., filter, delay, bitcrush)
-  phraseFxValue: number;
-  tableVolume: number | null;
-  tablePitch: number | null;
-  tableFx: string;
-  tableFxValue: number;
+export interface ProjectData {
+  version: string;
+  bpm: number;
+  swing: number;
+  tracks: TrackData[]; // Exactly 8 tracks
+  phrases: Record<string, PhraseData>;
+  instruments: Record<string, any>;
 }
-
-export interface ProjectPattern {
-  id: string;
-  name: string;
-  length: number; // e.g., 16, 32, 64 (with 16-step view anchor)
-  steps: TrackerStepItem[];
-}
-
-export interface SongCell {
-  patternId: string | null;
-}
-
-export interface SongTrack {
-  id: string;
-  name: string;
-  rows: SongCell[]; // 32 rows per track
-}
-
-export interface SongArrangementState {
-  rowCount: number;
-  tracks: SongTrack[]; // 8 tracks
-}
-
-export interface PunchInEffectsState {
-  filterCutoff: number;
-  filterResonance: number;
-  delayTime: number;
-  delayFeedback: number;
-  reverbMix: number;
-  bitcrushBits: number;
-  vinylNoise: number;
-  isolatorLow: number;
-  isolatorMid: number;
-  isolatorHigh: number;
-}
-
-export interface MasterEffectsState {
-  limiterThreshold: number;
-  compressorRatio: number;
-  masterVolume: number;
-}
-
-export interface EffectsProjectState {
-  punchIn: PunchInEffectsState;
-  master: MasterEffectsState;
-}
-
-export interface SPProject {
-  schemaVersion: number;
-  metadata: ProjectMetadata;
-  settings: ProjectSettings;
-  sampler: {
-    assets: SampleAsset[];
-    slices: SliceDefinition[];
-    assignments: PadAssignment[];
-  };
-  tracker: {
-    patterns: ProjectPattern[];
-  };
-  song: SongArrangementState;
-  effects: EffectsProjectState;
-}
-
-// --- Legacy Migration Input Types (Required by migrateLegacyProject.ts) ---
-export interface LegacyPadInput {
-  id: number;
-  name?: string;
-  buffer?: {
-    duration: number;
-    sampleRate: number;
-    numberOfChannels: number;
-  };
-  sliceStart?: number;
-  sliceEnd?: number;
-  volume?: number;
-  pan?: number;
-  reverse?: boolean;
-  loop?: boolean;
-  chromaticRootNote?: number;
-  pitchOffset?: number;
-}
-
-export interface LegacyStepInput {
-  note?: string;
-  volume?: number;
-  instrument: number;
-  command?: string;
-  value?: number;
-}
-
-export interface LegacyPatternInput {
-  id: number;
-  length?: number;
-  steps: LegacyStepInput[];
-}
-
-export interface LegacyProjectInput {
-  now?: string;
-  projectId?: string;
-  projectName?: string;
-  bpm?: number;
-  samplerMode?: string;
-  theme?: string;
-  pads: LegacyPadInput[];
-  pattern?: LegacyPatternInput;
-  punchInFX?: Partial<PunchInEffectsState>;
-  masterFX?: Partial<MasterEffectsState>;
-}
- 
