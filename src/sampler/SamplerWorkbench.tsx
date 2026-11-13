@@ -68,8 +68,8 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
   const update = (patch: Parameters<PadBankApi['updatePad']>[1]) => onUpdatePad(pad.id, patch);
 
   return (
-    <div className="bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col min-h-[160px] font-mono select-none">
-      <div className="flex items-center justify-between border-b border-[var(--border-grid)] pb-2 mb-2">
+    <div className="sampler-workbench bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col shrink-0 min-h-[160px] font-mono select-none">
+      <div className="sampler-heading flex items-center justify-between border-b border-[var(--border-grid)] pb-2 mb-2">
         <div className="flex items-center space-x-2">
           <span className="text-[10px] font-bold text-purple-400 tracking-wider">SAMPLER WORKBENCH</span>
           <span className="text-[9px] bg-purple-950 text-[var(--accent-table)] border border-purple-500/40 px-1.5 py-0.5 rounded font-bold">
@@ -81,7 +81,7 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
         </span>
       </div>
 
-      <div className="relative h-24 bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden mb-2">
+      <div className="sampler-waveform relative h-24 bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden mb-2 shrink-0">
         <canvas ref={canvasRef} width={600} height={96} className="absolute inset-0 w-full h-full" />
         {!pad.buffer && (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-zinc-500 text-[11px]">
@@ -101,7 +101,7 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
         )}
       </div>
 
-      <div className="grid grid-cols-3 gap-2 mb-2">
+      <div className="sampler-sliders grid grid-cols-3 gap-2 mb-2">
         <SliderCell label="START" display={`${pad.startPct}%`} min={0} max={99} value={pad.startPct} disabled={!pad.buffer}
           onChange={(value) => update({ startPct: value })} />
         <SliderCell label="END" display={`${pad.endPct}%`} min={1} max={100} value={pad.endPct} disabled={!pad.buffer}
@@ -110,7 +110,7 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
           disabled={!pad.buffer} onChange={(value) => update({ pitch: value })} />
       </div>
 
-      <div className="flex items-center gap-2 mb-2">
+      <div className="sampler-actions flex items-center gap-2 mb-2">
         <button
           type="button"
           disabled={!pad.buffer}

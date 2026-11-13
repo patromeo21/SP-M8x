@@ -25,14 +25,21 @@ export function applyTouchOptimizations(): void {
     }
 
     /* Ensure all interactive pads, buttons, and tracker grids capture pointer events instantly without tap highlights */
-    button, input, canvas, [role="button"], .pad-trigger, .tracker-cell {
+    button, input, canvas, [role="button"], .tracker-cell {
       touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
       user-select: none;
       -webkit-user-select: none;
     }
+
+    .pad-trigger {
+      touch-action: none;
+    }
   `;
 
   document.head.appendChild(style);
+  const preventZoom = (event: Event) => event.preventDefault();
+  document.addEventListener('gesturestart', preventZoom, { passive: false });
+  document.addEventListener('gesturechange', preventZoom, { passive: false });
   console.log('[TouchOptimizer] Applied mobile touch constraints for iPad 9th Gen.');
 }

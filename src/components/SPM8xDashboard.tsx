@@ -28,7 +28,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
   const engineStatus = useEngineStatus();
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-[var(--bg-shell-deep)] text-[var(--text-primary)] font-mono overflow-hidden select-none">
+    <div className="app-shell flex flex-col w-full bg-[var(--bg-shell-deep)] text-[var(--text-primary)] font-mono overflow-hidden select-none">
       
       {/* 1. Persistent Top Navigation Bar */}
       <header className="flex items-center justify-between px-4 py-2 bg-[var(--bg-canvas)] border-b border-[var(--border-grid)] shrink-0">
@@ -87,7 +87,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
             </section>
 
             {/* Right Pane: Module Vertical Stack (40%) */}
-            <section className="w-[40%] flex flex-col gap-3 overflow-y-auto">
+            <section className="workspace-controls w-[40%] flex flex-col gap-3 overflow-y-auto">
               {/* Sampler Workbench Scaffold */}
               <SamplerWorkbench
                 pad={padBank.selectedPad}
@@ -97,8 +97,8 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
               />
 
               {/* Sampler Pads / M8 Deck Matrix Container */}
-              <div className="bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col flex-1">
-                <div className="flex items-center justify-between border-b border-[var(--border-grid)] pb-2 mb-2">
+              <div className="workspace-deck bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col flex-1">
+                <div className="workspace-deck-heading flex items-center justify-between border-b border-[var(--border-grid)] pb-2 mb-2">
                   <div className="flex items-center space-x-2">
                     <span className="text-[10px] font-bold text-[var(--accent-phrase)] tracking-wider">
                       PAD BANKS & M8 DECKS

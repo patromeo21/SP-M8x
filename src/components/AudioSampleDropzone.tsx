@@ -41,7 +41,7 @@ export const AudioSampleDropzone: React.FC<AudioSampleDropzoneProps> = ({ padId,
   };
 
   return (
-    <div className="flex flex-col items-center justify-center p-3 bg-zinc-950 border border-zinc-800 rounded-xl gap-2 font-mono select-none">
+    <div className="sample-dropzone flex flex-col items-center justify-center p-3 bg-zinc-950 border border-zinc-800 rounded-xl gap-2 font-mono select-none">
       <input
         ref={fileInputRef}
         type="file"
