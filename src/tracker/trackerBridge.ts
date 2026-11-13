@@ -4,7 +4,7 @@
  */
 
 import { audioEngine } from '../audio/audioEngine';
-import { projectController } from '../project/projectController';
+import { projectController, type Pattern } from '../project/projectController';
 
 export interface TrackerStepEvent {
   stepIndex: number;
@@ -13,33 +13,91 @@ export interface TrackerStepEvent {
   fx?: string;
 }
 
+export interface PadPlaybackSettings {
+  startPct: number; // 0-100
+  endPct: number; // 0-100
+  pitch: number; // semitones
+}
+
+export type PadSettingsProvider = (padId: string) => PadPlaybackSettings | undefined;
+
+interface PendingVoice {
+  voiceId: string;
+  time: number;
+}
+
+const PAD_ID_PATTERN = /^[A-D](?:[1-9]|1[0-6])$/;
+const EMPTY_NOTE = '---';
+const EMPTY_SAMPLE = '--';
+const FALLBACK_PAD_ID = 'A1';
+const DEFAULT_STEP_COUNT = 64;
+
 class TrackerBridge {
+  private padSettingsProvider: PadSettingsProvider | null = null;
+  private pendingVoices: PendingVoice[] = [];
+
+  /** Lets the sampler UI supply live slice/pitch settings without coupling the bridge to React. */
+  public setPadSettingsProvider(provider: PadSettingsProvider | null): void {
+    this.padSettingsProvider = provider;
+  }
+
+  public getStepCount(): number {
+    const pattern = this.getActivePattern();
+    return pattern && pattern.steps.length > 0 ? pattern.steps.length : DEFAULT_STEP_COUNT;
+  }
+
   /**
-   * Evaluates the active pattern step at the given index and triggers sample playback.
+   * Schedules the step at an exact AudioContext timestamp (seconds).
+   * Empty steps, invalid pad IDs, and pads without a loaded buffer are skipped.
    */
-  public handleStepTrigger(stepIndex: number): void {
-    const state = projectController.getState();
-    const activePatternIdx = state.settings.activePatternIndex ?? 0;
-    const currentPattern = state.tracker.patterns[activePatternIdx];
+  public scheduleStep(stepIndex: number, scheduledTime: number): void {
+    const step = this.getActivePattern()?.steps[stepIndex];
+    if (!step) return;
 
-    if (!currentPattern || !currentPattern.steps[stepIndex]) return;
+    const hasSample = Boolean(step.sampleId) && step.sampleId !== EMPTY_SAMPLE;
+    const hasNote = Boolean(step.note) && step.note !== EMPTY_NOTE;
+    if (!hasSample && !hasNote) return;
 
-    const step = currentPattern.steps[stepIndex];
+    const padId = hasSample ? step.sampleId : FALLBACK_PAD_ID;
+    if (!PAD_ID_PATTERN.test(padId)) return;
 
-    // Skip empty or unassigned steps
-    if (!step || (!step.sampleId && !step.note) || step.sampleId === '--' || step.note === '---') {
-      return;
-    }
+    const buffer = audioEngine.getPadBuffer(padId);
+    if (!buffer) return;
 
-    // Resolve target pad ID (e.g. "A1")
-    const padId = step.sampleId && step.sampleId !== '--' ? step.sampleId : 'A1';
+    const settings = this.padSettingsProvider?.(padId);
+    const startPct = settings?.startPct ?? 0;
+    const endPct = settings?.endPct ?? 100;
 
-    console.log(`[TrackerBridge] Step ${stepIndex} -> Triggering Pad ${padId} (Note: ${step.note})`);
-
-    // Execute polyphonic/monophonic voice trigger in Web Audio API
-    void audioEngine.triggerVoice(padId).catch((error: unknown) => {
-      console.error('[TrackerBridge] Could not start audio:', error);
+    const voiceId = audioEngine.triggerPad(padId, {
+      sliceStart: (startPct / 100) * buffer.duration,
+      sliceEnd: (endPct / 100) * buffer.duration,
+      semitoneOffset: settings?.pitch ?? 0,
+      volume: 1,
+      loop: false,
+      scheduledTime,
     });
+
+    this.prunePending();
+    if (voiceId) this.pendingVoices.push({ voiceId, time: scheduledTime });
+  }
+
+  /** Cancels voices that were scheduled but have not started yet (used when playback stops). */
+  public cancelPending(): void {
+    const now = audioEngine.getContext()?.currentTime ?? 0;
+    for (const pending of this.pendingVoices) {
+      if (pending.time > now) audioEngine.stopVoice(pending.voiceId);
+    }
+    this.pendingVoices = [];
+  }
+
+  private prunePending(): void {
+    const now = audioEngine.getContext()?.currentTime ?? 0;
+    this.pendingVoices = this.pendingVoices.filter((pending) => pending.time > now);
+  }
+
+  private getActivePattern(): Pattern | undefined {
+    const state = projectController.getState();
+    return state.tracker.patterns[state.settings.activePatternIndex ?? 0];
   }
 }
 
