@@ -142,7 +142,7 @@ class ProjectController {
           name: oldTrack?.name || `TRK ${index + 1}`,
           rows: Array.from({ length: SONG_ROW_COUNT }, (_, row) => {
             const value = rows[row];
-            return Number.isInteger(value) && value >= 1 && value <= 99 ? value : null;
+            return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 99 ? value : null;
           }),
         };
       }),
