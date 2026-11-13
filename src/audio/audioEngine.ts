@@ -56,6 +56,10 @@ class AudioEngine {
     return this.ctx;
   }
 
+  public getActiveVoiceCount(): number {
+    return this.activeVoices.size;
+  }
+
   public async decodeAudioData(arrayBuffer: ArrayBuffer): Promise<AudioBuffer> {
     const context = await this.initialize();
     return context.decodeAudioData(arrayBuffer.slice(0));

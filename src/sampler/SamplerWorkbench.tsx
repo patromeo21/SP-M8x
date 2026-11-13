@@ -1,172 +1,169 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * SamplerWorkbench.tsx — M8 Big Font Mode Waveform / Slicing Workbench
+ * SamplerWorkbench.tsx — Waveform / slicing workbench for the selected pad
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
+import { AudioSampleDropzone } from '../components/AudioSampleDropzone';
+import { formatPadLabel, type PadBankApi, type PadSlot } from './usePadBank';
+
+const WAVE_COLUMNS = 240;
 
 export interface SamplerWorkbenchProps {
-  selectedPad?: { id?: string | number; sampleName?: string; sampleDuration?: number; sampleRate?: number; startPoint?: number; endPoint?: number; pitchShift?: number; [key: string]: any };
-  onUpdatePad?: (updatedPad: any) => void;
-  onTriggerPad?: (padId: number) => Promise<void> | void;
-  sampleName?: string;
-  sampleDuration?: number;
-  sampleRate?: number;
-  startPoint?: number;
-  endPoint?: number;
-  pitchShift?: number;
-  onParameterChange?: (param: string, value: number) => void;
+  pad: PadSlot;
+  onUpdatePad: PadBankApi['updatePad'];
+  onLoadSample: PadBankApi['loadSample'];
+  onAudition: PadBankApi['triggerPad'];
 }
 
+const computePeaks = (buffer: AudioBuffer): Float32Array => {
+  const peaks = new Float32Array(WAVE_COLUMNS);
+  const channel = buffer.getChannelData(0);
+  const block = Math.max(1, Math.floor(channel.length / WAVE_COLUMNS));
+  for (let col = 0; col < WAVE_COLUMNS; col++) {
+    let max = 0;
+    const from = col * block;
+    const to = Math.min(channel.length, from + block);
+    for (let i = from; i < to; i++) max = Math.max(max, Math.abs(channel[i]));
+    peaks[col] = max;
+  }
+  return peaks;
+};
+
 export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
-  selectedPad,
+  pad,
   onUpdatePad,
-  onTriggerPad,
-  sampleName: externalName,
-  sampleDuration: externalDuration,
-  sampleRate: externalRate,
-  startPoint = 0,
-  endPoint = 100,
-  pitchShift = 0,
-  onParameterChange,
+  onLoadSample,
+  onAudition,
 }) => {
-  const currentName = selectedPad?.sampleName || externalName || 'NO SAMPLE LOADED';
-  const currentDuration = selectedPad?.sampleDuration ?? externalDuration ?? 0.0;
-  const currentRate = selectedPad?.sampleRate ?? externalRate ?? 44100;
-  
-  const [start, setStart] = useState<number>(selectedPad?.startPoint ?? startPoint);
-  const [end, setEnd] = useState<number>(selectedPad?.endPoint ?? endPoint);
-  const [pitch, setPitch] = useState<number>(selectedPad?.pitchShift ?? pitchShift);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const peaks = useMemo(() => (pad.buffer ? computePeaks(pad.buffer) : null), [pad.buffer]);
+  const duration = pad.buffer?.duration ?? 0;
+  const sampleRate = pad.buffer?.sampleRate ?? 44100;
 
-  const handleStartChange = (val: number) => {
-    setStart(val);
-    if (onParameterChange) onParameterChange('start', val);
-    if (selectedPad && onUpdatePad) {
-      onUpdatePad({ ...selectedPad, startPoint: val });
-    }
-  };
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+    const { width, height } = canvas;
+    ctx.clearRect(0, 0, width, height);
+    if (!peaks) return;
 
-  const handleEndChange = (val: number) => {
-    setEnd(val);
-    if (onParameterChange) onParameterChange('end', val);
-    if (selectedPad && onUpdatePad) {
-      onUpdatePad({ ...selectedPad, endPoint: val });
+    const mid = height / 2;
+    const colWidth = width / WAVE_COLUMNS;
+    ctx.fillStyle = '#c084fc';
+    for (let col = 0; col < WAVE_COLUMNS; col++) {
+      const h = Math.max(1, peaks[col] * (height - 8));
+      ctx.fillRect(col * colWidth, mid - h / 2, Math.max(1, colWidth - 0.5), h);
     }
-  };
 
-  const handlePitchChange = (val: number) => {
-    setPitch(val);
-    if (onParameterChange) onParameterChange('pitch', val);
-    if (selectedPad && onUpdatePad) {
-      onUpdatePad({ ...selectedPad, pitchShift: val });
-    }
-  };
+    ctx.fillStyle = 'rgba(9, 9, 11, 0.72)';
+    ctx.fillRect(0, 0, (pad.startPct / 100) * width, height);
+    ctx.fillRect((pad.endPct / 100) * width, 0, width, height);
+    ctx.fillStyle = '#22D3EE';
+    ctx.fillRect((pad.startPct / 100) * width, 0, 2, height);
+    ctx.fillRect((pad.endPct / 100) * width - 2, 0, 2, height);
+  }, [peaks, pad.startPct, pad.endPct]);
+
+  const update = (patch: Parameters<PadBankApi['updatePad']>[1]) => onUpdatePad(pad.id, patch);
 
   return (
-    <div className="flex flex-col h-full bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 font-mono select-none shadow-xl">
-      
-      {/* Workbench Header & Telemetry */}
-      <div className="flex items-center justify-between border-b border-[var(--border-grid)] pb-2 mb-3">
+    <div className="bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col min-h-[160px] font-mono select-none">
+      <div className="flex items-center justify-between border-b border-[var(--border-grid)] pb-2 mb-2">
         <div className="flex items-center space-x-2">
-          <span className="text-[10px] font-extrabold tracking-widest text-[var(--accent-table)] drop-shadow-[0_0_8px_rgba(192,132,252,0.3)]">
-            SAMPLER WORKBENCH
-          </span>
+          <span className="text-[10px] font-bold text-purple-400 tracking-wider">SAMPLER WORKBENCH</span>
           <span className="text-[9px] bg-purple-950 text-[var(--accent-table)] border border-purple-500/40 px-1.5 py-0.5 rounded font-bold">
-            EDIT & SLICE
+            {formatPadLabel(pad.id)}
           </span>
         </div>
-        <div className="text-[9px] text-zinc-400">
-          RATE: <strong className="text-zinc-200">{currentRate}HZ</strong>
-        </div>
-      </div>
-
-      {/* Waveform Display Canvas Scaffold */}
-      <div className="relative flex flex-col items-center justify-center h-28 bg-zinc-950 border border-zinc-800 rounded-lg p-2 mb-3 overflow-hidden group">
-        {/* Simulated Waveform Grid Lines */}
-        <div className="absolute inset-0 grid grid-cols-8 grid-rows-4 pointer-events-none opacity-20">
-          {Array.from({ length: 32 }).map((_, i) => (
-            <div key={i} className="border-[0.5px] border-zinc-700/40" />
-          ))}
-        </div>
-
-        {/* Center Sample Name / Status */}
-        <span className="text-xs font-black tracking-wider text-zinc-300 z-10 truncate max-w-[220px]">
-          {currentName}
+        <span className="text-[9px] text-zinc-400">
+          RATE: <strong className="text-zinc-200">{sampleRate}HZ</strong>
         </span>
-
-        {/* Waveform Visualizer Placeholder Bars */}
-        <div className="absolute bottom-2 left-3 right-3 flex items-end justify-between h-10 gap-0.5 pointer-events-none">
-          {Array.from({ length: 36 }).map((_, i) => {
-            const heightFactor = Math.sin(i * 0.4) * 50 + 50;
-            return (
-              <div 
-                key={i} 
-                className="w-1 bg-[var(--accent-table)] opacity-70 rounded-t"
-                style={{ height: `${Math.max(15, heightFactor)}%` }}
-              />
-            );
-          })}
-        </div>
-
-        {/* Duration / Telemetry Footer inside screen */}
-        <div className="absolute top-1.5 left-2 text-[8px] text-purple-400 font-bold">
-          DUR: {currentDuration.toFixed(2)}S
-        </div>
       </div>
 
-      {/* Parameter Control Sliders (Start, End, Pitch) */}
-      <div className="grid grid-cols-3 gap-2 mt-auto">
-        {/* Start Point */}
-        <div className="flex flex-col bg-zinc-900/60 border border-zinc-800 rounded p-1.5">
-          <div className="flex justify-between text-[8px] mb-1">
-            <span className="text-zinc-400 font-bold">START</span>
-            <span className="text-[var(--accent-table)]">{start}%</span>
+      <div className="relative h-24 bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden mb-2">
+        <canvas ref={canvasRef} width={600} height={96} className="absolute inset-0 w-full h-full" />
+        {!pad.buffer && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-zinc-500 text-[11px]">
+            <span className="text-zinc-400 font-bold mb-1">NO SAMPLE LOADED</span>
+            <span className="text-[9px] text-zinc-600 tracking-widest">Waveform View / Slicing Grid</span>
           </div>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            value={start}
-            onChange={(e) => handleStartChange(Number(e.target.value))}
-            className="w-full accent-[var(--accent-table)] cursor-pointer h-1 bg-zinc-800 rounded"
-          />
-        </div>
-
-        {/* End Point */}
-        <div className="flex flex-col bg-zinc-900/60 border border-zinc-800 rounded p-1.5">
-          <div className="flex justify-between text-[8px] mb-1">
-            <span className="text-zinc-400 font-bold">END</span>
-            <span className="text-[var(--accent-table)]">{end}%</span>
-          </div>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            value={end}
-            onChange={(e) => handleEndChange(Number(e.target.value))}
-            className="w-full accent-[var(--accent-table)] cursor-pointer h-1 bg-zinc-800 rounded"
-          />
-        </div>
-
-        {/* Pitch Shift */}
-        <div className="flex flex-col bg-zinc-900/60 border border-zinc-800 rounded p-1.5">
-          <div className="flex justify-between text-[8px] mb-1">
-            <span className="text-zinc-400 font-bold">PITCH</span>
-            <span className="text-[var(--accent-table)]">{pitch > 0 ? `+${pitch}` : pitch}ST</span>
-          </div>
-          <input
-            type="range"
-            min={-12}
-            max={12}
-            value={pitch}
-            onChange={(e) => handlePitchChange(Number(e.target.value))}
-            className="w-full accent-[var(--accent-table)] cursor-pointer h-1 bg-zinc-800 rounded"
-          />
-        </div>
+        )}
+        {pad.buffer && (
+          <>
+            <span className="absolute top-1 left-2 text-[8px] text-purple-400 font-bold truncate max-w-[60%]">
+              {pad.name}
+            </span>
+            <span className="absolute top-1 right-2 text-[8px] text-purple-400 font-bold">
+              DUR: {duration.toFixed(2)}S
+            </span>
+          </>
+        )}
       </div>
 
+      <div className="grid grid-cols-3 gap-2 mb-2">
+        <SliderCell label="START" display={`${pad.startPct}%`} min={0} max={99} value={pad.startPct} disabled={!pad.buffer}
+          onChange={(value) => update({ startPct: value })} />
+        <SliderCell label="END" display={`${pad.endPct}%`} min={1} max={100} value={pad.endPct} disabled={!pad.buffer}
+          onChange={(value) => update({ endPct: value })} />
+        <SliderCell label="PITCH" display={`${pad.pitch > 0 ? '+' : ''}${pad.pitch}ST`} min={-12} max={12} value={pad.pitch}
+          disabled={!pad.buffer} onChange={(value) => update({ pitch: value })} />
+      </div>
+
+      <div className="flex items-center gap-2 mb-2">
+        <button
+          type="button"
+          disabled={!pad.buffer}
+          onPointerDown={() => onAudition(pad.id)}
+          className="flex-1 touch-none py-2 rounded bg-cyan-950 border border-cyan-800 text-[10px] font-bold text-[var(--accent-phrase)] disabled:opacity-40 active:scale-95 transition-all"
+        >
+          AUDITION
+        </button>
+        <button
+          type="button"
+          disabled={!pad.buffer}
+          onClick={() => update({ loop: !pad.loop })}
+          className={`flex-1 py-2 rounded border text-[10px] font-bold disabled:opacity-40 transition-all ${
+            pad.loop
+              ? 'bg-purple-950 border-purple-800 text-purple-300'
+              : 'bg-zinc-900 border-zinc-700 text-zinc-400'
+          }`}
+        >
+          {pad.loop ? 'LOOP' : 'ONE-SHOT'}
+        </button>
+      </div>
+
+      <AudioSampleDropzone padId={pad.id} onSampleLoaded={onLoadSample} />
     </div>
   );
 };
+
+interface SliderCellProps {
+  label: string;
+  display: string;
+  min: number;
+  max: number;
+  value: number;
+  disabled: boolean;
+  onChange: (value: number) => void;
+}
+
+const SliderCell: React.FC<SliderCellProps> = ({ label, display, min, max, value, disabled, onChange }) => (
+  <div className="flex flex-col bg-zinc-900/60 border border-zinc-800 rounded p-1.5">
+    <div className="flex justify-between text-[8px] mb-1">
+      <span className="text-zinc-400 font-bold">{label}</span>
+      <span className="text-[var(--accent-table)]">{display}</span>
+    </div>
+    <input
+      type="range"
+      min={min}
+      max={max}
+      value={value}
+      disabled={disabled}
+      onChange={(event) => onChange(Number(event.target.value))}
+      className="w-full accent-[var(--accent-table)] cursor-pointer h-1 bg-zinc-800 rounded disabled:opacity-40"
+    />
+  </div>
+);
 
 export default SamplerWorkbench;

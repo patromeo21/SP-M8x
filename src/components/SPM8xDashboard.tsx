@@ -5,6 +5,10 @@
 
 import React, { useState } from 'react';
 import { TrackerGrid } from '../tracker/TrackerGrid';
+import { PadBankManager } from '../sampler/PadBankManager';
+import { SamplerWorkbench } from '../sampler/SamplerWorkbench';
+import { SamplerWorkspace } from '../sampler/SamplerWorkspace';
+import { usePadBank, useEngineStatus } from '../sampler/usePadBank';
 
 export type WorkspaceTab = 'workspace' | 'song' | 'phrase/table' | 'sampler';
 
@@ -19,7 +23,9 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
 }) => {
   const [currentTab, setCurrentTab] = useState<WorkspaceTab>(initialTab);
   const [deckMode, setDeckMode] = useState<'pads' | 'm8'>('pads');
-  const [activeBank, setActiveBank] = useState<'A' | 'B' | 'C' | 'D'>('A');
+  const padBank = usePadBank();
+  const { activeBank, setActiveBank } = padBank;
+  const engineStatus = useEngineStatus();
 
   return (
     <div className="flex flex-col h-screen w-screen bg-[var(--bg-shell-deep)] text-[var(--text-primary)] font-mono overflow-hidden select-none">
@@ -83,22 +89,12 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
             {/* Right Pane: Module Vertical Stack (40%) */}
             <section className="w-[40%] flex flex-col gap-3 overflow-y-auto">
               {/* Sampler Workbench Scaffold */}
-              <div className="bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col min-h-[160px]">
-                <div className="flex items-center justify-between border-b border-[var(--border-grid)] pb-2 mb-2">
-                  <span className="text-[10px] font-bold text-purple-400 tracking-wider">
-                    SAMPLER WORKBENCH
-                  </span>
-                  <span className="text-[9px] bg-zinc-900 text-zinc-400 px-1.5 py-0.5 rounded cursor-pointer hover:bg-zinc-800">
-                    SLICER
-                  </span>
-                </div>
-                <div className="flex-1 flex flex-col items-center justify-center border border-dashed border-zinc-800 rounded bg-zinc-950/50 text-zinc-500 text-[11px] p-4">
-                  <div className="text-zinc-400 font-bold mb-1">NO SAMPLE LOADED</div>
-                  <div className="w-full h-8 bg-zinc-900/80 rounded flex items-center justify-center border border-zinc-800 text-[9px] text-zinc-600 tracking-widest">
-                    Waveform View / Slicing Grid
-                  </div>
-                </div>
-              </div>
+              <SamplerWorkbench
+                pad={padBank.selectedPad}
+                onUpdatePad={padBank.updatePad}
+                onLoadSample={padBank.loadSample}
+                onAudition={padBank.triggerPad}
+              />
 
               {/* Sampler Pads / M8 Deck Matrix Container */}
               <div className="bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col flex-1">
@@ -144,14 +140,12 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
                         ))}
                       </div>
                     </div>
-                    <div className="grid grid-cols-4 gap-1.5 flex-1">
-                      {Array.from({ length: 16 }).map((_, i) => (
-                        <div key={i} className="bg-zinc-950 border border-zinc-800 rounded p-1.5 flex flex-col justify-between text-[9px] hover:border-cyan-500/50 transition-all cursor-pointer">
-                          <span className="text-zinc-500 font-bold">{activeBank}{String(i + 1).padStart(2, '0')}</span>
-                          <span className="text-zinc-600 text-[8px] truncate">EMPTY</span>
-                        </div>
-                      ))}
-                    </div>
+                    <PadBankManager
+                      slots={padBank.slots}
+                      activeBank={activeBank}
+                      selectedPadId={padBank.selectedPadId}
+                      triggerPad={padBank.triggerPad}
+                    />
                   </div>
                 ) : (
                   <div className="grid grid-cols-4 gap-2 flex-1 items-center p-2 bg-zinc-950/40 rounded border border-zinc-800/60">
@@ -165,8 +159,9 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
               </div>
             </section>
           </>
+        ) : currentTab === 'sampler' ? (
+          <SamplerWorkspace padBank={padBank} />
         ) : (
-          /* Visual Scaffolds for Unselected Tabs matching video */
           <div className="flex-1 flex items-center justify-center bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl">
             <div className="text-center">
               <h2 className="text-sm font-bold text-[var(--accent-phrase)] uppercase tracking-widest mb-1">
@@ -175,7 +170,6 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
               <p className="text-[11px] text-zinc-500">
                 {currentTab === 'song' && '6-track arrangement view is planned. current grid in wired yet.'}
                 {currentTab === 'phrase/table' && 'Unified tracker columns are planned. current project does not expose all requested fields.'}
-                {currentTab === 'sampler' && 'Advanced sample workbench and slice editor.'}
               </p>
             </div>
           </div>
@@ -186,9 +180,12 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
       <footer className="flex items-center justify-between px-4 py-2 bg-[var(--bg-canvas)] border-t border-[var(--border-grid)] text-[10px] text-zinc-400 shrink-0">
         <div className="flex items-center space-x-4">
           <span className="flex items-center space-x-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span className="text-zinc-300 font-bold">ENGINE READY</span>
+            <span className={`w-2 h-2 rounded-full ${engineStatus.state === 'running' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
+            <span className="text-zinc-300 font-bold">
+              {engineStatus.state === 'running' ? 'ENGINE READY' : 'TAP A PAD TO START AUDIO'}
+            </span>
           </span>
+          <span>VOICES: <strong className="text-zinc-200">{engineStatus.voices}</strong></span>
           <span>BPM: <strong className="text-zinc-200">120.0</strong></span>
           <span>CLOCK: <strong className="text-zinc-200">INTERNAL</strong></span>
         </div>
