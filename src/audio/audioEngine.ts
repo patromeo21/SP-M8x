@@ -1,7 +1,7 @@
 /**
  * SP-M8x Core Web Audio Engine
  * Precision-typed singleton providing complete compatibility with AudioContext lifecycle,
- * pad buffers, and external tracker/manager components.
+ * getter-based context exposure, pad buffers, and external tracker/manager components.
  */
 
 export class AudioEngine {
@@ -27,6 +27,11 @@ export class AudioEngine {
   private isInitialized = false;
 
   constructor() {}
+
+  // Expose getContext as a getter property to support property access like audioEngine.getContext.currentTime
+  get getContext(): AudioContext | null {
+    return this.audioCtx;
+  }
 
   public async initialize(): Promise<boolean> {
     if (this.isInitialized && this.audioCtx) {
@@ -110,10 +115,6 @@ export class AudioEngine {
     }
   }
 
-  public getContext(): AudioContext | null {
-    return this.audioCtx;
-  }
-
   public async decodeAudioData(arrayBuffer: ArrayBuffer): Promise<AudioBuffer> {
     if (!this.audioCtx) {
       await this.initialize();
@@ -124,7 +125,7 @@ export class AudioEngine {
     return await this.audioCtx.decodeAudioData(arrayBuffer);
   }
 
-  public setPadBuffer(padId: string | number, buffer: AudioBuffer, _options?: any): string {
+  public setPadBuffer(padId: string | number, buffer: AudioBuffer, _options?: any): string | null {
     this.padBuffers.set(padId, buffer);
     return String(padId);
   }
