@@ -1,3 +1,4 @@
+// FILE: src/sampler/PadBankManager.tsx
 /**
  * SP-M8x Hybrid Music Production Suite
  * PadBankManager.tsx — 4x4 Pad Bank Manager (Banks A-D)
@@ -40,15 +41,13 @@ export const PadBankManager: React.FC = () => {
   const handleSampleLoaded = (padId: string, _buffer: AudioBuffer, fileName: string) => {
     setSelectedPadId(padId);
     projectController.updatePadMetadata(padId, { name: fileName });
-    console.log(`[PadBankManager] Loaded "${fileName}" into Pad ${padId}`);
   };
 
-  const handleTriggerPad = (padId: string) => {
+  const handleTriggerPad = (padId: string, loop?: boolean) => {
     setSelectedPadId(padId);
+    void audioEngine.initialize();
     if (audioEngine.getPadBuffer(padId)) {
-      audioEngine.triggerVoice(padId);
-    } else {
-      console.log(`[PadBankManager] Pad ${padId} has no audio buffer loaded.`);
+      audioEngine.triggerPad(padId, { loop: Boolean(loop) });
     }
   };
 
@@ -93,7 +92,7 @@ export const PadBankManager: React.FC = () => {
             <button
               key={padId}
               type="button"
-              onPointerDown={() => handleTriggerPad(padId)}
+              onPointerDown={() => handleTriggerPad(padId, assignment?.loop)}
               className={`h-20 flex flex-col items-center justify-between p-2 rounded-xl border transition-all active:scale-95 touch-none ${
                 isSelected ? 'border-cyan-400 shadow-md shadow-cyan-500/10' : 'border-zinc-800'
               } ${

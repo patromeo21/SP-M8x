@@ -1,3 +1,4 @@
+// FILE: src/tracker/trackerEngine.ts
 /**
  * SP-M8x Hybrid Music Production Suite
  * trackerEngine.ts — Audio-clock lookahead scheduler for 64-step phrases
@@ -114,7 +115,11 @@ export class TrackerEngine {
     if (this.isPlaying) return;
 
     try {
-      const context = audioEngine.initialize();
+      const context = audioEngine.ensureContext();
+      if (!context) {
+        throw new Error('AudioContext unavailable');
+      }
+
       const settings = projectController.getState().settings;
       this.isPlaying = true;
       this.currentStep = 0;
@@ -186,7 +191,6 @@ export class TrackerEngine {
       const timingOffset = Math.min(stepDuration * MAX_TIMING_OFFSET_RATIO, swingOffset + subTickOffset);
       const eventTime = this.nextStepTime + timingOffset;
 
-      // Audio and visual scheduling use the exact same final event time.
       trackerBridge.handleStepTrigger(stepIndex, eventTime);
       this.scheduledSteps.push({ stepIndex, scheduledTime: eventTime, stepDuration });
       this.onStepCallback?.(stepIndex);
@@ -195,7 +199,6 @@ export class TrackerEngine {
       this.nextStepTime += stepDuration;
     }
 
-    // Bound queue growth if animation frames are throttled in a background tab.
     const oldestUsefulTime = context.currentTime - stepDuration;
     while (this.scheduledSteps.length > 1 && this.scheduledSteps[1].scheduledTime < oldestUsefulTime) {
       this.lastVisualStep = this.scheduledSteps.shift() as ScheduledVisualStep;
