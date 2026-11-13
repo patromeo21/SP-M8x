@@ -1,79 +1,76 @@
 /**
  * SP-M8x Project Data Types
- * Supports 32-step phrases, dual FX slots, SUB micro-timing, Table FX latches,
- * and comprehensive optional legacy properties for 100% clean builds across existing reducers and helpers.
+ * Explicitly typed root interface supporting both modern 32-step/dual-FX structures
+ * and all legacy nested properties for seamless compilation.
  */
 
 export const PROJECT_SCHEMA_VERSION = '1.1.0';
 
-export type StepNote = string | null; // e.g., "C-4", "OFF", null
-export type InstrumentId = string | null; // e.g., "A01"
-export type VolumeValue = number | null; // 0x00 to 0x7F
+export type StepNote = string | null;
+export type InstrumentId = string | null;
+export type VolumeValue = number | null;
 
 export interface StepFxCommand {
-  opcode: string; // e.g., "STA", "PIT", "PAN", "VOL", "REP", "HOP", "CHA", "---"
-  value: number;  // 0x00 to 0xFF
+  opcode: string;
+  value: number;
 }
 
 export interface StepData {
-  stepIndex: number; // 0 to 31 (2 bars / 32 steps)
+  stepIndex: number;
   note: StepNote;
   instrument: InstrumentId;
   volume: VolumeValue;
   fx1: StepFxCommand;
   fx2: StepFxCommand;
-  sub: number; // 0 to 7 micro-timing / delay offset
-  // Optional legacy compatibility properties
+  sub: number;
   id?: string;
   subTickOffset?: number;
   instrumentAssignmentId?: string;
-  [key: string]: any;
 }
 
 export interface TableFxLatch {
   id: string;
   fxType: 'KILL' | 'RET' | 'CUT' | 'DEG' | 'SDL';
-  targetTrack: number; // 0 to 7 (or -1 for Master Bus)
-  engageStep: number;  // 0 to 31
-  engageSub: number;   // 0 to 7
-  releaseStep: number; // 0 to 31
-  releaseSub: number;  // 0 to 7
-  parameterValues?: number[]; // Captured control knob values during hold
+  targetTrack: number;
+  engageStep: number;
+  engageSub: number;
+  releaseStep: number;
+  releaseSub: number;
+  parameterValues?: number[];
 }
 
 export interface TableRow {
-  rowIndex: number; // 0 to 15
-  command: string;  // e.g., "STA", "PIT", "VOL", "---"
+  rowIndex: number;
+  command: string;
   value: number;
 }
 
 export interface PhraseData {
   id: string;
   name: string;
-  steps: StepData[]; // Exactly 32 steps per phrase
+  steps: StepData[];
   tableLatches: TableFxLatch[];
   tableRows: TableRow[];
-  // Optional legacy compatibility properties
   length?: number;
-  [key: string]: any;
 }
 
 export interface TrackData {
-  trackIndex: number; // 0 to 7
+  trackIndex: number;
   name: string;
-  volume: number; // 0.0 to 1.0
-  pan: number;    // -1.0 to 1.0
+  volume: number;
+  pan: number;
   muted: boolean;
   soloed: boolean;
   activePhraseId: string;
-  [key: string]: any;
+  rows?: { patternId: string | null }[];
 }
 
 export interface ProjectSettings {
   bpm: number;
   swing: number;
   masterVolume?: number;
-  [key: string]: any;
+  samplerMode?: string;
+  theme?: string;
 }
 
 export interface SampleAsset {
@@ -82,35 +79,39 @@ export interface SampleAsset {
   url?: string;
   buffer?: AudioBuffer;
   originalFilename?: string;
-  [key: string]: any;
 }
 
 export type BankId = 'A' | 'B' | 'C' | 'D';
 
 export interface PadAssignment {
-  padId: number; // 1 to 16
+  padId: number;
   bank: BankId;
   sampleId: string | null;
   name: string;
   volume: number;
   pitch: number;
-  // Optional legacy compatibility properties
   id?: string;
   slot?: number;
   loop?: boolean;
   chromaticRootNote?: number;
-  [key: string]: any;
+  pitchOffset?: number;
+  sampleAssetId?: string | null;
+  sliceId?: string | null;
+  sliceStartSeconds?: number;
+  sliceEndSeconds?: number | null;
+  pan?: number;
+  reverse?: boolean;
 }
 
 export interface ProjectData {
   version: string;
   bpm: number;
   swing: number;
-  tracks: TrackData[]; // Exactly 8 tracks
+  tracks: TrackData[];
   phrases: Record<string, PhraseData>;
   instruments: Record<string, any>;
-  
-  // Optional legacy compatibility properties referenced by reducers/migrators/selectors
+
+  // Explicit legacy sub-states required by reducers, migrators, and selectors
   schemaVersion?: string;
   metadata?: any;
   settings?: ProjectSettings;
@@ -120,7 +121,7 @@ export interface ProjectData {
     [key: string]: any;
   };
   tracker?: {
-    patterns?: Record<string, PhraseData>;
+    patterns?: Record<string, PhraseData> | PhraseData[];
     [key: string]: any;
   };
   song?: {
@@ -134,10 +135,9 @@ export interface ProjectData {
   };
   punchIn?: any;
   master?: any;
-  [key: string]: any;
 }
 
-// --- Backward Compatibility Aliases for Legacy Modules ---
+// --- Backward Compatibility Aliases ---
 export type SPProject = ProjectData;
 export type EffectsProjectState = ProjectData;
 export type ProjectSettingsAlias = ProjectSettings;
