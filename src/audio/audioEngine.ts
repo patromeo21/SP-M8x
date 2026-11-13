@@ -1,7 +1,7 @@
 /**
  * SP-M8x Core Web Audio Engine
  * Precision-typed singleton providing complete compatibility with AudioContext lifecycle,
- * getter-based context exposure, pad buffers, and external tracker/manager components.
+ * method-based getContext(), pad buffers, and external tracker/manager components.
  */
 
 export class AudioEngine {
@@ -28,8 +28,7 @@ export class AudioEngine {
 
   constructor() {}
 
-  // Expose getContext as a getter property to support property access like audioEngine.getContext.currentTime
-  get getContext(): AudioContext | null {
+  public getContext(): AudioContext | null {
     return this.audioCtx;
   }
 
