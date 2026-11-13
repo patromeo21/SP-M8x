@@ -1,10 +1,11 @@
 /**
  * SP-M8x Core Web Audio Engine
- * Precision-typed implementation matching all external component and tracker method signatures.
+ * Precision-typed singleton providing complete compatibility with AudioContext lifecycle,
+ * pad buffers, and external tracker/manager components.
  */
 
 export class AudioEngine {
-  private ctx: AudioContext | null = null;
+  private audioCtx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private masterLimiter: DynamicsCompressorNode | null = null;
   
@@ -28,39 +29,39 @@ export class AudioEngine {
   constructor() {}
 
   public async initialize(): Promise<boolean> {
-    if (this.isInitialized && this.ctx) {
-      if (this.ctx.state === 'suspended') {
-        await this.ctx.resume();
+    if (this.isInitialized && this.audioCtx) {
+      if (this.audioCtx.state === 'suspended') {
+        await this.audioCtx.resume();
       }
       return true;
     }
 
     try {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      this.ctx = new AudioContextClass({ sampleRate: 44100 });
+      this.audioCtx = new AudioContextClass({ sampleRate: 44100 });
 
       // Master Limiter & Gain
-      this.masterLimiter = this.ctx.createDynamicsCompressor();
-      this.masterLimiter.threshold.setValueAtTime(-1.5, this.ctx.currentTime);
-      this.masterLimiter.knee.setValueAtTime(0.0, this.ctx.currentTime);
-      this.masterLimiter.ratio.setValueAtTime(20.0, this.ctx.currentTime);
-      this.masterLimiter.attack.setValueAtTime(0.003, this.ctx.currentTime);
-      this.masterLimiter.release.setValueAtTime(0.100, this.ctx.currentTime);
+      this.masterLimiter = this.audioCtx.createDynamicsCompressor();
+      this.masterLimiter.threshold.setValueAtTime(-1.5, this.audioCtx.currentTime);
+      this.masterLimiter.knee.setValueAtTime(0.0, this.audioCtx.currentTime);
+      this.masterLimiter.ratio.setValueAtTime(20.0, this.audioCtx.currentTime);
+      this.masterLimiter.attack.setValueAtTime(0.003, this.audioCtx.currentTime);
+      this.masterLimiter.release.setValueAtTime(0.100, this.audioCtx.currentTime);
 
-      this.masterGain = this.ctx.createGain();
-      this.masterGain.gain.setValueAtTime(0.85, this.ctx.currentTime);
+      this.masterGain = this.audioCtx.createGain();
+      this.masterGain.gain.setValueAtTime(0.85, this.audioCtx.currentTime);
 
       this.masterLimiter.connect(this.masterGain);
-      this.masterGain.connect(this.ctx.destination);
+      this.masterGain.connect(this.audioCtx.destination);
 
       // Aux Delay Bus (SDL)
-      const delayInput = this.ctx.createGain();
-      const delayNode = this.ctx.createDelay(2.0);
-      delayNode.delayTime.setValueAtTime(0.375, this.ctx.currentTime);
-      const delayFeedback = this.ctx.createGain();
-      delayFeedback.gain.setValueAtTime(0.4, this.ctx.currentTime);
-      const delayOutput = this.ctx.createGain();
-      delayOutput.gain.setValueAtTime(0.5, this.ctx.currentTime);
+      const delayInput = this.audioCtx.createGain();
+      const delayNode = this.audioCtx.createDelay(2.0);
+      delayNode.delayTime.setValueAtTime(0.375, this.audioCtx.currentTime);
+      const delayFeedback = this.audioCtx.createGain();
+      delayFeedback.gain.setValueAtTime(0.4, this.audioCtx.currentTime);
+      const delayOutput = this.audioCtx.createGain();
+      delayOutput.gain.setValueAtTime(0.5, this.audioCtx.currentTime);
 
       delayInput.connect(delayNode);
       delayNode.connect(delayFeedback);
@@ -78,14 +79,14 @@ export class AudioEngine {
       // 8 Track Channel Strips
       this.trackStrips = [];
       for (let i = 0; i < 8; i++) {
-        const input = this.ctx.createGain();
-        const gain = this.ctx.createGain();
-        gain.gain.setValueAtTime(0.8, this.ctx.currentTime);
+        const input = this.audioCtx.createGain();
+        const gain = this.audioCtx.createGain();
+        gain.gain.setValueAtTime(0.8, this.audioCtx.currentTime);
 
         let pan: StereoPannerNode | null = null;
-        if (this.ctx.createStereoPanner) {
-          pan = this.ctx.createStereoPanner();
-          pan.pan.setValueAtTime(0.0, this.ctx.currentTime);
+        if (this.audioCtx.createStereoPanner) {
+          pan = this.audioCtx.createStereoPanner();
+          pan.pan.setValueAtTime(0.0, this.audioCtx.currentTime);
           input.connect(gain);
           gain.connect(pan);
           pan.connect(this.masterLimiter);
@@ -97,8 +98,8 @@ export class AudioEngine {
         this.trackStrips.push({ input, pan, gain });
       }
 
-      if (this.ctx.state === 'suspended') {
-        await this.ctx.resume();
+      if (this.audioCtx.state === 'suspended') {
+        await this.audioCtx.resume();
       }
 
       this.isInitialized = true;
@@ -110,20 +111,20 @@ export class AudioEngine {
   }
 
   public getContext(): AudioContext | null {
-    return this.ctx;
+    return this.audioCtx;
   }
 
   public async decodeAudioData(arrayBuffer: ArrayBuffer): Promise<AudioBuffer> {
-    if (!this.ctx) {
+    if (!this.audioCtx) {
       await this.initialize();
     }
-    if (!this.ctx) {
+    if (!this.audioCtx) {
       throw new Error('AudioContext not initialized');
     }
-    return await this.ctx.decodeAudioData(arrayBuffer);
+    return await this.audioCtx.decodeAudioData(arrayBuffer);
   }
 
-  public setPadBuffer(padId: string | number, buffer: AudioBuffer, _options?: any): string | null {
+  public setPadBuffer(padId: string | number, buffer: AudioBuffer, _options?: any): string {
     this.padBuffers.set(padId, buffer);
     return String(padId);
   }
@@ -133,21 +134,21 @@ export class AudioEngine {
   }
 
   public setMasterVolume(volume: number) {
-    if (!this.ctx || !this.masterGain) return;
+    if (!this.audioCtx || !this.masterGain) return;
     const clamped = Math.max(0, Math.min(1.0, volume));
-    this.masterGain.gain.setTargetAtTime(clamped, this.ctx.currentTime, 0.015);
+    this.masterGain.gain.setTargetAtTime(clamped, this.audioCtx.currentTime, 0.015);
   }
 
   public setTrackVolume(trackIndex: number, volume: number) {
-    if (!this.ctx || !this.trackStrips[trackIndex]) return;
+    if (!this.audioCtx || !this.trackStrips[trackIndex]) return;
     const clamped = Math.max(0, Math.min(1.0, volume));
-    this.trackStrips[trackIndex].gain.gain.setTargetAtTime(clamped, this.ctx.currentTime, 0.015);
+    this.trackStrips[trackIndex].gain.gain.setTargetAtTime(clamped, this.audioCtx.currentTime, 0.015);
   }
 
   public setTrackPan(trackIndex: number, panValue: number) {
-    if (!this.ctx || !this.trackStrips[trackIndex]?.pan) return;
+    if (!this.audioCtx || !this.trackStrips[trackIndex]?.pan) return;
     const clamped = Math.max(-1.0, Math.min(1.0, panValue));
-    this.trackStrips[trackIndex].pan!.pan.setTargetAtTime(clamped, this.ctx.currentTime, 0.015);
+    this.trackStrips[trackIndex].pan!.pan.setTargetAtTime(clamped, this.audioCtx.currentTime, 0.015);
   }
 
   public triggerPad(padId: string | number, trackIndexOrOptions: number | any = 0, volume: number = 1.0, playbackRate: number = 1.0) {
@@ -161,20 +162,20 @@ export class AudioEngine {
   }
 
   public triggerVoice(trackIndex: number, buffer: AudioBuffer, playbackRate: number = 1.0, volume: number = 1.0) {
-    if (!this.ctx || !this.isInitialized || !this.trackStrips[trackIndex]) return;
+    if (!this.audioCtx || !this.isInitialized || !this.trackStrips[trackIndex]) return;
 
     try {
-      const source = this.ctx.createBufferSource();
+      const source = this.audioCtx.createBufferSource();
       source.buffer = buffer;
-      source.playbackRate.setValueAtTime(playbackRate, this.ctx.currentTime);
+      source.playbackRate.setValueAtTime(playbackRate, this.audioCtx.currentTime);
 
-      const voiceGain = this.ctx.createGain();
-      voiceGain.gain.setValueAtTime(Math.max(0, Math.min(1.0, volume)), this.ctx.currentTime);
+      const voiceGain = this.audioCtx.createGain();
+      voiceGain.gain.setValueAtTime(Math.max(0, Math.min(1.0, volume)), this.audioCtx.currentTime);
 
       source.connect(voiceGain);
       voiceGain.connect(this.trackStrips[trackIndex].input);
 
-      source.start(this.ctx.currentTime);
+      source.start(this.audioCtx.currentTime);
       this.activeSources.add(source);
 
       source.onended = () => {
@@ -207,9 +208,9 @@ export class AudioEngine {
   }
 
   public applyPunchInFx(fxType: string, active: boolean, _targetTrackIndex: number = -1) {
-    if (!this.ctx || !this.masterGain) return;
+    if (!this.audioCtx || !this.masterGain) return;
 
-    const now = this.ctx.currentTime;
+    const now = this.audioCtx.currentTime;
     if (fxType === 'KILL') {
       const targetGain = active ? 0.0 : 0.85;
       this.masterGain.gain.setTargetAtTime(targetGain, now, 0.005);
@@ -220,7 +221,7 @@ export class AudioEngine {
   }
 
   public getContextTime(): number {
-    return this.ctx ? this.ctx.currentTime : 0;
+    return this.audioCtx ? this.audioCtx.currentTime : 0;
   }
 }
 
