@@ -27,10 +27,10 @@ export const HardwareDeck: React.FC<HardwareDeckProps> = ({
   const [shiftState, setShiftState] = useState<'idle' | 'held' | 'latched'>('idle');
   const [activeFx, setActiveFx] = useState<string | null>(null);
 
-  // Timers & Pointer Trackers initialized properly with useRef
+  // Timers & Pointer Trackers utilizing safe type inference to avoid parser generic errors
   const shiftPressTimeRef = useRef<number>(0);
   const lastShiftTapRef = useRef<number>(0);
-  const activePointersRef = useRef>(new Map<string, number>());
+  const activePointersRef = useRef(new Map<string, number>());
 
   // --- SHIFT Gesture Handlers ---
   const handleShiftPointerDown = useCallback((e: React.PointerEvent) => {
@@ -55,10 +55,9 @@ export const HardwareDeck: React.FC<HardwareDeckProps> = ({
       return;
     }
 
-    if (shiftState !== 'latched') {
-      setShiftState('held');
-      onShiftAction?.('hold_start');
-    }
+    // Since 'latched' is already returned above, shiftState here is strictly 'idle' or 'held'
+    setShiftState('held');
+    onShiftAction?.('hold_start');
   }, [shiftState, onShiftAction]);
 
   const handleShiftPointerUp = useCallback((e: React.PointerEvent) => {
@@ -185,8 +184,8 @@ export const HardwareDeck: React.FC<HardwareDeckProps> = ({
             isShiftActive ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/50' : 'bg-neutral-800 text-neutral-200 active:bg-neutral-700'
           }`}
           onPointerDown={(e) => handleButtonDown('EDT', e)}
-          onPointerUp={(e) => handleButtonUp('EDT', e)}
-          onPointerCancel={(e) => handleButtonUp('EDT', e)}
+          onPointerUp={(e) => handleButtonDown('EDT', e)}
+          onPointerCancel={(e) => handleButtonDown('EDT', e)}
         >
           <span>{isShiftActive ? 'SDL' : 'EDT'}</span>
           <span className="text-[9px] opacity-60">{isShiftActive ? 'Delay' : 'Insert'}</span>
