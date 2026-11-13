@@ -1,86 +1,58 @@
-import type { BankId } from '../types';
-import {
-  PROJECT_SCHEMA_VERSION,
-  type EffectsProjectState,
-  type SPProject,
-} from './projectTypes';
+/**
+ * SP-M8x Initial Project Factory
+ * Generates default project state conforming to the 32-step / 8-track / dual-FX contract.
+ */
 
-const BANKS: BankId[] = ['A', 'B', 'C', 'D'];
+import { ProjectData, TrackData, PhraseData, StepData, PROJECT_SCHEMA_VERSION } from './projectTypes';
 
-export const DEFAULT_EFFECTS: EffectsProjectState = {
-  punchIn: {
-    filterCutoff: 20000,
-    filterResonance: 1.0,
-    delayTime: 0.375,
-    delayFeedback: 0.3,
-    reverbMix: 0.2,
-    bitcrushBits: 16,
-    vinylNoise: 0.0,
-    isolatorLow: 1.0,
-    isolatorMid: 1.0,
-    isolatorHigh: 1.0,
-  },
-  master: {
-    limiterThreshold: -12,
-    compressorRatio: 4,
-    masterVolume: 0.8,
-  },
-};
+function createDefaultSteps(): StepData[] {
+  const steps: StepData[] = [];
+  for (let i = 0; i < 32; i++) {
+    steps.push({
+      stepIndex: i,
+      note: null,
+      instrument: null,
+      volume: null,
+      fx1: { opcode: '---', value: 0 },
+      fx2: { opcode: '---', value: 0 },
+      sub: 0,
+    });
+  }
+  return steps;
+}
 
-export function createInitialProject(
-  now: string = new Date().toISOString(),
-  id: string = 'spm8x-project-1',
-): SPProject {
-  const assignments = BANKS.flatMap((bank) =>
-    Array.from({ length: 16 }, (_, slot) => ({
-      id: `assignment-${bank}-${String(slot + 1).padStart(2, '0')}`,
-      bank,
-      slot,
-      name: `Sample ${slot + 1}`,
-      sampleAssetId: null,
-      sliceId: null,
-      sliceStartSeconds: 0,
-      sliceEndSeconds: null,
-      volume: 0.8,
-      pan: 0,
-      reverse: false,
-      loop: false,
-      chromaticRootNote: 60,
-      pitchOffset: 0,
-    })),
-  );
+export function createInitialProject(): ProjectData {
+  const defaultPhraseId = 'phrase_01';
+  
+  const defaultPhrase: PhraseData = {
+    id: defaultPhraseId,
+    name: 'Init Phrase',
+    steps: createDefaultSteps(),
+    tableLatches: [],
+    tableRows: [
+      { rowIndex: 0, command: 'STA', value: 0 },
+      { rowIndex: 1, command: '---', value: 0 },
+    ],
+  };
+
+  const tracks: TrackData[] = Array.from({ length: 8 }, (_, index) => ({
+    trackIndex: index,
+    name: `Track ${index + 1}`,
+    volume: 0.8,
+    pan: 0.0,
+    muted: false,
+    soloed: false,
+    activePhraseId: defaultPhraseId,
+  }));
 
   return {
-    schemaVersion: PROJECT_SCHEMA_VERSION,
-    metadata: {
-      id,
-      name: 'Untitled SP-M8x Project',
-      createdAt: now,
-      updatedAt: now,
+    version: PROJECT_SCHEMA_VERSION,
+    bpm: 94,
+    swing: 50,
+    tracks,
+    phrases: {
+      [defaultPhraseId]: defaultPhrase,
     },
-    settings: {
-      bpm: 125,
-      masterVolume: 0.8,
-      samplerMode: 'SAMPLE_TRIGGER',
-      theme: 'default',
-    },
-    sampler: {
-      assets: [],
-      slices: [],
-      assignments,
-    },
-    tracker: { patterns: [] },
-    song: {
-      rowCount: 32,
-      tracks: Array.from({ length: 8 }, (_, trackIndex) => ({
-        id: `song-track-${trackIndex + 1}`,
-        name: `TRACK ${String(trackIndex + 1).padStart(2, '0')}`,
-        rows: Array.from({ length: 32 }, () => ({ patternId: null })),
-      })),
-    },
-    effects: {
-      punchIn: { ...DEFAULT_EFFECTS.punchIn },
-      master: { ...DEFAULT_EFFECTS.master },
-    },
+    instruments: {},
   };
 }
