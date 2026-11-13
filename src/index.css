@@ -1,4 +1,7 @@
-/* Add after your existing Tailwind directives */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 @layer base {
   :root {
     color-scheme: dark;
