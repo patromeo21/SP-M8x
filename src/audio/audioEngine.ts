@@ -1,7 +1,7 @@
 /**
- * SP-M8x Core Web Audio Engine
- * Precision-typed singleton providing complete compatibility with AudioContext lifecycle,
- * method-based getContext(), pad buffers, and external tracker/manager components.
+ * SP-M8x Core Web Audio Engine (Canonical)
+ * 3-Tier Routing Topology with Master Gain -> Limiter chain,
+ * asynchronous initialization returning AudioContext, and robust polyphonic voice management.
  */
 
 export class AudioEngine {
@@ -32,19 +32,26 @@ export class AudioEngine {
     return this.audioCtx;
   }
 
-  public async initialize(): Promise<boolean> {
+  /**
+   * Asynchronously initializes or resumes the AudioContext and returns it directly
+   * to satisfy tracker engine clock expectations.
+   */
+  public async initialize(): Promise<AudioContext> {
     if (this.isInitialized && this.audioCtx) {
       if (this.audioCtx.state === 'suspended') {
         await this.audioCtx.resume();
       }
-      return true;
+      return this.audioCtx;
     }
 
     try {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       this.audioCtx = new AudioContextClass({ sampleRate: 44100 });
 
-      // Master Limiter & Gain
+      // 1. Master Gain feeds into Master Limiter (expert DSP order to prevent post-limiter clipping)
+      this.masterGain = this.audioCtx.createGain();
+      this.masterGain.gain.setValueAtTime(0.85, this.audioCtx.currentTime);
+
       this.masterLimiter = this.audioCtx.createDynamicsCompressor();
       this.masterLimiter.threshold.setValueAtTime(-1.5, this.audioCtx.currentTime);
       this.masterLimiter.knee.setValueAtTime(0.0, this.audioCtx.currentTime);
@@ -52,13 +59,10 @@ export class AudioEngine {
       this.masterLimiter.attack.setValueAtTime(0.003, this.audioCtx.currentTime);
       this.masterLimiter.release.setValueAtTime(0.100, this.audioCtx.currentTime);
 
-      this.masterGain = this.audioCtx.createGain();
-      this.masterGain.gain.setValueAtTime(0.85, this.audioCtx.currentTime);
+      this.masterGain.connect(this.masterLimiter);
+      this.masterLimiter.connect(this.audioCtx.destination);
 
-      this.masterLimiter.connect(this.masterGain);
-      this.masterGain.connect(this.audioCtx.destination);
-
-      // Aux Delay Bus (SDL)
+      // 2. Aux Delay Bus (SDL)
       const delayInput = this.audioCtx.createGain();
       const delayNode = this.audioCtx.createDelay(2.0);
       delayNode.delayTime.setValueAtTime(0.375, this.audioCtx.currentTime);
@@ -71,7 +75,7 @@ export class AudioEngine {
       delayNode.connect(delayFeedback);
       delayFeedback.connect(delayNode);
       delayNode.connect(delayOutput);
-      delayOutput.connect(this.masterLimiter);
+      delayOutput.connect(this.masterGain);
 
       this.auxDelay = {
         input: delayInput,
@@ -80,7 +84,7 @@ export class AudioEngine {
         output: delayOutput,
       };
 
-      // 8 Track Channel Strips
+      // 3. Eight Track Channel Strips
       this.trackStrips = [];
       for (let i = 0; i < 8; i++) {
         const input = this.audioCtx.createGain();
@@ -93,10 +97,10 @@ export class AudioEngine {
           pan.pan.setValueAtTime(0.0, this.audioCtx.currentTime);
           input.connect(gain);
           gain.connect(pan);
-          pan.connect(this.masterLimiter);
+          pan.connect(this.masterGain);
         } else {
           input.connect(gain);
-          gain.connect(this.masterLimiter);
+          gain.connect(this.masterGain);
         }
 
         this.trackStrips.push({ input, pan, gain });
@@ -107,10 +111,10 @@ export class AudioEngine {
       }
 
       this.isInitialized = true;
-      return true;
+      return this.audioCtx;
     } catch (err) {
-      console.error('Failed to initialize Web Audio Engine:', err);
-      return false;
+      console.error('[AudioEngine] Failed to initialize Web Audio Engine:', err);
+      throw err;
     }
   }
 
@@ -124,58 +128,85 @@ export class AudioEngine {
     return await this.audioCtx.decodeAudioData(arrayBuffer);
   }
 
-  public setPadBuffer(padId: string | number, buffer: AudioBuffer, _options?: any): string | null {
+  public setPadBuffer(padId: string | number, buffer: AudioBuffer): void {
     this.padBuffers.set(padId, buffer);
-    return String(padId);
   }
 
   public getPadBuffer(padId: string | number): AudioBuffer | undefined {
     return this.padBuffers.get(padId);
   }
 
-  public setMasterVolume(volume: number) {
+  public setMasterVolume(volume: number): void {
     if (!this.audioCtx || !this.masterGain) return;
     const clamped = Math.max(0, Math.min(1.0, volume));
     this.masterGain.gain.setTargetAtTime(clamped, this.audioCtx.currentTime, 0.015);
   }
 
-  public setTrackVolume(trackIndex: number, volume: number) {
+  public setTrackVolume(trackIndex: number, volume: number): void {
     if (!this.audioCtx || !this.trackStrips[trackIndex]) return;
     const clamped = Math.max(0, Math.min(1.0, volume));
     this.trackStrips[trackIndex].gain.gain.setTargetAtTime(clamped, this.audioCtx.currentTime, 0.015);
   }
 
-  public setTrackPan(trackIndex: number, panValue: number) {
+  public setTrackPan(trackIndex: number, panValue: number): void {
     if (!this.audioCtx || !this.trackStrips[trackIndex]?.pan) return;
     const clamped = Math.max(-1.0, Math.min(1.0, panValue));
     this.trackStrips[trackIndex].pan!.pan.setTargetAtTime(clamped, this.audioCtx.currentTime, 0.015);
   }
 
-  public triggerPad(padId: string | number, trackIndexOrOptions: number | any = 0, volume: number = 1.0, playbackRate: number = 1.0) {
+  public triggerPad(
+    padId: string | number,
+    options: {
+      volume?: number;
+      scheduledTime?: number;
+      playbackRate?: number;
+      trackIndex?: number;
+    } = {},
+  ): string | null {
     const buffer = this.padBuffers.get(padId);
-    if (buffer) {
-      const trackIdx = typeof trackIndexOrOptions === 'number' ? trackIndexOrOptions : (trackIndexOrOptions?.trackIndex ?? 0);
-      const vol = typeof trackIndexOrOptions === 'number' ? volume : (trackIndexOrOptions?.volume ?? volume);
-      const rate = typeof trackIndexOrOptions === 'number' ? playbackRate : (trackIndexOrOptions?.playbackRate ?? playbackRate);
-      this.triggerVoice(trackIdx, buffer, rate, vol);
+    if (!buffer || !this.audioCtx) return null;
+
+    const trackIndex = options.trackIndex ?? 0;
+    const volume = options.volume ?? 1.0;
+    const playbackRate = options.playbackRate ?? 1.0;
+    const scheduledTime = options.scheduledTime ?? this.audioCtx.currentTime;
+
+    this.triggerVoiceInternal(trackIndex, buffer, scheduledTime, playbackRate, volume);
+    return String(padId);
+  }
+
+  public triggerVoice(trackIndexOrPadId: number | string, buffer?: AudioBuffer, playbackRate = 1.0, volume = 1.0): void {
+    if (typeof trackIndexOrPadId === 'string' || typeof trackIndexOrPadId === 'number') {
+      const resolvedBuffer = buffer || this.padBuffers.get(trackIndexOrPadId);
+      if (resolvedBuffer && this.audioCtx) {
+        this.triggerVoiceInternal(0, resolvedBuffer, this.audioCtx.currentTime, playbackRate, volume);
+      }
+    } else if (typeof trackIndexOrPadId === 'number' && buffer && this.audioCtx) {
+      this.triggerVoiceInternal(trackIndexOrPadId, buffer, this.audioCtx.currentTime, playbackRate, volume);
     }
   }
 
-  public triggerVoice(trackIndex: number, buffer: AudioBuffer, playbackRate: number = 1.0, volume: number = 1.0) {
-    if (!this.audioCtx || !this.isInitialized || !this.trackStrips[trackIndex]) return;
+  private triggerVoiceInternal(
+    trackIndex: number,
+    buffer: AudioBuffer,
+    scheduledTime: number,
+    playbackRate: number,
+    volume: number,
+  ): void {
+    if (!this.audioCtx || !this.trackStrips[trackIndex]) return;
 
     try {
       const source = this.audioCtx.createBufferSource();
       source.buffer = buffer;
-      source.playbackRate.setValueAtTime(playbackRate, this.audioCtx.currentTime);
+      source.playbackRate.setValueAtTime(playbackRate, scheduledTime);
 
       const voiceGain = this.audioCtx.createGain();
-      voiceGain.gain.setValueAtTime(Math.max(0, Math.min(1.0, volume)), this.audioCtx.currentTime);
+      voiceGain.gain.setValueAtTime(Math.max(0, Math.min(1.0, volume)), scheduledTime);
 
       source.connect(voiceGain);
       voiceGain.connect(this.trackStrips[trackIndex].input);
 
-      source.start(this.audioCtx.currentTime);
+      source.start(scheduledTime);
       this.activeSources.add(source);
 
       source.onended = () => {
@@ -184,20 +215,21 @@ export class AudioEngine {
         this.activeSources.delete(source);
       };
     } catch (err) {
-      console.error(`Error triggering voice on track ${trackIndex}:`, err);
+      console.error(`[AudioEngine] Error triggering voice on track ${trackIndex}:`, err);
     }
   }
 
-  public stopVoice(_voiceId?: any) {
+  public stopVoice(_voiceId?: string | number): void {
     for (const source of this.activeSources) {
       try {
         source.stop();
+        source.disconnect();
       } catch (_) {}
       break;
     }
   }
 
-  public stopAllVoices() {
+  public stopAllVoices(): void {
     for (const source of this.activeSources) {
       try {
         source.stop();
@@ -207,7 +239,7 @@ export class AudioEngine {
     this.activeSources.clear();
   }
 
-  public applyPunchInFx(fxType: string, active: boolean, _targetTrackIndex: number = -1) {
+  public applyPunchInFx(fxType: string, active: boolean, _targetTrackIndex = -1): void {
     if (!this.audioCtx || !this.masterGain) return;
 
     const now = this.audioCtx.currentTime;
@@ -226,3 +258,4 @@ export class AudioEngine {
 }
 
 export const audioEngine = new AudioEngine();
+export default audioEngine;
