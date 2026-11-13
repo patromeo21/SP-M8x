@@ -1,136 +1,82 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * PadBankManager.tsx — 4x4 Pad Bank Manager (Banks A-D)
+ * PadBankManager.tsx — 4x4 live pad grid for the active bank (A-D)
  */
 
-import React, { useState, useEffect } from 'react';
-import { audioEngine } from '../audio/audioEngine';
-import { projectController } from '../project/projectController';
-import { BankId, PadAssignment } from '../project/projectTypes';
-import { AudioSampleDropzone } from '../components/AudioSampleDropzone';
+import React, { useRef, useState } from 'react';
+import { PADS_PER_BANK, formatPadLabel, type PadBankApi } from './usePadBank';
 
-const BANKS: BankId[] = ['A', 'B', 'C', 'D'];
+export type PadBankManagerProps = Pick<
+  PadBankApi,
+  'slots' | 'activeBank' | 'selectedPadId' | 'triggerPad'
+>;
 
-export const PadBankManager: React.FC = () => {
-  const [projectState, setProjectState] = useState(() => projectController.getState());
-  const [activeBank, setActiveBank] = useState<BankId>('A');
-  const [selectedPadId, setSelectedPadId] = useState<string>('A1');
-  const [padBuffers, setPadBuffers] = useState<Record<string, AudioBuffer>>({});
+export const PadBankManager: React.FC<PadBankManagerProps> = ({
+  slots,
+  activeBank,
+  selectedPadId,
+  triggerPad,
+}) => {
+  // Each finger is tracked by pointerId so simultaneous touches light and release independently.
+  const activePointers = useRef(new Map<number, string>());
+  const [pressedPads, setPressedPads] = useState<ReadonlySet<string>>(new Set());
 
-  useEffect(() => {
-    const unsubscribe = projectController.subscribe((newState) => {
-      setProjectState(newState);
-    });
-    return () => unsubscribe();
-  }, []);
+  const syncPressed = () => setPressedPads(new Set(activePointers.current.values()));
 
-  // Safely extract sampler assignments from project state without strict interface collisions
-  const stateRecord = projectState as unknown as Record<string, any>;
-  const assignments: PadAssignment[] = stateRecord.sampler?.assignments || [];
-
-  const parsePadId = (padId: string): { bank: BankId; slot: number } => {
-    const bank = padId[0] as BankId;
-    const slot = parseInt(padId.slice(1), 10) - 1;
-    return { bank, slot };
+  const handlePointerDown = (event: React.PointerEvent<HTMLButtonElement>, padId: string) => {
+    activePointers.current.set(event.pointerId, padId);
+    syncPressed();
+    triggerPad(padId);
   };
 
-  const getAssignment = (bank: BankId, slot: number): PadAssignment | undefined => {
-    return assignments.find((a: PadAssignment) => a.bank === bank && a.slot === slot);
-  };
-
-  const { bank: selBank, slot: selSlot } = parsePadId(selectedPadId);
-  const selectedAssignment = getAssignment(selBank, selSlot);
-
-  const handleSampleLoaded = (padId: string, buffer: AudioBuffer, fileName: string) => {
-    setPadBuffers((prev) => ({
-      ...prev,
-      [padId]: buffer,
-    }));
-    console.log(`[PadBankManager] Loaded "${fileName}" into Pad ${padId}`);
-  };
-
-  const handleTriggerPad = (padId: string) => {
-    setSelectedPadId(padId);
-    const buffer = padBuffers[padId];
-
-    if (buffer) {
-      audioEngine.triggerVoice(padId, buffer);
-    } else {
-      console.log(`[PadBankManager] Pad ${padId} has no audio buffer loaded.`);
-    }
+  const handlePointerEnd = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (activePointers.current.delete(event.pointerId)) syncPressed();
   };
 
   return (
-    <div className="flex flex-col gap-4 p-4 bg-zinc-900/60 border border-zinc-800 rounded-xl font-mono select-none">
-      {/* Bank Selector Tabs */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 pb-3">
-        <div className="flex items-center gap-1">
-          {BANKS.map((bank) => (
-            <button
-              key={bank}
-              type="button"
-              onPointerDown={() => setActiveBank(bank)}
-              className={`px-4 py-2 text-xs font-bold rounded-lg transition-all active:scale-95 ${
-                activeBank === bank
-                  ? 'bg-cyan-500 text-zinc-950 shadow-md shadow-cyan-500/20'
-                  : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+    <div className="grid grid-cols-4 gap-1.5 flex-1">
+      {Array.from({ length: PADS_PER_BANK }, (_, i) => {
+        const padId = `${activeBank}${i + 1}`;
+        const slot = slots[padId];
+        const hasSample = slot.buffer !== null;
+        const isSelected = padId === selectedPadId;
+        const isPressed = pressedPads.has(padId);
+
+        return (
+          <button
+            key={padId}
+            type="button"
+            onPointerDown={(event) => handlePointerDown(event, padId)}
+            onPointerUp={handlePointerEnd}
+            onPointerCancel={handlePointerEnd}
+            onPointerLeave={handlePointerEnd}
+            onContextMenu={(event) => event.preventDefault()}
+            className={`pad-trigger touch-none select-none min-h-[44px] border rounded p-1.5 flex flex-col justify-between text-left text-[9px] transition-all duration-75 ${
+              isPressed
+                ? 'bg-[var(--accent-phrase)] border-[var(--accent-phrase)] text-zinc-950 scale-95 shadow-[0_0_12px_rgba(34,211,238,0.7)]'
+                : isSelected
+                ? 'bg-zinc-900 border-[var(--accent-phrase)] shadow-[0_0_8px_rgba(34,211,238,0.3)]'
+                : 'bg-zinc-950 border-zinc-800 hover:border-cyan-500/50'
+            }`}
+          >
+            <span className="flex w-full items-center justify-between font-bold">
+              <span className={isPressed ? 'text-zinc-900' : 'text-zinc-500'}>{formatPadLabel(padId)}</span>
+              {hasSample && (
+                <span className={`text-[8px] ${isPressed ? 'text-zinc-900' : 'text-[var(--accent-phrase)]'}`}>
+                  {slot.loop ? 'LOOP' : 'ONE'}
+                </span>
+              )}
+            </span>
+            <span
+              className={`text-[8px] truncate max-w-full ${
+                isPressed ? 'text-zinc-900' : hasSample ? 'text-zinc-200' : 'text-zinc-600'
               }`}
             >
-              BANK {bank}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-3 text-xs">
-          <span className="text-zinc-400">
-            SEL: <strong className="text-cyan-400">{selectedPadId}</strong>
-          </span>
-          <span className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-cyan-300">
-            {selectedAssignment?.loop ? 'LOOP' : 'ONESHOT'}
-          </span>
-        </div>
-      </div>
-
-      {/* 4x4 Grid for Active Bank */}
-      <div className="grid grid-cols-4 gap-2">
-        {Array.from({ length: 16 }, (_, slotIndex) => {
-          const padId = `${activeBank}${slotIndex + 1}`;
-          const assignment = getAssignment(activeBank, slotIndex);
-          const hasBuffer = !!padBuffers[padId];
-          const isSelected = padId === selectedPadId;
-
-          return (
-            <button
-              key={padId}
-              type="button"
-              onPointerDown={() => handleTriggerPad(padId)}
-              className={`h-20 flex flex-col items-center justify-between p-2 rounded-xl border transition-all active:scale-95 touch-none ${
-                isSelected ? 'border-cyan-400 shadow-md shadow-cyan-500/10' : 'border-zinc-800'
-              } ${
-                hasBuffer
-                  ? 'bg-zinc-800/80 text-zinc-100 hover:bg-zinc-700'
-                  : 'bg-zinc-950/60 text-zinc-600 hover:bg-zinc-900'
-              }`}
-            >
-              <div className="w-full flex justify-between text-[10px] font-bold">
-                <span className={hasBuffer ? 'text-cyan-400' : 'text-zinc-600'}>{padId}</span>
-                {hasBuffer && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />}
-              </div>
-              <span className="text-[10px] font-medium truncate max-w-full px-1">
-                {assignment?.name || `EMPTY ${padId}`}
-              </span>
-              <span className="text-[9px] text-zinc-500">
-                {assignment?.loop ? 'LOOP' : 'ONE'}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Sample Dropzone */}
-      <div className="mt-2 pt-3 border-t border-zinc-800/80">
-        <AudioSampleDropzone padId={selectedPadId} onSampleLoaded={handleSampleLoaded} />
-      </div>
+              {slot.name}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 };
