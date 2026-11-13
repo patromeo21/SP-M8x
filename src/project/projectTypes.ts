@@ -1,7 +1,10 @@
 /**
  * SP-M8x Project Data Types
- * Updated to support 32-step phrases, dual FX slots, SUB micro-timing, and Table FX latches.
+ * Updated to support 32-step phrases, dual FX slots, SUB micro-timing, Table FX latches,
+ * and backward-compatible legacy project aliases for robust compilation.
  */
+
+export const PROJECT_SCHEMA_VERSION = '1.1.0';
 
 export type StepNote = string | null; // e.g., "C-4", "OFF", null
 export type InstrumentId = string | null; // e.g., "A01"
@@ -57,6 +60,29 @@ export interface TrackData {
   activePhraseId: string;
 }
 
+export interface ProjectSettings {
+  bpm: number;
+  swing: number;
+}
+
+export interface SampleAsset {
+  id: string;
+  name: string;
+  url?: string;
+  buffer?: AudioBuffer;
+}
+
+export type BankId = 'A' | 'B' | 'C' | 'D';
+
+export interface PadAssignment {
+  padId: number; // 1 to 16
+  bank: BankId;
+  sampleId: string | null;
+  name: string;
+  volume: number;
+  pitch: number;
+}
+
 export interface ProjectData {
   version: string;
   bpm: number;
@@ -65,3 +91,12 @@ export interface ProjectData {
   phrases: Record<string, PhraseData>;
   instruments: Record<string, any>;
 }
+
+// --- Backward Compatibility Aliases for Legacy Modules ---
+export type SPProject = ProjectData;
+export type EffectsProjectState = ProjectData;
+export type ProjectSettingsAlias = ProjectSettings;
+export type LegacyProjectInput = any;
+export type ProjectPattern = PhraseData;
+export type TrackerStepItem = StepData;
+export type TrackerStep = StepData;
