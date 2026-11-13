@@ -1,79 +1,252 @@
-import React, { useState } from 'react';
-import { PadBankManager } from '../sampler/PadBankManager';
+/**
+ * SP-M8x Hardware Deck Component
+ * M8 tactile 8-button physical layout with pointerId-safe multi-touch handling
+ * for mobile Safari (iPad 9th Gen), supporting single-tap, hold, and double-tap SHIFT states.
+ */
 
-type DeckMode = 'pads' | 'm8';
+import React, { useState, useRef, useCallback } from 'react';
 
-interface HardwareDeckProps {
-  className?: string;
+export interface HardwareDeckProps {
+  onButtonPress?: (button: string, isShiftHeld: boolean) => void;
+  onButtonRelease?: (button: string) => void;
+  onFxGateToggle?: (fxType: string, active: boolean, targetTrack?: number) => void;
+  onShiftAction?: (action: 'tap' | 'hold_start' | 'hold_end' | 'latch') => void;
+  activeTrackIndex?: number;
+  isMasterTarget?: boolean;
 }
 
-const gridSlots: Array<string | null> = [
-  null, 'UP', null, null, null,
-  'LEFT', 'DOWN', 'RIGHT', 'OPT', 'EDIT',
-  'HOLD', null, null, 'SHIFT', 'PLAY',
-];
+export const HardwareDeck: React.FC<HardwareDeckProps> = ({
+  onButtonPress,
+  onButtonRelease,
+  onFxGateToggle,
+  onShiftAction,
+  activeTrackIndex = 0,
+  isMasterTarget = false,
+}) => {
+  // Shift State Machine: 'idle' | 'held' | 'latched'
+  const [shiftState, setShiftState] = useState<'idle' | 'held' | 'latched'>('idle');
+  const [activeFx, setActiveFx] = useState<string | null>(null);
 
-const punchInSlots: Array<string | null> = [
-  null, '1:DJFX', null, null, null,
-  '2:TAPE', '3:SWEEP', '4:LO-FI', '5:SUB', '6:ISO',
-  'HOLD:ON', null, null, '7:CRUSH', '8:DELAY',
-];
+  // Timers & Pointer Trackers for zero-lag gesture detection
+  const shiftPressTimeRef = useRef<number>(0);
+  const lastShiftTapRef = useRef<number>(0);
+  const activePointersRef = useRef>(new Map()); // buttonId -> pointerId
 
-/** Fixed-footprint pads / M8 faceplate switcher for the workspace performance deck. */
-export const HardwareDeck: React.FC<HardwareDeckProps> = ({ className = '' }) => {
-  const [mode, setMode] = useState<DeckMode>('pads');
-  const [hold, setHold] = useState(false);
-  const keys = hold ? punchInSlots : gridSlots;
+  // --- SHIFT Gesture Handlers ---
+  const handleShiftPointerDown = useCallback((e: React.PointerEvent) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    activePointersRef.current.set('SHIFT', e.pointerId);
+    shiftPressTimeRef.current = Date.now();
+
+    const now = Date.now();
+    const timeSinceLastTap = now - lastShiftTapRef.current;
+
+    if (shiftState === 'latched') {
+      // Single tap while latched turns off latch mode
+      setShiftState('idle');
+      onShiftAction?.('tap');
+      lastShiftTapRef.current = 0;
+      return;
+    }
+
+    if (timeSinceLastTap < 250) {
+      // Double-Tap Detected: Enter Latched FX Mode
+      setShiftState('latched');
+      onShiftAction?.('latch');
+      lastShiftTapRef.current = 0;
+      return;
+    }
+
+    // Temporary hold start
+    if (shiftState !== 'latched') {
+      setShiftState('held');
+      onShiftAction?.('hold_start');
+    }
+  }, [shiftState, onShiftAction]);
+
+  const handleShiftPointerUp = useCallback((e: React.PointerEvent) => {
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch (_) {}
+    activePointersRef.current.delete('SHIFT');
+
+    const holdDuration = Date.now() - shiftPressTimeRef.current;
+
+    if (shiftState === 'held') {
+      if (holdDuration < 200) {
+        // Quick tap: trigger context view toggle
+        setShiftState('idle');
+        onShiftAction?.('tap');
+        lastShiftTapRef.current = Date.now();
+      } else {
+        // Released after hold: clear momentary FX layer
+        setShiftState('idle');
+        onShiftAction?.('hold_end');
+        setActiveFx(null);
+      }
+    }
+  }, [shiftState, onShiftAction]);
+
+  // --- General Deck Button Handlers (Multi-Touch / Pointer Safe) ---
+  const handleButtonDown = useCallback((buttonName: string, e: React.PointerEvent) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    activePointersRef.current.set(buttonName, e.pointerId);
+
+    const isShiftActive = shiftState === 'held' || shiftState === 'latched';
+
+    if (isShiftActive) {
+      // Map Shift-held layer to Punch-In FX
+      let fxType = '';
+      if (buttonName === 'UP') fxType = 'CUT';
+      else if (buttonName === 'DOWN') fxType = 'RET';
+      else if (buttonName === 'LEFT') fxType = 'KILL';
+      else if (buttonName === 'RIGHT') fxType = 'DEG';
+      else if (buttonName === 'EDT') fxType = 'SDL';
+      else if (buttonName === 'OPT') fxType = 'TRK_MST'; // Toggle Target
+
+      if (fxType) {
+        setActiveFx(fxType);
+        onFxGateToggle?.(fxType, true, isMasterTarget ? -1 : activeTrackIndex);
+        return;
+      }
+    }
+
+    onButtonPress?.(buttonName, isShiftActive);
+  }, [shiftState, activeTrackIndex, isMasterTarget, onFxGateToggle, onButtonPress]);
+
+  const handleButtonUp = useCallback((buttonName: string, e: React.PointerEvent) => {
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch (_) {}
+    activePointersRef.current.delete(buttonName);
+
+    // Release any active FX tied to this button
+    let fxType = '';
+    if (buttonName === 'UP') fxType = 'CUT';
+    else if (buttonName === 'DOWN') fxType = 'RET';
+    else if (buttonName === 'LEFT') fxType = 'KILL';
+    else if (buttonName === 'RIGHT') fxType = 'DEG';
+    else if (buttonName === 'EDT') fxType = 'SDL';
+
+    if (fxType && activeFx === fxType) {
+      setActiveFx(null);
+      onFxGateToggle?.(fxType, false, isMasterTarget ? -1 : activeTrackIndex);
+    }
+
+    onButtonRelease?.(buttonName);
+  }, [activeFx, activeTrackIndex, isMasterTarget, onFxGateToggle, onButtonRelease]);
+
+  const isShiftActive = shiftState === 'held' || shiftState === 'latched';
 
   return (
-    <section className={`flex min-h-0 flex-col border border-[var(--border-grid)] bg-[var(--bg-canvas)] ${className}`}>
-      <header className="flex shrink-0 items-center justify-between border-b border-[var(--border-grid)] px-3 py-2">
-        <span className="text-[10px] font-bold tracking-wider text-[var(--accent-phrase)]">PERFORMANCE DECK</span>
-        <div className="flex items-center gap-1" role="group" aria-label="Performance deck mode">
-          <button type="button" aria-pressed={mode === 'pads'} onClick={() => setMode('pads')}
-            className={`min-h-9 px-2 text-[9px] font-bold ${mode === 'pads' ? 'bg-[var(--accent-phrase)] text-[var(--bg-canvas)]' : 'text-zinc-400'}`}>
-            [ 4x4 PADS ]
-          </button>
-          <span className="text-[var(--text-inactive)]" aria-hidden="true">&lt;--&gt;</span>
-          <button type="button" aria-pressed={mode === 'm8'} onClick={() => setMode('m8')}
-            className={`min-h-9 px-2 text-[9px] font-bold ${mode === 'm8' ? 'bg-[var(--accent-phrase)] text-[var(--bg-canvas)]' : 'text-zinc-400'}`}>
-            [ M8 DECK ]
-          </button>
-        </div>
-      </header>
-
-      <div className="min-h-0 flex-1 p-2">
-        {mode === 'pads' ? (
-          <div className="h-full overflow-auto">
-            <PadBankManager />
-          </div>
-        ) : (
-          <div className="grid h-full grid-cols-5 grid-rows-3 gap-2" role="group" aria-label="M8 hardware deck">
-            {keys.map((label, index) => {
-              if (!label) return <div key={`blank-${index}`} aria-hidden="true" className="bg-[var(--bg-canvas)]" />;
-              const isHold = index === 10;
-              const accent = hold && !isHold ? 'border-[var(--accent-table)] text-[var(--accent-table)]' :
-                isHold && hold ? 'border-[var(--accent-song)] bg-[var(--accent-song)] text-[var(--bg-canvas)]' :
-                'border-[var(--border-grid)] text-[var(--text-primary)]';
-
-              return (
-                <button
-                  key={label}
-                  type="button"
-                  aria-label={label}
-                  aria-pressed={isHold ? hold : undefined}
-                  onPointerDown={isHold ? () => setHold((value) => !value) : undefined}
-                  className={`touch-target flex min-h-0 items-center justify-center border text-center text-[clamp(8px,1vw,12px)] font-bold leading-tight active:bg-[var(--accent-phrase)] active:text-[var(--bg-canvas)] ${accent}`}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-        )}
+    <div className="hardware-deck bg-neutral-900 border border-neutral-700 p-3 rounded-lg select-none touch-none">
+      {/* Status Header */}
+      <div className="flex justify-between items-center mb-2 px-1 text-xs text-neutral-400 font-mono">
+        <span>DECK: M8 TACTILE</span>
+        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+          shiftState === 'latched' ? 'bg-red-600 text-white animate-pulse' :
+          shiftState === 'held' ? 'bg-amber-500 text-black' : 'bg-neutral-800 text-neutral-300'
+        }`}>
+          {shiftState === 'latched' ? 'FX LATCHED [ON]' : shiftState === 'held' ? 'FX LAYER [HOLD]' : 'M8 NAV [READY]'}
+        </span>
       </div>
-    </section>
+
+      {/* 8-Button Tactile Grid */}
+      <div className="grid grid-cols-4 gap-2">
+        {/* Row 1: UP / Navigation / FX */}
+        <button
+          className={`h-12 rounded font-bold text-xs flex flex-col items-center justify-center transition-all ${
+            isShiftActive ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/50' : 'bg-neutral-800 text-neutral-200 active:bg-neutral-700'
+          }`}
+          onPointerDown={(e) => handleButtonDown('UP', e)}
+          onPointerUp={(e) => handleButtonUp('UP', e)}
+          onPointerCancel={(e) => handleButtonUp('UP', e)}
+        >
+          <span>{isShiftActive ? 'CUT' : '▲'}</span>
+          <span className="text-[9px] opacity-60">{isShiftActive ? 'Filter' : 'UP'}</span>
+        </button>
+
+        <button
+          className="h-12 bg-neutral-800 active:bg-neutral-700 text-neutral-200 rounded font-bold text-xs flex flex-col items-center justify-center"
+          onPointerDown={(e) => handleButtonDown('OPT', e)}
+          onPointerUp={(e) => handleButtonUp('OPT', e)}
+          onPointerCancel={(e) => handleButtonUp('OPT', e)}
+        >
+          <span>{isShiftActive ? (isMasterTarget ? 'MST' : 'TRK') : 'OPT'}</span>
+          <span className="text-[9px] opacity-60">{isShiftActive ? 'Target' : 'Select'}</span>
+        </button>
+
+        <button
+          className={`h-12 rounded font-bold text-xs flex flex-col items-center justify-center transition-all ${
+            isShiftActive ? 'bg-red-600 text-white shadow-lg shadow-red-900/50' : 'bg-neutral-800 text-neutral-200 active:bg-neutral-700'
+          }`}
+          onPointerDown={(e) => handleButtonDown('DOWN', e)}
+          onPointerUp={(e) => handleButtonUp('DOWN', e)}
+          onPointerCancel={(e) => handleButtonUp('DOWN', e)}
+        >
+          <span>{isShiftActive ? 'RET' : '▼'}</span>
+          <span className="text-[9px] opacity-60">{isShiftActive ? 'Looper' : 'DOWN'}</span>
+        </button>
+
+        <button
+          className={`h-12 rounded font-bold text-xs flex flex-col items-center justify-center transition-all ${
+            isShiftActive ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/50' : 'bg-neutral-800 text-neutral-200 active:bg-neutral-700'
+          }`}
+          onPointerDown={(e) => handleButtonDown('EDT', e)}
+          onPointerUp={(e) => handleButtonUp('EDT', e)}
+          onPointerCancel={(e) => handleButtonUp('EDT', e)}
+        >
+          <span>{isShiftActive ? 'SDL' : 'EDT'}</span>
+          <span className="text-[9px] opacity-60">{isShiftActive ? 'Delay' : 'Insert'}</span>
+        </button>
+
+        {/* Row 2: LEFT, RIGHT, SHIFT, PLAY */}
+        <button
+          className={`h-12 rounded font-bold text-xs flex flex-col items-center justify-center transition-all ${
+            isShiftActive ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'bg-neutral-800 text-neutral-200 active:bg-neutral-700'
+          }`}
+          onPointerDown={(e) => handleButtonDown('LEFT', e)}
+          onPointerUp={(e) => handleButtonUp('LEFT', e)}
+          onPointerCancel={(e) => handleButtonUp('LEFT', e)}
+        >
+          <span>{isShiftActive ? 'KILL' : '◄'}</span>
+          <span className="text-[9px] opacity-60">{isShiftActive ? 'Mute' : 'LEFT'}</span>
+        </button>
+
+        <button
+          className={`h-12 rounded font-bold text-xs flex flex-col items-center justify-center transition-all ${
+            isShiftActive ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/50' : 'bg-neutral-800 text-neutral-200 active:bg-neutral-700'
+          }`}
+          onPointerDown={(e) => handleButtonDown('RIGHT', e)}
+          onPointerUp={(e) => handleButtonUp('RIGHT', e)}
+          onPointerCancel={(e) => handleButtonUp('RIGHT', e)}
+        >
+          <span>{isShiftActive ? 'DEG' : '►'}</span>
+          <span className="text-[9px] opacity-60">{isShiftActive ? 'Crush' : 'RIGHT'}</span>
+        </button>
+
+        <button
+          className={`h-12 rounded font-bold text-xs flex flex-col items-center justify-center transition-all ${
+            shiftState !== 'idle' ? 'bg-amber-500 text-black font-extrabold ring-2 ring-white' : 'bg-neutral-700 text-neutral-100 active:bg-neutral-600'
+          }`}
+          onPointerDown={handleShiftPointerDown}
+          onPointerUp={handleShiftPointerUp}
+          onPointerCancel={handleShiftPointerUp}
+        >
+          <span>SHIFT</span>
+          <span className="text-[9px] opacity-70">{shiftState === 'latched' ? 'LATCH' : shiftState === 'held' ? 'HOLD' : 'MOD'}</span>
+        </button>
+
+        <button
+          className="h-12 bg-neutral-800 active:bg-neutral-700 text-neutral-200 rounded font-bold text-xs flex flex-col items-center justify-center"
+          onPointerDown={(e) => handleButtonDown('PLAY', e)}
+          onPointerUp={(e) => handleButtonUp('PLAY', e)}
+          onPointerCancel={(e) => handleButtonUp('PLAY', e)}
+        >
+          <span>PLAY</span>
+          <span className="text-[9px] opacity-60">Start/Stop</span>
+        </button>
+      </div>
+    </div>
   );
 };
-
-export default HardwareDeck;
