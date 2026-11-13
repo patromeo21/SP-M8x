@@ -37,7 +37,9 @@ class TrackerBridge {
     console.log(`[TrackerBridge] Step ${stepIndex} -> Triggering Pad ${padId} (Note: ${step.note})`);
 
     // Execute polyphonic/monophonic voice trigger in Web Audio API
-    audioEngine.triggerVoice(padId);
+    void audioEngine.triggerVoice(padId).catch((error: unknown) => {
+      console.error('[TrackerBridge] Could not start audio:', error);
+    });
   }
 }
 

@@ -7,7 +7,7 @@ import React, { useState } from 'react';
 import { Pad, SamplerMode, BankId } from '../types';
 import { PadGrid } from './PadGrid';
 import { SamplerWorkbench } from './SamplerWorkbench';
-import { audioEngine } from '../audioEngine';
+import { audioEngine } from '../audio/audioEngine';
 
 interface SamplerWorkspaceProps {
   pads: Pad[];
@@ -27,17 +27,22 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
   const selectedPad = pads.find((p) => p.id === selectedPadId) || pads[0];
 
   const handleTestPlay = async (padId: number) => {
-    await audioEngine.init();
-    const pad = pads.find((p) => p.id === padId);
-    if (!pad || !pad.buffer) return;
+    try {
+      await audioEngine.initialize();
+      const pad = pads.find((p) => p.id === padId);
+      if (!pad || !pad.buffer) return;
 
-    audioEngine.triggerPad(padId, {
-      sliceStart: pad.sliceStart,
-      sliceEnd: pad.sliceEnd,
-      volume: pad.volume,
-      semitoneOffset: pad.pitchOffset || 0,
-      loop: pad.loop,
-    });
+      audioEngine.setPadBuffer(padId, pad.buffer);
+      audioEngine.triggerPad(padId, {
+        sliceStart: pad.sliceStart,
+        sliceEnd: pad.sliceEnd,
+        volume: pad.volume,
+        semitoneOffset: pad.pitchOffset || 0,
+        loop: pad.loop,
+      });
+    } catch (error) {
+      console.error('[SamplerWorkspace] Could not start audio:', error);
+    }
   };
 
   return (

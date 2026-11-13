@@ -42,6 +42,7 @@ export const PadBankManager: React.FC = () => {
   const selectedAssignment = getAssignment(selBank, selSlot);
 
   const handleSampleLoaded = (padId: string, buffer: AudioBuffer, fileName: string) => {
+    audioEngine.setPadBuffer(padId, buffer);
     setPadBuffers((prev) => ({
       ...prev,
       [padId]: buffer,
@@ -54,7 +55,9 @@ export const PadBankManager: React.FC = () => {
     const buffer = padBuffers[padId];
 
     if (buffer) {
-      audioEngine.triggerVoice(padId, buffer);
+      void audioEngine.triggerVoice(padId, buffer).catch((error: unknown) => {
+        console.error('[PadBankManager] Could not start audio:', error);
+      });
     } else {
       console.log(`[PadBankManager] Pad ${padId} has no audio buffer loaded.`);
     }
