@@ -1,58 +1,29 @@
 /**
- * SP-M8x Hybrid Music Production Suite
- * trackerHelpers.ts — Tracker Pattern & Table Data Model Utilities
+ * SP-M8x Tracker Helpers
+ * Utility functions for step and phrase manipulation.
  */
 
-import type { TrackerStepItem, ProjectPattern } from './projectTypes';
+import { StepData, PhraseData } from './projectTypes';
 
-/**
- * Creates a default empty tracker step with micro-timing support.
- */
-export function createDefaultTrackerStep(stepIndex: number): TrackerStepItem {
+export function createEmptyStep(stepIndex: number): StepData {
   return {
-    id: `step-${stepIndex}-${Math.random().toString(36).substring(2, 7)}`,
     stepIndex,
-    subTickOffset: 0,
-    note: '---',
-    velocity: 100,
-    instrumentAssignmentId: null,
-    phraseFx: '--',
-    phraseFxValue: 0,
-    tableVolume: null,
-    tablePitch: null,
-    tableFx: '--',
-    tableFxValue: 0,
+    note: null,
+    instrument: null,
+    volume: null,
+    fx1: { opcode: '---', value: 0 },
+    fx2: { opcode: '---', value: 0 },
+    sub: 0,
   };
 }
 
-/**
- * Creates a new blank pattern with the specified length (default 32 steps).
- */
-export function createEmptyPattern(id: string, name: string, length: number = 32): ProjectPattern {
-  const steps = Array.from({ length }, (_, index) => createDefaultTrackerStep(index));
+export function createEmptyPhrase(id: string, name: string = 'New Phrase'): PhraseData {
+  const steps: StepData[] = Array.from({ length: 32 }, (_, i) => createEmptyStep(i));
   return {
     id,
     name,
-    length,
     steps,
-  };
-}
-
-/**
- * Updates a specific step within a pattern immutably.
- */
-export function updatePatternStep(
-  pattern: ProjectPattern,
-  stepIndex: number,
-  changes: Partial<TrackerStepItem>,
-): ProjectPattern {
-  const updatedSteps = pattern.steps.map((step) => {
-    if (step.stepIndex !== stepIndex) return step;
-    return { ...step, ...changes };
-  });
-
-  return {
-    ...pattern,
-    steps: updatedSteps,
+    tableLatches: [],
+    tableRows: [{ rowIndex: 0, command: '---', value: 0 }],
   };
 }

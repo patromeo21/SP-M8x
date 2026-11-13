@@ -1,131 +1,95 @@
 /**
- * SP-M8x Project Architecture
- * A1.2 — Immutable Project Reducer
+ * SP-M8x Project Reducer
+ * Manages project state mutations with strict type safety and optional chaining.
  */
 
-import type { SPProject } from './projectTypes';
-import type { ProjectAction } from './projectActions';
+import { ProjectData, TrackData, PhraseData, StepData } from './projectTypes';
 import { createInitialProject } from './initialProject';
 
-export const projectReducer = (
-  state: SPProject = createInitialProject(),
-  action: ProjectAction,
-): SPProject => {
-  const now = new Date().toISOString();
+export type ProjectAction =
+  | { type: 'SET_BPM'; payload: number }
+  | { type: 'SET_SWING'; payload: number }
+  | { type: 'UPDATE_STEP'; payload: { phraseId: string; stepIndex: number; step: Partial<StepData> } }
+  | { type: 'SET_TRACK_VOLUME'; payload: { trackIndex: number; volume: number } }
+  | { type: 'SET_TRACK_PAN'; payload: { trackIndex: number; pan: number } }
+  | { type: 'TOGGLE_MUTE'; payload: number }
+  | { type: 'RESET_PROJECT' };
 
+export function projectReducer(state: ProjectData = createInitialProject(), action: ProjectAction): ProjectData {
   switch (action.type) {
-    case 'PROJECT_REPLACE':
-      return { ...action.project };
-
-    case 'PROJECT_RENAME':
+    case 'SET_BPM':
       return {
         ...state,
-        metadata: {
-          ...state.metadata,
-          name: action.name,
-          updatedAt: now,
-        },
-      };
-
-    case 'SETTINGS_UPDATE': {
-      const bpm = action.changes.bpm !== undefined
-        ? Math.max(40, Math.min(300, action.changes.bpm))
-        : state.settings.bpm;
-      const masterVolume = action.changes.masterVolume !== undefined
-        ? Math.max(0, Math.min(1, action.changes.masterVolume))
-        : state.settings.masterVolume;
-
-      return {
-        ...state,
+        bpm: action.payload,
         settings: {
-          ...state.settings,
-          ...action.changes,
-          bpm,
-          masterVolume,
+          ...(state.settings || { bpm: 94, swing: 50 }),
+          bpm: action.payload,
         },
-        metadata: { ...state.metadata, updatedAt: now },
       };
-    }
 
-    case 'SAMPLE_ASSET_UPSERT': {
-      const asset = action.asset;
-      const existingAssets = state.sampler.assets.filter((a) => a.id !== asset.id);
+    case 'SET_SWING':
       return {
         ...state,
-        sampler: {
-          ...state.sampler,
-          assets: [...existingAssets, asset],
+        swing: action.payload,
+        settings: {
+          ...(state.settings || { bpm: 94, swing: 50 }),
+          swing: action.payload,
         },
-        metadata: { ...state.metadata, updatedAt: now },
       };
-    }
 
-    case 'PAD_ASSIGNMENT_UPSERT': {
-      const assignment = action.assignment;
-      const assignments = state.sampler.assignments.map((item) =>
-        item.bank === assignment.bank && item.slot === assignment.slot ? assignment : item,
-      );
-      return {
-        ...state,
-        sampler: {
-          ...state.sampler,
-          assignments,
-        },
-        metadata: { ...state.metadata, updatedAt: now },
-      };
-    }
+    case 'UPDATE_STEP': {
+      const { phraseId, stepIndex, step } = action.payload;
+      const phrase = state.phrases[phraseId];
+      if (!phrase) return state;
 
-    case 'PATTERN_UPSERT': {
-      const pattern = action.pattern;
-      const patterns = state.tracker.patterns.map((p) => (p.id === pattern.id ? pattern : p));
-      if (!patterns.some((p) => p.id === pattern.id)) {
-        patterns.push(pattern);
+      const updatedSteps = [...phrase.steps];
+      if (updatedSteps[stepIndex]) {
+        updatedSteps[stepIndex] = {
+          ...updatedSteps[stepIndex],
+          ...step,
+        };
       }
+
       return {
         ...state,
-        tracker: {
-          ...state.tracker,
-          patterns,
+        phrases: {
+          ...state.phrases,
+          [phraseId]: {
+            ...phrase,
+            steps: updatedSteps,
+          },
         },
-        metadata: { ...state.metadata, updatedAt: now },
       };
     }
 
-    case 'SONG_CELL_SET': {
-      const { trackId, rowIndex, patternId } = action;
-      const tracks = state.song.tracks.map((track) => {
-        if (track.id !== trackId) return track;
-        const rows = [...track.rows];
-        if (rows[rowIndex]) {
-          rows[rowIndex] = { patternId };
-        }
-        return { ...track, rows };
-      });
-      return {
-        ...state,
-        song: {
-          ...state.song,
-          tracks,
-        },
-        metadata: { ...state.metadata, updatedAt: now },
-      };
+    case 'SET_TRACK_VOLUME': {
+      const { trackIndex, volume } = action.payload;
+      const tracks = state.tracks.map((t) =>
+        t.trackIndex === trackIndex ? { ...t, volume } : t
+      );
+      return { ...state, tracks };
     }
 
-    case 'EFFECTS_REPLACE':
-      return {
-        ...state,
-        effects: { ...action.effects },
-        settings: {
-          ...state.settings,
-          masterVolume: action.effects.master.masterVolume,
-        },
-        metadata: { ...state.metadata, updatedAt: now },
-      };
+    case 'SET_TRACK_PAN': {
+      const { trackIndex, pan } = action.payload;
+      const tracks = state.tracks.map((t) =>
+        t.trackIndex === trackIndex ? { ...t, pan } : t
+      );
+      return { ...state, tracks };
+    }
+
+    case 'TOGGLE_MUTE': {
+      const trackIndex = action.payload;
+      const tracks = state.tracks.map((t) =>
+        t.trackIndex === trackIndex ? { ...t, muted: !t.muted } : t
+      );
+      return { ...state, tracks };
+    }
 
     case 'RESET_PROJECT':
-      return createInitialProject(now);
+      return createInitialProject();
 
     default:
       return state;
   }
-};
+}

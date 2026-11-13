@@ -1,34 +1,27 @@
 /**
- * SP-M8x Project Architecture
- * A1.2 — Read-only Project Selectors
+ * SP-M8x Project Selectors
+ * Provides safe state queries conforming to the 32-step / 8-track / dual-FX contract.
  */
 
-import type {
-  SPProject,
-  ProjectSettings,
-  SampleAsset,
-  PadAssignment,
-  ProjectPattern,
-  EffectsProjectState,
-} from './projectTypes';
+import { ProjectData, TrackData, PhraseData } from './projectTypes';
 
-export const selectSettings = (state: SPProject): ProjectSettings => state.settings;
-export const selectSamplerAssets = (state: SPProject): SampleAsset[] => state.sampler.assets;
-export const selectPadAssignments = (state: SPProject): PadAssignment[] => state.sampler.assignments;
+export function selectProjectBpm(state: ProjectData): number {
+  return state?.bpm || state?.settings?.bpm || 94;
+}
 
-export const selectPadByBankAndSlot = (
-  state: SPProject,
-  bank: 'A' | 'B' | 'C' | 'D',
-  slot: number,
-): PadAssignment | undefined => {
-  return state.sampler.assignments.find((p) => p.bank === bank && p.slot === slot);
-};
+export function selectProjectSwing(state: ProjectData): number {
+  return state?.swing || state?.settings?.swing || 50;
+}
 
-export const selectPatterns = (state: SPProject): ProjectPattern[] => state.tracker.patterns;
+export function selectTracks(state: ProjectData): TrackData[] {
+  return state?.tracks || state?.song?.tracks || [];
+}
 
-export const selectPatternById = (state: SPProject, patternId: string): ProjectPattern | undefined => {
-  return state.tracker.patterns.find((p) => p.id === patternId);
-};
+export function selectPhrases(state: ProjectData): Record<string, PhraseData> {
+  return state?.phrases || state?.tracker?.patterns || {};
+}
 
-export const selectSongTracks = (state: SPProject) => state.song.tracks;
-export const selectEffects = (state: SPProject): EffectsProjectState => state.effects;
+export function selectPhraseById(state: ProjectData, phraseId: string): PhraseData | undefined {
+  const phrases = selectPhrases(state);
+  return phrases[phraseId];
+}
