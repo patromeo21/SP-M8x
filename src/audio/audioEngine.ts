@@ -5,9 +5,16 @@
 
 import { audioCache } from './audioCache';
 
+declare global {
+  interface Window {
+    webkitAudioContext?: typeof AudioContext;
+  }
+}
+
 export interface ActiveVoice {
   source: AudioBufferSourceNode;
   gainNode: GainNode;
+  panner?: StereoPannerNode;
   padId: string;
   startTime: number;
 }
@@ -16,31 +23,30 @@ const normalizePadKey = (padId: string | number): string => String(padId);
 const clamp = (value: number, min: number, max: number): number =>
   Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : min;
 
-export class AudioEngine {
+class AudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private activeVoices = new Map<string, ActiveVoice>();
 
   /** Lazily create the one app AudioContext and request resume after user interaction. */
-  public initialize(context?: AudioContext): AudioContext {
+  public async initialize(): Promise<AudioContext> {
     if (!this.ctx) {
-      const AudioContextClass =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (!context && !AudioContextClass) {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) {
         throw new Error('Web Audio API is not supported in this browser.');
       }
 
-      this.ctx = context || new AudioContextClass({ latencyHint: 'interactive' });
+      this.ctx = new AudioContextClass({ latencyHint: 'interactive' });
       this.masterGain = this.ctx.createGain();
       this.masterGain.gain.setValueAtTime(0.8, this.ctx.currentTime);
       this.masterGain.connect(this.ctx.destination);
     }
 
     if (this.ctx.state === 'suspended') {
-      void this.ctx.resume().catch((error: unknown) => {
-        console.warn('[SP-M8x AudioEngine] AudioContext resume was blocked or failed:', error);
-      });
+      await this.ctx.resume();
+    }
+    if (this.ctx.state !== 'running') {
+      throw new Error(`AudioContext is ${this.ctx.state}; audio playback is unavailable.`);
     }
 
     return this.ctx;
@@ -51,7 +57,7 @@ export class AudioEngine {
   }
 
   public async decodeAudioData(arrayBuffer: ArrayBuffer): Promise<AudioBuffer> {
-    const context = this.initialize();
+    const context = await this.initialize();
     return context.decodeAudioData(arrayBuffer.slice(0));
   }
 
@@ -74,9 +80,9 @@ export class AudioEngine {
       scheduledTime?: number; // Added to support lookahead sample-accurate scheduling
     } = {},
   ): string | null {
-    const context = this.initialize();
+    const context = this.ctx;
     const buffer = this.getPadBuffer(padId);
-    if (!buffer || !this.masterGain) return null;
+    if (!context || context.state !== 'running' || !buffer || !this.masterGain) return null;
 
     const sliceStart = clamp(options.sliceStart ?? 0, 0, buffer.duration);
     const sliceEnd = clamp(options.sliceEnd ?? buffer.duration, 0, buffer.duration);
@@ -114,8 +120,8 @@ export class AudioEngine {
   }
 
   /** Legacy named-voice entry point; each call creates an independently tracked voice. */
-  public triggerVoice(padId: string | number, buffer?: AudioBuffer, pan = 0): void {
-    const context = this.initialize();
+  public async triggerVoice(padId: string | number, buffer?: AudioBuffer, pan = 0): Promise<void> {
+    const context = await this.initialize();
     if (buffer) this.setPadBuffer(padId, buffer);
     const selectedBuffer = buffer ?? this.getPadBuffer(padId);
     if (!this.masterGain) return;
@@ -136,8 +142,9 @@ export class AudioEngine {
     voiceGain.gain.setValueAtTime(1, context.currentTime);
 
     const safePan = clamp(pan, -1, 1);
+    let panner: StereoPannerNode | undefined;
     if (typeof context.createStereoPanner === 'function') {
-      const panner = context.createStereoPanner();
+      panner = context.createStereoPanner();
       panner.pan.setValueAtTime(safePan, context.currentTime);
       source.connect(voiceGain);
       voiceGain.connect(panner);
@@ -147,7 +154,7 @@ export class AudioEngine {
       voiceGain.connect(this.masterGain);
     }
 
-    this.startVoice(source, voiceGain, normalizePadKey(padId), 0, undefined, false);
+    this.startVoice(source, voiceGain, normalizePadKey(padId), 0, undefined, false, undefined, panner);
   }
 
   /** Stop a returned voice ID, or all active voices belonging to the supplied pad ID. */
@@ -184,17 +191,18 @@ export class AudioEngine {
     duration: number | undefined,
     loop: boolean,
     scheduledTime?: number,
+    panner?: StereoPannerNode,
   ): string | null {
     const context = this.ctx;
     if (!context) return null;
 
     const voiceId = `spm8x_${padId}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const startTime = scheduledTime !== undefined ? Math.max(context.currentTime, scheduledTime) : context.currentTime;
-    const voice: ActiveVoice = { source, gainNode, padId, startTime };
+    const voice: ActiveVoice = { source, gainNode, panner, padId, startTime };
     this.activeVoices.set(voiceId, voice);
 
     source.onended = () => {
-      this.disconnectVoice(source, gainNode);
+      this.disconnectVoice(source, gainNode, panner);
       this.activeVoices.delete(voiceId);
     };
 
@@ -207,7 +215,7 @@ export class AudioEngine {
       return voiceId;
     } catch (error) {
       this.activeVoices.delete(voiceId);
-      this.disconnectVoice(source, gainNode);
+      this.disconnectVoice(source, gainNode, panner);
       console.error('[SP-M8x AudioEngine] Could not start voice:', error);
       return null;
     }
@@ -225,16 +233,17 @@ export class AudioEngine {
       } else {
         voice.source.stop();
       }
-    } catch {
-      // The source may have already ended.
+    } catch (error) {
+      console.warn('[SP-M8x AudioEngine] Could not stop voice:', error);
+      this.disconnectVoice(voice.source, voice.gainNode, voice.panner);
     }
-    this.disconnectVoice(voice.source, voice.gainNode);
   }
 
-  private disconnectVoice(source: AudioBufferSourceNode, gainNode: GainNode): void {
+  private disconnectVoice(source: AudioBufferSourceNode, gainNode: GainNode, panner?: StereoPannerNode): void {
     try {
       source.disconnect();
       gainNode.disconnect();
+      panner?.disconnect();
     } catch {
       // Already disconnected during release or natural completion.
     }
