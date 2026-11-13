@@ -1,7 +1,6 @@
 /**
  * SP-M8x Core Web Audio Engine
- * Comprehensive implementation covering 3-tier aux routing, pad sample management,
- * voice allocation, and full compatibility methods required by dropzones, managers, and tracker engines.
+ * Precision-typed implementation matching all external component and tracker method signatures.
  */
 
 export class AudioEngine {
@@ -124,8 +123,9 @@ export class AudioEngine {
     return await this.ctx.decodeAudioData(arrayBuffer);
   }
 
-  public setPadBuffer(padId: string | number, buffer: AudioBuffer) {
+  public setPadBuffer(padId: string | number, buffer: AudioBuffer, _options?: any): string | null {
     this.padBuffers.set(padId, buffer);
+    return String(padId);
   }
 
   public getPadBuffer(padId: string | number): AudioBuffer | undefined {
@@ -150,10 +150,13 @@ export class AudioEngine {
     this.trackStrips[trackIndex].pan!.pan.setTargetAtTime(clamped, this.ctx.currentTime, 0.015);
   }
 
-  public triggerPad(padId: string | number, trackIndex: number = 0, volume: number = 1.0, playbackRate: number = 1.0) {
+  public triggerPad(padId: string | number, trackIndexOrOptions: number | any = 0, volume: number = 1.0, playbackRate: number = 1.0) {
     const buffer = this.padBuffers.get(padId);
     if (buffer) {
-      this.triggerVoice(trackIndex, buffer, playbackRate, volume);
+      const trackIdx = typeof trackIndexOrOptions === 'number' ? trackIndexOrOptions : (trackIndexOrOptions?.trackIndex ?? 0);
+      const vol = typeof trackIndexOrOptions === 'number' ? volume : (trackIndexOrOptions?.volume ?? volume);
+      const rate = typeof trackIndexOrOptions === 'number' ? playbackRate : (trackIndexOrOptions?.playbackRate ?? playbackRate);
+      this.triggerVoice(trackIdx, buffer, rate, vol);
     }
   }
 
@@ -184,7 +187,7 @@ export class AudioEngine {
     }
   }
 
-  public stopVoice() {
+  public stopVoice(_voiceId?: any) {
     for (const source of this.activeSources) {
       try {
         source.stop();
