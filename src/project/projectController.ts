@@ -20,6 +20,11 @@ export interface TrackerStepItem {
   subTickOffset?: number;
   velocity?: number;
   instrumentAssignmentId?: string | null;
+  /** Per-step table automation values; null means that lane has no override. */
+  tablePitch?: number | null;
+  tableVolume?: number | null;
+  tableFx?: string;
+  tableFxValue?: number;
 }
 
 export interface Pattern {
@@ -56,7 +61,8 @@ const SONG_ROW_COUNT = 32;
 const SONG_TRACK_COUNT = 8;
 
 const createEmptyStep = (): TrackerStepItem => ({
-  note: '---', sampleId: '--', subTickOffset: 0, velocity: 127, instrumentAssignmentId: null,
+  note: '---', sampleId: '--', subTickOffset: 0, velocity: 127,
+  instrumentAssignmentId: null, tablePitch: null, tableVolume: null, tableFx: '', tableFxValue: 0,
 });
 
 class ProjectController {
@@ -120,14 +126,14 @@ class ProjectController {
       ? { ...defaults.sampler.pads, ...state.sampler.pads }
       : defaults.sampler.pads;
 
-    if (!state.tracker || !Array.isArray(state.tracker.patterns)) {
-      state.tracker = defaults.tracker;
-    }
+    if (!state.tracker || !Array.isArray(state.tracker.patterns)) state.tracker = defaults.tracker;
     state.tracker.patterns = state.tracker.patterns.map((pattern) => {
       const existing = Array.isArray(pattern.steps) ? pattern.steps : [];
       return {
         ...pattern,
-        steps: Array.from({ length: PHRASE_STEP_COUNT }, (_, index) => existing[index] ?? createEmptyStep()),
+        steps: Array.from({ length: PHRASE_STEP_COUNT }, (_, index) => ({
+          ...createEmptyStep(), ...(existing[index] ?? {}),
+        })),
       };
     });
 
@@ -213,6 +219,9 @@ class ProjectController {
       ...pattern.steps[stepIndex],
       ...stepData,
       subTickOffset: Math.max(0, Math.min(7, stepData.subTickOffset ?? pattern.steps[stepIndex].subTickOffset ?? 0)),
+      tablePitch: stepData.tablePitch === undefined ? pattern.steps[stepIndex].tablePitch : stepData.tablePitch === null ? null : Math.max(-48, Math.min(48, stepData.tablePitch)),
+      tableVolume: stepData.tableVolume === undefined ? pattern.steps[stepIndex].tableVolume : stepData.tableVolume === null ? null : Math.max(0, Math.min(127, stepData.tableVolume)),
+      tableFxValue: stepData.tableFxValue === undefined ? pattern.steps[stepIndex].tableFxValue : Math.max(0, Math.min(255, stepData.tableFxValue)),
     };
     this.notify();
   }

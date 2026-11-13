@@ -5,6 +5,7 @@ import { TrackerGrid } from '../tracker/TrackerGrid';
 import { trackerEngine, type TrackerEngineState } from '../tracker/trackerEngine';
 import { projectController } from '../project/projectController';
 import { SongArrangement } from './SongArrangement';
+import { PhraseTableEditor } from './PhraseTableEditor';
 
 export type WorkspaceTab = 'workspace' | 'song' | 'table' | 'mixer' | 'sampler';
 export interface SPM8xDashboardProps { initialTab?: WorkspaceTab; activeStep?: number; }
@@ -92,7 +93,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'wo
           </div>
         )}
         {currentTab === 'song' && <SongArrangement revision={projectRevision} />}
-        {currentTab === 'table' && <PlaceholderView title="PHRASE / TABLE EDITOR" detail="Full-screen phrase parameters, macro curves, and automation lanes are staged after the scheduler event pipeline is unified." />}
+        {currentTab === 'table' && <PhraseTableEditor />}
         {currentTab === 'mixer' && <PlaceholderView title="MIXER / MASTER BUS" detail="Track strips and Punch-In FX routing require track-channel audio routing; this view remains a safe shell until that graph exists." />}
       </main>
 
