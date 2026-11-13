@@ -27,10 +27,10 @@ export const HardwareDeck: React.FC<HardwareDeckProps> = ({
   const [shiftState, setShiftState] = useState<'idle' | 'held' | 'latched'>('idle');
   const [activeFx, setActiveFx] = useState<string | null>(null);
 
-  // Timers & Pointer Trackers for zero-lag gesture detection
+  // Timers & Pointer Trackers with explicit generic types for TypeScript safety
   const shiftPressTimeRef = useRef<number>(0);
   const lastShiftTapRef = useRef<number>(0);
-  const activePointersRef = useRef>(new Map()); // buttonId -> pointerId
+  const activePointersRef = useRef>(new Map());
 
   // --- SHIFT Gesture Handlers ---
   const handleShiftPointerDown = useCallback((e: React.PointerEvent) => {
@@ -42,7 +42,6 @@ export const HardwareDeck: React.FC<HardwareDeckProps> = ({
     const timeSinceLastTap = now - lastShiftTapRef.current;
 
     if (shiftState === 'latched') {
-      // Single tap while latched turns off latch mode
       setShiftState('idle');
       onShiftAction?.('tap');
       lastShiftTapRef.current = 0;
@@ -50,14 +49,12 @@ export const HardwareDeck: React.FC<HardwareDeckProps> = ({
     }
 
     if (timeSinceLastTap < 250) {
-      // Double-Tap Detected: Enter Latched FX Mode
       setShiftState('latched');
       onShiftAction?.('latch');
       lastShiftTapRef.current = 0;
       return;
     }
 
-    // Temporary hold start
     if (shiftState !== 'latched') {
       setShiftState('held');
       onShiftAction?.('hold_start');
@@ -74,12 +71,10 @@ export const HardwareDeck: React.FC<HardwareDeckProps> = ({
 
     if (shiftState === 'held') {
       if (holdDuration < 200) {
-        // Quick tap: trigger context view toggle
         setShiftState('idle');
         onShiftAction?.('tap');
         lastShiftTapRef.current = Date.now();
       } else {
-        // Released after hold: clear momentary FX layer
         setShiftState('idle');
         onShiftAction?.('hold_end');
         setActiveFx(null);
@@ -95,14 +90,13 @@ export const HardwareDeck: React.FC<HardwareDeckProps> = ({
     const isShiftActive = shiftState === 'held' || shiftState === 'latched';
 
     if (isShiftActive) {
-      // Map Shift-held layer to Punch-In FX
       let fxType = '';
       if (buttonName === 'UP') fxType = 'CUT';
       else if (buttonName === 'DOWN') fxType = 'RET';
       else if (buttonName === 'LEFT') fxType = 'KILL';
       else if (buttonName === 'RIGHT') fxType = 'DEG';
       else if (buttonName === 'EDT') fxType = 'SDL';
-      else if (buttonName === 'OPT') fxType = 'TRK_MST'; // Toggle Target
+      else if (buttonName === 'OPT') fxType = 'TRK_MST';
 
       if (fxType) {
         setActiveFx(fxType);
@@ -120,7 +114,6 @@ export const HardwareDeck: React.FC<HardwareDeckProps> = ({
     } catch (_) {}
     activePointersRef.current.delete(buttonName);
 
-    // Release any active FX tied to this button
     let fxType = '';
     if (buttonName === 'UP') fxType = 'CUT';
     else if (buttonName === 'DOWN') fxType = 'RET';
@@ -153,7 +146,6 @@ export const HardwareDeck: React.FC<HardwareDeckProps> = ({
 
       {/* 8-Button Tactile Grid */}
       <div className="grid grid-cols-4 gap-2">
-        {/* Row 1: UP / Navigation / FX */}
         <button
           className={`h-12 rounded font-bold text-xs flex flex-col items-center justify-center transition-all ${
             isShiftActive ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/50' : 'bg-neutral-800 text-neutral-200 active:bg-neutral-700'
@@ -193,14 +185,13 @@ export const HardwareDeck: React.FC<HardwareDeckProps> = ({
             isShiftActive ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/50' : 'bg-neutral-800 text-neutral-200 active:bg-neutral-700'
           }`}
           onPointerDown={(e) => handleButtonDown('EDT', e)}
-          onPointerUp={(e) => handleButtonUp('EDT', e)}
-          onPointerCancel={(e) => handleButtonUp('EDT', e)}
+          onPointerUp={(e) => handleButtonDown('EDT', e)}
+          onPointerCancel={(e) => handleButtonDown('EDT', e)}
         >
           <span>{isShiftActive ? 'SDL' : 'EDT'}</span>
           <span className="text-[9px] opacity-60">{isShiftActive ? 'Delay' : 'Insert'}</span>
         </button>
 
-        {/* Row 2: LEFT, RIGHT, SHIFT, PLAY */}
         <button
           className={`h-12 rounded font-bold text-xs flex flex-col items-center justify-center transition-all ${
             isShiftActive ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'bg-neutral-800 text-neutral-200 active:bg-neutral-700'
