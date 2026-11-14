@@ -28,7 +28,7 @@ pan. Peak analysis is batched and restarts after panning settles.
 The white playhead follows the most recently triggered sounding voice of the
 selected pad using the audio clock; it is not compensated for output-device
 latency. The faint vertical lines preview the selected number of grid slices.
-Select 2–32 slices and assign the selected S/E region to empty
+Choose 2–32 slices from CHOP to show the assignment button and assign the selected S/E region to empty
 pads. Up to 16 slices use the current bank; larger counts continue through later banks,
 wrapping from D to A. Change banks to choose a starting destination. The source is
 unchanged; existing pads are never overwritten, and the operation fails if
@@ -37,15 +37,16 @@ have independently editable markers, pitch, and playback mode. Uneven frame
 counts are distributed between adjacent slices without gaps.
 The waveform combines the signed peaks of all channels at screen resolution;
 long samples are analyzed in small batches to keep pad controls responsive.
-Choose DELETE PADS above the grid, tap one or more occupied pads (bank changes
+Choose DEL above the grid, tap one or more occupied pads (bank changes
 are allowed), and confirm deletion. Shared source audio remains available to
 other pads until its last reference is removed.
 Turn on COPY above the pads and drag a loaded pad onto an empty pad in the
 same bank. The new pad shares audio but has independent editing parameters.
 Tap the playback mode button to cycle ONE-SHOT (plays the selected region),
 GATE (plays while held, up to the end of the region), and LOOP (tap to start
-or stop the region). Modes are saved per pad. Switching to GATE stops active
-voices for that pad.
+or stop the region). Modes are saved per pad. Switching to GATE leaves an
+already-playing one-shot sounding; subsequent triggers stop when released.
+Switching away from LOOP stops its active loop.
 On the first tap after a reload, a saved sample may need to decode; a gate
 released before loading completes will not play.
 

@@ -1,6 +1,6 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * SamplerWorkspace.tsx — Full-width sampler view: pad bank beside the sample workbench
+ * SamplerWorkspace.tsx — Sampler view with workbench above the pad bank
  */
 
 import React from 'react';

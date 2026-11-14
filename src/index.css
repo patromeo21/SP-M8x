@@ -69,28 +69,33 @@
 }
 
 .sampler-toolbar {
-  display: grid;
-  grid-template-columns: minmax(52px, 1fr) minmax(56px, 1fr) minmax(40px, .7fr) minmax(36px, .6fr) minmax(67px, 1.1fr);
+  display: flex;
+  align-items: flex-start;
   gap: 3px;
   margin-bottom: 4px;
   min-width: 0;
 }
 .sampler-toolbar > button, .sampler-toolbar > select, .sampler-toolbar .sample-file-label {
-  min-height: 36px;
+  min-height: 30px;
+  padding: 2px 8px;
 }
 .sampler-toolbar .sample-dropzone {
+  flex: 0 0 auto;
   padding: 0;
   border: 0;
   background: transparent;
   gap: 0;
 }
 .sampler-toolbar .sample-file-label {
-  padding: 2px;
+  padding: 2px 8px;
   font-size: 9px;
+}
+.sampler-toolbar .sampler-chop {
+  min-width: 62px;
 }
 
 .sampler-full {
-  grid-template-rows: minmax(0, 45fr) minmax(0, 55fr);
+  grid-template-rows: minmax(0, 42fr) minmax(0, 58fr);
 }
 .sampler-full .sampler-workbench {
   grid-row: 1;
@@ -102,6 +107,8 @@
 }
 .sampler-full-pads {
   grid-row: 2;
+  width: min(100%, 680px);
+  justify-self: center;
 }
 
 .pad-grid, .pad-grid * {

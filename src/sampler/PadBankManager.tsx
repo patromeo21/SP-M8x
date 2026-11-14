@@ -113,7 +113,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
         <button type="button" disabled={!storageReady || deleting} onClick={() => {
           setSelecting(!selecting); setCopying(false); setCopyError(''); setSelected(new Set()); setConfirming(false); setError('');
         }} className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-300 disabled:opacity-40">
-          {selecting ? 'CANCEL' : 'DELETE PADS'}
+          {selecting ? 'CANCEL' : 'DEL'}
         </button>
         {!selecting && <button type="button" disabled={!storageReady} aria-pressed={copying} onClick={() => {
           setCopying(!copying); setCopyError('');

@@ -20,7 +20,7 @@ export interface SamplerWorkbenchProps {
 export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
   pad, onUpdatePad, onPreviewRange, onLoadSample, recordingStatus, onRecord, storageReady, activeBank, onChop,
 }) => {
-  const [count, setCount] = useState(4);
+  const [count, setCount] = useState<number | null>(null);
   const [chopping, setChopping] = useState(false);
   const [chopMessage, setChopMessage] = useState('');
   const [chopError, setChopError] = useState(false);
@@ -40,11 +40,12 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
         className="sampler-record rounded border border-rose-800 bg-rose-950 px-1 text-[9px] font-bold text-rose-300 disabled:opacity-40">
         {recordingStatus.phase === 'recording' ? 'STOP' : recordingStatus.phase === 'requesting' ? 'CANCEL' : recordingStatus.phase === 'processing' ? 'WAIT' : 'REC'}
       </button>
-      <select id={`slice-count-${pad.id}`} aria-label="Number of slices" value={count} onChange={(event) => setCount(Number(event.target.value))}
+      <select id={`slice-count-${pad.id}`} aria-label="Number of slices" value={count ?? ''} onChange={(event) => setCount(event.target.value ? Number(event.target.value) : null)}
         className="sampler-count bg-zinc-900 border border-zinc-700 rounded text-[9px] text-zinc-200">
+        <option value="">CHOP</option>
         {Array.from({ length: 31 }, (_, index) => index + 2).map((number) => <option key={number} value={number}>{number}</option>)}
       </select>
-      <button type="button" disabled={!storageReady || !pad.sampleKey || chopping} onClick={() => {
+      {count !== null && <button type="button" disabled={!storageReady || !pad.sampleKey || chopping} onClick={() => {
         setChopping(true);
         setChopMessage('');
         void onChop(pad.id, activeBank, count).then((ids) => {
@@ -54,11 +55,11 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
           setChopError(true);
           setChopMessage(error instanceof Error ? error.message : 'Could not assign slices.');
         }).finally(() => setChopping(false));
-      }} className="sampler-chop rounded border border-cyan-800 bg-cyan-950 font-bold text-[9px] text-cyan-300 disabled:opacity-40">
+      }} className="sampler-chop rounded border border-cyan-800 bg-cyan-950/30 font-bold text-[9px] text-cyan-300 disabled:opacity-40">
         {chopping ? 'SAVING…' : `TO EMPTY ${activeBank}`}
-      </button>
+      </button>}
     </div>
-    <WaveformEditor pad={pad} onUpdatePad={onUpdatePad} onPreviewRange={onPreviewRange} sliceCount={count} />
+    <WaveformEditor pad={pad} onUpdatePad={onUpdatePad} onPreviewRange={onPreviewRange} sliceCount={count ?? 0} />
     {chopMessage && <div role={chopError ? 'alert' : 'status'} className={`sampler-chop-status mb-2 text-[9px] break-words ${chopError ? 'text-rose-300' : 'text-cyan-300'}`}>{chopMessage}</div>}
     {recordingStatus.phase !== 'idle' || recordingStatus.message ? (
       <div role={recordingStatus.phase === 'error' ? 'alert' : 'status'} className="sampler-record-status text-[9px] text-rose-300">

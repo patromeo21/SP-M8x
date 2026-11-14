@@ -164,7 +164,6 @@ export function usePadBank(): PadBankApi {
     if (next.sampleKey) persist(savePadSettings(storedPad(next)));
     if (patch.playbackMode && patch.playbackMode !== current.playbackMode) {
       stopLoop(padId);
-      if (patch.playbackMode === 'gate') audioEngine.stopVoice(padId);
     }
   }, [persist, putSlot, stopLoop]);
 

@@ -35,11 +35,14 @@ test('restored slices share a single decode and each receives the buffer', async
   let holdAssignment = false;
   let finishAssignment;
   const stopped = [];
+  let nextVoice = 0;
+  const triggered = [];
   const engine = {
     initialize: async () => {},
     decodeAudioData: () => { decodeCount++; return new Promise((resolve) => { releaseDecode = () => resolve(buffer); }); },
     setPadBuffer: (id, value) => registered.set(id, value), clearPadBuffer: (id) => registered.delete(id),
-    triggerPad: () => 'voice', stopVoice: (id) => stopped.push(id), stopAllVoices: () => {},
+    triggerPad: (id, options) => { const voice = `voice${++nextVoice}`; triggered.push({ id, options, voice }); return voice; },
+    stopVoice: (id) => stopped.push(id), stopAllVoices: () => {},
   };
   const storage = {
     readStoredPads: async () => [pad('A1'), pad('A2'), pad('A3')],
@@ -88,7 +91,12 @@ test('restored slices share a single decode and each receives the buffer', async
     await flush();
     api = render();
     api.updatePad('A1', { playbackMode: 'gate' });
-    assert.ok(stopped.includes('A1'));
+    assert.deepEqual(stopped, [], 'changing to gate must not stop existing one-shot voices');
+    const releaseGate = api.triggerPad('A1');
+    await flush();
+    const gateVoice = triggered.at(-1).voice;
+    releaseGate();
+    assert.deepEqual(stopped, [gateVoice], 'only the newly triggered gate voice stops on release');
     api.updatePad('A1', { playbackMode: 'one-shot' });
     assert.equal(api.slots.A1.buffer, buffer);
     assert.equal(api.slots.A2.buffer, buffer);
