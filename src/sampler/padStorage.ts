@@ -159,6 +159,38 @@ export function savePadSettings(pad: StoredPad): Promise<void> {
   return writePad(pad);
 }
 
+export function deletePads(expected: { id: string; sampleKey: string }[]): Promise<void> {
+  return enqueue(async () => {
+    if (!expected.length || new Set(expected.map((pad) => pad.id)).size !== expected.length) {
+      throw new Error('Choose at least one pad to delete.');
+    }
+    const db = await openDatabase();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction([METADATA, AUDIO], 'readwrite');
+      const pads = tx.objectStore(METADATA);
+      const audio = tx.objectStore(AUDIO);
+      let failure: Error | null = null;
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(failure ?? tx.error ?? new Error('Pad deletion was interrupted.'));
+      tx.onerror = () => reject(tx.error ?? new Error('Could not delete pads.'));
+      const request = pads.getAll();
+      request.onsuccess = () => {
+        const existing = request.result as StoredPad[];
+        const selected = new Set(expected.map((pad) => pad.id));
+        if (expected.some((pad) => !existing.some((item) => item.id === pad.id && item.sampleKey === pad.sampleKey))) {
+          failure = new Error('A selected pad changed. No pads were deleted.');
+          tx.abort();
+          return;
+        }
+        const retainedKeys = new Set(existing.filter((pad) => !selected.has(pad.id)).map((pad) => pad.audioKey ?? pad.id));
+        const removedKeys = new Set(existing.filter((pad) => selected.has(pad.id)).map((pad) => pad.audioKey ?? pad.id));
+        for (const pad of expected) pads.delete(pad.id);
+        for (const key of removedKeys) if (!retainedKeys.has(key)) audio.delete(key);
+      };
+    });
+  });
+}
+
 /** Assign all slices in one transaction, converting a legacy pad's audio on demand. */
 export function saveSlices(sourceId: string, sampleKey: string, slices: StoredPad[]): Promise<void> {
   return enqueue(async () => {

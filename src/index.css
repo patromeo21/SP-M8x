@@ -68,6 +68,35 @@
   outline: 2px solid var(--accent-phrase);
 }
 
+.pad-grid, .pad-grid * {
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.pad-delete-dialog {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.8);
+}
+.pad-delete-dialog-panel {
+  display: grid;
+  gap: 0.75rem;
+  width: min(90vw, 24rem);
+  padding: 1rem;
+  background: #12121c;
+  border: 1px solid #881337;
+  border-radius: 0.75rem;
+  color: #e4e4e7;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .slice-handle {
   position: absolute;
   bottom: 0;

@@ -1,22 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { audioEngine } from '../audio/audioEngine';
 import { percentFromFrame, rangeFromPercent, type SampleRange } from './sampleRange';
+import { createWaveformPeakBuilder, type WaveformPeaks } from './waveformPeaks';
 import type { PadBankApi, PadSlot } from './usePadBank';
 
-const WAVE_COLUMNS = 240;
-
-function computePeaks(buffer: AudioBuffer): Float32Array {
-  const peaks = new Float32Array(WAVE_COLUMNS);
-  const channel = buffer.getChannelData(0);
-  for (let col = 0; col < WAVE_COLUMNS; col++) {
-    const from = Math.floor(col * channel.length / WAVE_COLUMNS);
-    const to = Math.floor((col + 1) * channel.length / WAVE_COLUMNS);
-    let max = 0;
-    for (let i = from; i < to; i++) max = Math.max(max, Math.abs(channel[i]));
-    peaks[col] = max;
-  }
-  return peaks;
-}
+const peakCache = new WeakMap<AudioBuffer, { width: number; peaks: WaveformPeaks }>();
 
 interface Props {
   pad: PadSlot;
@@ -34,7 +22,9 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, sliceCount }
   const [pitchPreview, setPitchPreview] = useState<number | null>(null);
   const [precision, setPrecision] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const peaks = useMemo(() => pad.buffer ? computePeaks(pad.buffer) : null, [pad.buffer]);
+  const [canvasSize, setCanvasSize] = useState({ width: 600, height: 96 });
+  const [rendered, setRendered] = useState<{ buffer: AudioBuffer; width: number; peaks: WaveformPeaks } | null>(null);
+  const peaks = rendered?.buffer === pad.buffer && rendered.width === Math.min(canvasSize.width, pad.buffer.length) ? rendered.peaks : null;
   const length = pad.buffer?.length ?? 0;
   const range = preview ?? (length ? rangeFromPercent(pad.startPct, pad.endPct, length) : { start: 0, end: 0 });
 
@@ -49,24 +39,70 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, sliceCount }
 
   useEffect(() => {
     const canvas = canvasRef.current;
+    if (!canvas) return;
+    const resize = () => {
+      const bounds = canvas.getBoundingClientRect();
+      const scale = Math.min(window.devicePixelRatio || 1, 2);
+      const width = Math.max(1, Math.min(2048, Math.round(bounds.width * scale)));
+      const height = Math.max(1, Math.min(512, Math.round(bounds.height * scale)));
+      setCanvasSize((previous) => previous.width === width && previous.height === height ? previous : { width, height });
+    };
+    const observer = new ResizeObserver(resize);
+    observer.observe(canvas);
+    resize();
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const buffer = pad.buffer;
+    if (!buffer) {
+      setRendered(null);
+      return;
+    }
+    const width = Math.min(canvasSize.width, buffer.length);
+    const cached = peakCache.get(buffer);
+    if (cached?.width === width) {
+      setRendered({ buffer, width, peaks: cached.peaks });
+      return;
+    }
+    setRendered(null);
+    const builder = createWaveformPeakBuilder(buffer, width);
+    let timer: number | undefined;
+    const run = () => {
+      if (builder.process(16384)) {
+        peakCache.set(buffer, { width, peaks: builder.peaks });
+        setRendered({ buffer, width, peaks: builder.peaks });
+      } else {
+        timer = window.setTimeout(run, 0);
+      }
+    };
+    timer = window.setTimeout(run, 0);
+    return () => { if (timer !== undefined) window.clearTimeout(timer); };
+  }, [pad.buffer, canvasSize.width]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
     const { width, height } = canvas;
     ctx.clearRect(0, 0, width, height);
     if (!peaks || !length) return;
-    const colWidth = width / WAVE_COLUMNS;
-    for (let col = 0; col < WAVE_COLUMNS; col++) {
-      const frame = col * length / WAVE_COLUMNS;
+    const colWidth = width / peaks.min.length;
+    for (let col = 0; col < peaks.min.length; col++) {
+      const frame = col * length / peaks.min.length;
       ctx.fillStyle = frame >= range.start && frame < range.end ? '#00e6c3' : '#28313d';
-      const h = Math.max(1, peaks[col] * (height - 8));
-      ctx.fillRect(col * colWidth, (height - h) / 2, Math.max(1, colWidth - 0.5), h);
+      const center = height / 2;
+      const scale = (height - 8) / 2;
+      const top = center - peaks.max[col] * scale;
+      const bottom = center - peaks.min[col] * scale;
+      ctx.fillRect(col * colWidth, top, Math.max(1, colWidth), Math.max(1, bottom - top));
     }
     ctx.fillStyle = 'rgba(255,255,255,0.28)';
     for (let index = 1; index < sliceCount; index++) {
       const frame = range.start + Math.floor(index * (range.end - range.start) / sliceCount);
       ctx.fillRect(Math.round(frame * width / length), 0, 1, height);
     }
-  }, [peaks, length, range.start, range.end, sliceCount]);
+  }, [peaks, length, range.start, range.end, sliceCount, canvasSize]);
 
   useEffect(() => {
     const playhead = playheadRef.current;
@@ -163,7 +199,7 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, sliceCount }
 
   return (
     <div ref={containerRef} className="sampler-waveform relative h-24 bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden mb-2 shrink-0">
-      <canvas ref={canvasRef} width={600} height={96} className="absolute inset-0 w-full h-full" />
+      <canvas ref={canvasRef} width={canvasSize.width} height={canvasSize.height} className="absolute inset-0 w-full h-full" />
       <div ref={playheadRef} aria-hidden="true" style={{ display: 'none' }}
         className="absolute top-0 bottom-0 w-px bg-white pointer-events-none z-[1]" />
       {!pad.buffer && (
@@ -172,6 +208,7 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, sliceCount }
           <span className="text-[9px] text-zinc-600">{pad.sampleKey ? 'TAP PAD TO LOAD' : 'WAVEFORM / SLICING GRID'}</span>
         </div>
       )}
+      {pad.buffer && !peaks && <span className="absolute inset-0 flex items-center justify-center text-[9px] text-zinc-500 pointer-events-none">DRAWING WAVEFORM</span>}
       {pad.buffer && <>
         <div className="absolute top-0 inset-x-1 flex items-center justify-between gap-2 text-[9px] pointer-events-none">
           <span className="min-w-0 truncate text-cyan-300">{pad.name}</span>

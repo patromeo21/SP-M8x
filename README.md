@@ -29,6 +29,11 @@ unchanged; existing pads are never overwritten, and the operation fails if
 there are not enough empty pads or frames. Slices share their source audio but
 have independently editable markers, pitch, and playback mode. Uneven frame
 counts are distributed between adjacent slices without gaps.
+The waveform combines the signed peaks of all channels at screen resolution;
+long samples are analyzed in small batches to keep pad controls responsive.
+Choose DELETE PADS above the grid, tap one or more occupied pads (bank changes
+are allowed), and confirm deletion. Shared source audio remains available to
+other pads until its last reference is removed.
 Tap the playback mode button to cycle ONE-SHOT (plays the selected region),
 GATE (plays while held, up to the end of the region), and LOOP (tap to start
 or stop the region). Modes apply to both pads and AUDITION and are saved per pad.

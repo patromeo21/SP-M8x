@@ -29,18 +29,25 @@ test('restored slices share a single decode and each receives the buffer', async
   const buffer = { length: 100, sampleRate: 100, duration: 1 };
   const registered = new Map();
   let failAssignment = false;
+  let failDeletion = false;
+  let holdDeletion = false;
+  let finishDeletion;
   let holdAssignment = false;
   let finishAssignment;
   const engine = {
     initialize: async () => {},
     decodeAudioData: () => { decodeCount++; return new Promise((resolve) => { releaseDecode = () => resolve(buffer); }); },
-    setPadBuffer: (id, value) => registered.set(id, value),
+    setPadBuffer: (id, value) => registered.set(id, value), clearPadBuffer: (id) => registered.delete(id),
     triggerPad: () => 'voice', stopVoice: () => {}, stopAllVoices: () => {},
   };
   const storage = {
     readStoredPads: async () => [pad('A1'), pad('A2'), pad('A3')],
     readStoredAudio: async () => new Blob(['audio']),
     savePadSettings: async () => {}, saveSample: async () => {},
+    deletePads: async () => {
+      if (failDeletion) throw new Error('Deletion failed');
+      if (holdDeletion) await new Promise((resolve) => { finishDeletion = resolve; });
+    },
     saveSlices: async () => {
       if (failAssignment) throw new Error('Storage full');
       if (holdAssignment) await new Promise((resolve) => { finishAssignment = resolve; });
@@ -59,7 +66,7 @@ test('restored slices share a single decode and each receives the buffer', async
               ? 'export const {useState,useRef,useCallback,useEffect} = globalThis.__padTest.react;'
               : args.path.endsWith('audioEngine')
                 ? 'export const audioEngine = globalThis.__padTest.engine;'
-                : 'export const {readStoredPads,readStoredAudio,savePadSettings,saveSample,saveSlices} = globalThis.__padTest.storage;',
+                : 'export const {readStoredPads,readStoredAudio,savePadSettings,saveSample,saveSlices,deletePads} = globalThis.__padTest.storage;',
             loader: 'js',
           }));
         },
@@ -112,6 +119,22 @@ test('restored slices share a single decode and each receives the buffer', async
     finishAssignment();
     await assignment;
     assert.equal(render().slots.B1.sampleKey, 'shared');
+    failDeletion = true;
+    await assert.rejects(render().deletePads(['A4', 'A5']), /Deletion failed/);
+    assert.equal(render().slots.A4.sampleKey, 'shared');
+    assert.equal(registered.get('A4'), buffer);
+    failDeletion = false;
+    holdDeletion = true;
+    const deletion = render().deletePads(['A4', 'A5']);
+    await flush();
+    render().loadSample('A4', buffer, 'conflicting', new Blob(['conflict']));
+    finishDeletion();
+    await deletion;
+    assert.equal(render().slots.A4.sampleKey, null);
+    assert.equal(render().slots.A5.sampleKey, null);
+    assert.equal(render().slots.A1.sampleKey, 'shared');
+    assert.equal(registered.has('A4'), false);
+    assert.equal(registered.get('A1'), buffer);
   } finally {
     delete globalThis.__padTest;
   }

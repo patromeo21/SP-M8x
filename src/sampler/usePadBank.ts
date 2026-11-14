@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { audioEngine } from '../audio/audioEngine';
 import type { BankId } from '../project/projectController';
-import { readStoredAudio, readStoredPads, savePadSettings, saveSample, saveSlices, type PlaybackMode, type StoredPad } from './padStorage';
+import { deletePads, readStoredAudio, readStoredPads, savePadSettings, saveSample, saveSlices, type PlaybackMode, type StoredPad } from './padStorage';
 import { percentFromFrame, rangeFromPercent } from './sampleRange';
 import { gridSliceRanges } from './gridSlices';
 
@@ -37,6 +37,7 @@ export interface PadBankApi {
   loadSample: (padId: string, buffer: AudioBuffer, name: string, audio: Blob) => void;
   updatePad: (padId: string, patch: PadSlotPatch) => void;
   chopToBank: (padId: string, bank: BankId, count: number) => Promise<string[]>;
+  deletePads: (padIds: string[]) => Promise<void>;
   triggerPad: (padId: string) => () => void;
   stopAll: () => void;
   storageReady: boolean;
@@ -47,12 +48,16 @@ export interface PadBankApi {
 export const formatPadLabel = (padId: string): string =>
   `${padId[0]}${padId.slice(1).padStart(2, '0')}`;
 
+const emptySlot = (id: string): PadSlot => ({
+  id, name: 'EMPTY', buffer: null, sampleKey: null, loading: false, startPct: 0, endPct: 100, pitch: 0, playbackMode: 'one-shot',
+});
+
 const createSlots = (): Record<string, PadSlot> => {
   const slots: Record<string, PadSlot> = {};
   for (const bank of BANKS) {
     for (let i = 1; i <= PADS_PER_BANK; i++) {
       const id = `${bank}${i}`;
-      slots[id] = { id, name: 'EMPTY', buffer: null, sampleKey: null, loading: false, startPct: 0, endPct: 100, pitch: 0, playbackMode: 'one-shot' };
+      slots[id] = emptySlot(id);
     }
   }
   return slots;
@@ -248,13 +253,50 @@ export function usePadBank(): PadBankApi {
     }
   }, [ensureBuffer, storageReady]);
 
+  const removePads = useCallback(async (padIds: string[]) => {
+    if (!storageReady || failedWrite.current) throw new Error('Sample storage is unavailable or has unsaved changes.');
+    if (!padIds.length || new Set(padIds).size !== padIds.length) throw new Error('Choose pads to delete.');
+    const expected = padIds.map((id) => {
+      const slot = slotsRef.current[id];
+      if (!slot?.sampleKey || reservedPads.current.has(id)) throw new Error(`Pad ${id} is empty or busy.`);
+      return { id, sampleKey: slot.sampleKey };
+    });
+    for (const { id } of expected) reservedPads.current.add(id);
+    pendingWrites.current++;
+    setStorageStatus('DELETING');
+    try {
+      await deletePads(expected);
+      const next = { ...slotsRef.current };
+      for (const { id } of expected) {
+        audioEngine.stopVoice(id);
+        loopVoices.current.delete(id);
+        audioEngine.clearPadBuffer(id);
+        next[id] = emptySlot(id);
+      }
+      slotsRef.current = next;
+      setSlots(next);
+      if (!failedWrite.current) {
+        setStorageError(false);
+        setStorageStatus(pendingWrites.current > 1 ? 'SAVING' : 'PADS DELETED');
+      }
+    } catch (error) {
+      console.error('[usePadBank] Could not delete pads:', error);
+      setStorageError(true);
+      setStorageStatus('DELETE FAILED — NO PADS CHANGED');
+      throw error;
+    } finally {
+      pendingWrites.current--;
+      for (const { id } of expected) reservedPads.current.delete(id);
+    }
+  }, [storageReady]);
+
   const triggerPad = useCallback((padId: string) => {
     setSelectedPadId(padId);
     const noop = () => {};
     if (!storageReady) return noop;
     const slot = slotsRef.current[padId];
     const sampleKey = slot?.sampleKey;
-    if (!sampleKey) return noop;
+    if (!sampleKey || reservedPads.current.has(padId)) return noop;
     const mode = slot.playbackMode;
     if (mode === 'loop' && stopLoop(padId)) return noop;
     const generation = playbackGeneration.current;
@@ -262,12 +304,12 @@ export function usePadBank(): PadBankApi {
     let gateVoice: string | null = null;
 
     void audioEngine.initialize().then(() => {
-      if (generation !== playbackGeneration.current || (mode === 'gate' && released) ||
+      if (generation !== playbackGeneration.current || reservedPads.current.has(padId) || (mode === 'gate' && released) ||
           slotsRef.current[padId].sampleKey !== sampleKey) return null;
       return slot.buffer ?? ensureBuffer(padId, sampleKey);
     }).then((buffer) => {
       const current = slotsRef.current[padId];
-      if (!buffer || generation !== playbackGeneration.current || (mode === 'gate' && released) ||
+      if (!buffer || generation !== playbackGeneration.current || reservedPads.current.has(padId) || (mode === 'gate' && released) ||
           current.sampleKey !== sampleKey || current.playbackMode !== mode) return;
       if (mode === 'loop' && stopLoop(padId)) return;
       const { start, end } = rangeFromPercent(current.startPct, current.endPct, buffer.length);
@@ -280,6 +322,7 @@ export function usePadBank(): PadBankApi {
       if (mode === 'loop' && voiceId) loopVoices.current.set(padId, voiceId);
       if (mode === 'gate') gateVoice = voiceId;
     }).catch((error: unknown) => {
+      if (slotsRef.current[padId]?.sampleKey !== sampleKey) return;
       console.error('[usePadBank] Could not play pad:', error);
       setStorageError(true);
       if (!failedWrite.current) setStorageStatus(`COULD NOT PLAY ${padId} — CHECK SAMPLE`);
@@ -311,6 +354,7 @@ export function usePadBank(): PadBankApi {
     loadSample,
     updatePad,
     chopToBank,
+    deletePads: removePads,
     triggerPad,
     stopAll,
     storageReady,

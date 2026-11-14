@@ -8,7 +8,7 @@ import { PADS_PER_BANK, formatPadLabel, type PadBankApi } from './usePadBank';
 
 export type PadBankManagerProps = Pick<
   PadBankApi,
-  'slots' | 'activeBank' | 'selectedPadId' | 'triggerPad'
+  'slots' | 'activeBank' | 'selectedPadId' | 'triggerPad' | 'deletePads' | 'storageReady'
 >;
 
 export const PadBankManager: React.FC<PadBankManagerProps> = ({
@@ -16,10 +16,18 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
   activeBank,
   selectedPadId,
   triggerPad,
+  deletePads,
+  storageReady,
 }) => {
   // Each finger is tracked by pointerId so simultaneous touches light and release independently.
   const activePointers = useRef(new Map<number, { padId: string; release: () => void }>());
+  const gridRef = useRef<HTMLDivElement>(null);
   const [pressedPads, setPressedPads] = useState<ReadonlySet<string>>(new Set());
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState('');
 
   const syncPressed = () => setPressedPads(new Set(Array.from(activePointers.current.values(), ({ padId }) => padId)));
 
@@ -32,10 +40,37 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
     };
   }, [activeBank]);
 
+  useEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+    const preventDrag = (event: Event) => { if (event.cancelable) event.preventDefault(); };
+    grid.addEventListener('touchmove', preventDrag, { passive: false });
+    grid.addEventListener('dragstart', preventDrag);
+    grid.addEventListener('selectstart', preventDrag);
+    return () => {
+      grid.removeEventListener('touchmove', preventDrag);
+      grid.removeEventListener('dragstart', preventDrag);
+      grid.removeEventListener('selectstart', preventDrag);
+    };
+  }, []);
+
+  const toggleSelection = (padId: string) => {
+    if (!slots[padId].sampleKey || deleting || confirming) return;
+    setSelected((previous) => {
+      const next = new Set(previous);
+      if (next.has(padId)) next.delete(padId); else next.add(padId);
+      return next;
+    });
+  };
+
   const handlePointerDown = (event: React.PointerEvent<HTMLButtonElement>, padId: string) => {
     if (activePointers.current.has(event.pointerId)) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
+    if (selecting) {
+      toggleSelection(padId);
+      return;
+    }
     activePointers.current.set(event.pointerId, { padId, release: triggerPad(padId) });
     syncPressed();
   };
@@ -49,18 +84,56 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
   };
 
   return (
-    <div className="grid grid-cols-4 gap-1.5 flex-1">
+    <div className="flex flex-col flex-1 min-h-0 gap-1">
+      <div className="flex items-center justify-between gap-1 text-[9px]">
+        <button type="button" disabled={!storageReady || deleting} onClick={() => {
+          setSelecting(!selecting); setSelected(new Set()); setConfirming(false); setError('');
+        }} className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-300 disabled:opacity-40">
+          {selecting ? 'CANCEL' : 'DELETE PADS'}
+        </button>
+        {selecting && <button type="button" disabled={!selected.size || deleting} onClick={() => setConfirming(true)}
+          className="rounded border border-rose-800 bg-rose-950 px-2 py-1 text-rose-300 disabled:opacity-40">
+          DELETE {selected.size}
+        </button>}
+      </div>
+      {confirming && <div role="dialog" aria-label="Confirm pad deletion" className="pad-delete-dialog">
+        <div className="pad-delete-dialog-panel">
+          <strong>DELETE {selected.size} PAD{selected.size === 1 ? '' : 'S'}?</strong>
+          <span>{Array.from(selected).map(formatPadLabel).join(', ')}</span>
+          <span>This cannot be undone.</span>
+          {error && <span role="alert" className="text-rose-300">{error}</span>}
+          <div className="flex justify-end gap-2">
+            <button type="button" disabled={deleting} onClick={() => { setConfirming(false); setError(''); }}
+              className="rounded border border-zinc-700 px-3 py-2">CANCEL</button>
+            <button type="button" disabled={deleting} onClick={() => {
+              setDeleting(true); setError('');
+              void deletePads(Array.from(selected)).then(() => {
+                setSelected(new Set()); setConfirming(false); setSelecting(false);
+              }).catch((failure: unknown) => {
+                setError(failure instanceof Error ? failure.message : 'Could not delete pads.');
+              }).finally(() => setDeleting(false));
+            }} className="rounded border border-rose-700 bg-rose-950 px-3 py-2 text-rose-200">
+              {deleting ? 'DELETING' : 'CONFIRM DELETE'}
+            </button>
+          </div>
+        </div>
+      </div>}
+      <div ref={gridRef} className="pad-grid grid grid-cols-4 gap-1.5 flex-1 min-h-0">
       {Array.from({ length: PADS_PER_BANK }, (_, i) => {
         const padId = `${activeBank}${i + 1}`;
         const slot = slots[padId];
         const hasSample = slot.sampleKey !== null;
-        const isSelected = padId === selectedPadId;
+        const isSelected = selecting ? selected.has(padId) : padId === selectedPadId;
         const isPressed = pressedPads.has(padId);
 
         return (
           <button
             key={padId}
             type="button"
+            aria-pressed={selecting ? isSelected : undefined}
+            onClick={(event) => {
+              if (selecting && event.detail === 0) toggleSelection(padId);
+            }}
             onPointerDown={(event) => handlePointerDown(event, padId)}
             onPointerUp={handlePointerEnd}
             onPointerCancel={handlePointerEnd}
@@ -78,7 +151,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
               <span className={isPressed ? 'text-zinc-900' : 'text-zinc-500'}>{formatPadLabel(padId)}</span>
               {hasSample && (
                 <span className={`text-[8px] ${isPressed ? 'text-zinc-900' : 'text-[var(--accent-phrase)]'}`}>
-                  {slot.playbackMode === 'one-shot' ? 'ONE' : slot.playbackMode.toUpperCase()}
+                  {selecting && isSelected ? 'SELECTED' : slot.playbackMode === 'one-shot' ? 'ONE' : slot.playbackMode.toUpperCase()}
                 </span>
               )}
             </span>
@@ -92,6 +165,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
           </button>
         );
       })}
+      </div>
     </div>
   );
 };

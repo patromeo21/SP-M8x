@@ -7,6 +7,7 @@ class DatabaseMock {
   stores = new Map();
   failAudioWrite = false;
   failPadId = null;
+  failDeleteKey = null;
   createObjectStore(name) { this.stores.set(name, new Map()); }
   transaction(names) {
     const db = this;
@@ -50,7 +51,10 @@ class DatabaseMock {
             if (name === 'pads' && value.id === db.failPadId) throw new Error('Storage full');
             store.set(key ?? value.id, value);
           }),
-          delete: (key) => request(() => store.delete(key)),
+          delete: (key) => request(() => {
+            if (db.failDeleteKey === key) throw new Error('Deletion failed');
+            return store.delete(key);
+          }),
         };
       },
     };
@@ -148,6 +152,20 @@ test('legacy slices migrate atomically, protect occupied pads, and retain shared
     assert.equal(await (await storage.readStoredAudio('A3', 'legacy')).text(), 'legacy audio');
     await storage.saveSample({ ...slice('A3', 50, 100), sampleKey: 'r3' }, new Blob(['r3']));
     assert.equal(db.stores.get('audio').has('source:legacy'), false);
+    await storage.saveSlices('A1', 'replacement', [
+      { ...source, id: 'B1', sampleKey: 'replacement' }, { ...source, id: 'B2', sampleKey: 'replacement' },
+    ]);
+    await assert.rejects(storage.deletePads([{ id: 'B1', sampleKey: 'wrong' }]), /changed/);
+    db.failDeleteKey = 'B2';
+    await assert.rejects(storage.deletePads([{ id: 'B1', sampleKey: 'replacement' }, { id: 'B2', sampleKey: 'replacement' }]), /Deletion failed/);
+    assert.ok(db.stores.get('pads').has('B1'));
+    assert.ok(db.stores.get('pads').has('B2'));
+    db.failDeleteKey = null;
+    await storage.deletePads([{ id: 'A1', sampleKey: 'replacement' }, { id: 'B1', sampleKey: 'replacement' }]);
+    assert.equal(await (await storage.readStoredAudio('B2', 'replacement')).text(), 'new audio');
+    assert.ok(db.stores.get('audio').has('source:replacement'));
+    await storage.deletePads([{ id: 'B2', sampleKey: 'replacement' }]);
+    assert.equal(db.stores.get('audio').has('source:replacement'), false);
   } finally {
     delete globalThis.indexedDB;
   }

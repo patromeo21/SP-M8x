@@ -101,6 +101,10 @@ class AudioEngine {
     audioCache.set(normalizePadKey(padId), buffer);
   }
 
+  public clearPadBuffer(padId: string | number): void {
+    audioCache.remove(normalizePadKey(padId));
+  }
+
   public getPadBuffer(padId: string | number): AudioBuffer | undefined {
     return audioCache.get(normalizePadKey(padId));
   }

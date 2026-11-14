@@ -39,6 +39,8 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({ padBank, rec
         activeBank={padBank.activeBank}
         selectedPadId={padBank.selectedPadId}
         triggerPad={padBank.triggerPad}
+        deletePads={padBank.deletePads}
+        storageReady={padBank.storageReady}
       />
     </div>
     <SamplerWorkbench

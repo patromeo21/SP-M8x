@@ -152,6 +152,8 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
                       activeBank={activeBank}
                       selectedPadId={padBank.selectedPadId}
                       triggerPad={padBank.triggerPad}
+                      deletePads={padBank.deletePads}
+                      storageReady={padBank.storageReady}
                     />
                   </div>
                 ) : (
