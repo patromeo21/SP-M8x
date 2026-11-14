@@ -94,6 +94,43 @@
   min-width: 62px;
 }
 
+.phrase-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.phrase-workspace > section {
+  min-width: 0;
+  overflow: auto;
+}
+.phrase-workspace > section button[aria-label^="Phrase step "] {
+  font-size: 9px;
+}
+.sampler-compact {
+  grid-template-rows: minmax(0, 34fr) minmax(0, 66fr);
+  min-width: 0;
+}
+.sampler-compact .sampler-workbench {
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.sampler-compact .sampler-waveform {
+  flex: 1 1 auto;
+  min-height: 4rem;
+}
+.sampler-compact .sampler-full-pads {
+  grid-row: 2;
+  width: 100%;
+  min-width: 0;
+}
+.sampler-compact .sampler-toolbar {
+  flex-wrap: wrap;
+}
+
 .sampler-full {
   grid-template-rows: minmax(0, 42fr) minmax(0, 58fr);
 }
@@ -117,6 +154,14 @@
   }
   .sampler-full-pads {
     width: min(100%, 900px);
+  }
+}
+
+@media (max-width: 767px) {
+  .phrase-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(20rem, 1fr) minmax(28rem, 1fr);
+    overflow-y: auto;
   }
 }
 

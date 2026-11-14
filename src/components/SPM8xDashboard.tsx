@@ -109,8 +109,13 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
         </nav>
       </header>
       <main className="flex-1 flex overflow-hidden p-3 gap-3 bg-[var(--bg-shell-deep)]">
-        {currentTab === 'phrase' || currentTab === 'table'
-          ? <PhraseTableEditor slots={padBank.slots} activeStep={playing ? playhead : activeStep} transportBusy={playing || starting} mode={currentTab} />
+        {currentTab === 'phrase'
+          ? <div className="phrase-workspace">
+              <PhraseTableEditor slots={padBank.slots} activeStep={playing ? playhead : activeStep} transportBusy={playing || starting} mode="phrase" />
+              <SamplerWorkspace padBank={padBank} recorder={recorder} triggerPad={triggerPad} compact />
+            </div>
+          : currentTab === 'table'
+            ? <PhraseTableEditor slots={padBank.slots} activeStep={playing ? playhead : activeStep} transportBusy={playing || starting} mode="table" />
           : currentTab === 'sampler'
             ? <SamplerWorkspace padBank={padBank} recorder={recorder} triggerPad={triggerPad} />
             : <section className="flex-1 p-4 bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl">

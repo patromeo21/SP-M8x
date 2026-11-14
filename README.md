@@ -59,7 +59,8 @@ or choose EMPTY in its pad selector.
 To clear several notes, hold DEL/OP with one finger and tap occupied steps
 with another. Release DEL/OP, then choose DELETE or CANCEL. The operation
 clears notes, pad assignments and timing, but preserves effect commands.
-In PHRASE there are two pages of 16 steps. Select a step to
+In PHRASE the waveform editor and performance pads sit beside the phrase grid.
+There are two pages of 16 steps. Select a step to
 assign a loaded pad, note, velocity, microtiming and an optional table. Stop
 transport before changing pad assignments or the active phrase. NEW PHRASE
 creates another 32-step phrase; song arrangement is not implemented yet.

@@ -13,10 +13,11 @@ export interface SamplerWorkspaceProps {
   padBank: PadBankApi;
   recorder: ReturnType<typeof useInputRecorder>;
   triggerPad?: PadBankApi['triggerPad'];
+  compact?: boolean;
 }
 
-export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({ padBank, recorder, triggerPad = padBank.triggerPad }) => (
-  <div className="sampler-full flex-1 grid gap-3 overflow-hidden min-h-0">
+export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({ padBank, recorder, triggerPad = padBank.triggerPad, compact = false }) => (
+  <div className={`${compact ? 'sampler-compact' : 'sampler-full'} flex-1 grid gap-3 overflow-hidden min-h-0`}>
     <div className="sampler-full-pads bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col gap-2 min-h-0">
       <div className="flex items-center justify-between border-b border-[var(--border-grid)] pb-2">
         <span className="text-[10px] font-bold text-[var(--accent-phrase)] tracking-wider">PAD BANKS</span>
