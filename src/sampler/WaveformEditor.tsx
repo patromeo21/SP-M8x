@@ -134,7 +134,12 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad }) => {
         </div>
       )}
       {pad.buffer && <>
-        <span className="absolute top-0 left-1 text-[9px] text-cyan-300 pointer-events-none">{pad.name}</span>
+        <div className="absolute top-0 inset-x-1 flex items-center justify-between gap-2 text-[9px] pointer-events-none">
+          <span className="min-w-0 truncate text-cyan-300">{pad.name}</span>
+          <span className="shrink-0 text-zinc-400" aria-label="Decoded audio format">
+            {pad.buffer.sampleRate} Hz · {pad.buffer.numberOfChannels === 1 ? 'MONO' : pad.buffer.numberOfChannels === 2 ? 'STEREO' : `${pad.buffer.numberOfChannels} CH`} · {pad.buffer.duration.toFixed(2)}s
+          </span>
+        </div>
         {marker('start')}
         {marker('end')}
         <button type="button" className="wave-precision" onClick={() => { setPrecision(!precision); setError(null); }}>

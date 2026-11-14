@@ -16,7 +16,10 @@ Browser storage can be cleared or reclaimed, so it is not a permanent backup.
 Watch the footer for save errors and avoid closing the page while it says SAVING.
 Drag the S and E waveform markers to trim; hold P and slide vertically to adjust
 pitch in semitones. FRAMES opens precise sample-frame fields (END is exclusive).
-Audition the selected slice after editing.
+The waveform displays the decoded buffer's sample rate, channel count, and
+duration. The browser may resample imported audio, so the displayed rate is not
+necessarily the original file's sample rate. Audition the selected slice after
+editing.
 
 Run `npm test` for the audio-engine checks and `npm run build` for the production
 TypeScript and Vite build.
