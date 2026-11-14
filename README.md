@@ -20,6 +20,11 @@ The waveform displays the decoded buffer's sample rate, channel count, and
 duration. The browser may resample imported audio, so the displayed rate is not
 necessarily the original file's sample rate. Audition the selected slice after
 editing.
+Tap the playback mode button to cycle ONE-SHOT (plays the selected region),
+GATE (plays while held, up to the end of the region), and LOOP (tap to start
+or stop the region). Modes apply to both pads and AUDITION and are saved per pad.
+On the first tap after a reload, a saved sample may need to decode; a gate
+released before loading completes will not play.
 
 Run `npm test` for the audio-engine checks and `npm run build` for the production
 TypeScript and Vite build.

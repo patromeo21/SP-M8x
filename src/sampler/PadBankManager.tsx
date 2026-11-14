@@ -3,7 +3,7 @@
  * PadBankManager.tsx — 4x4 live pad grid for the active bank (A-D)
  */
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { PADS_PER_BANK, formatPadLabel, type PadBankApi } from './usePadBank';
 
 export type PadBankManagerProps = Pick<
@@ -18,19 +18,34 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
   triggerPad,
 }) => {
   // Each finger is tracked by pointerId so simultaneous touches light and release independently.
-  const activePointers = useRef(new Map<number, string>());
+  const activePointers = useRef(new Map<number, { padId: string; release: () => void }>());
   const [pressedPads, setPressedPads] = useState<ReadonlySet<string>>(new Set());
 
-  const syncPressed = () => setPressedPads(new Set(activePointers.current.values()));
+  const syncPressed = () => setPressedPads(new Set(Array.from(activePointers.current.values(), ({ padId }) => padId)));
+
+  useEffect(() => {
+    const pointers = activePointers.current;
+    setPressedPads(new Set());
+    return () => {
+      for (const { release } of pointers.values()) release();
+      pointers.clear();
+    };
+  }, [activeBank]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLButtonElement>, padId: string) => {
-    activePointers.current.set(event.pointerId, padId);
+    if (activePointers.current.has(event.pointerId)) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    activePointers.current.set(event.pointerId, { padId, release: triggerPad(padId) });
     syncPressed();
-    triggerPad(padId);
   };
 
   const handlePointerEnd = (event: React.PointerEvent<HTMLButtonElement>) => {
-    if (activePointers.current.delete(event.pointerId)) syncPressed();
+    const active = activePointers.current.get(event.pointerId);
+    if (!active) return;
+    active.release();
+    activePointers.current.delete(event.pointerId);
+    syncPressed();
   };
 
   return (
@@ -49,7 +64,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
             onPointerDown={(event) => handlePointerDown(event, padId)}
             onPointerUp={handlePointerEnd}
             onPointerCancel={handlePointerEnd}
-            onPointerLeave={handlePointerEnd}
+            onLostPointerCapture={handlePointerEnd}
             onContextMenu={(event) => event.preventDefault()}
             className={`pad-trigger touch-none select-none min-h-[44px] border rounded p-1.5 flex flex-col justify-between text-left text-[9px] transition-all duration-75 ${
               isPressed
@@ -63,7 +78,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
               <span className={isPressed ? 'text-zinc-900' : 'text-zinc-500'}>{formatPadLabel(padId)}</span>
               {hasSample && (
                 <span className={`text-[8px] ${isPressed ? 'text-zinc-900' : 'text-[var(--accent-phrase)]'}`}>
-                  {slot.loop ? 'LOOP' : 'ONE'}
+                  {slot.playbackMode === 'one-shot' ? 'ONE' : slot.playbackMode.toUpperCase()}
                 </span>
               )}
             </span>

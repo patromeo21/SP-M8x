@@ -1,3 +1,5 @@
+export type PlaybackMode = 'one-shot' | 'gate' | 'loop';
+
 export interface StoredPad {
   id: string;
   sampleKey: string;
@@ -6,6 +8,7 @@ export interface StoredPad {
   endPct: number;
   pitch: number;
   loop: boolean;
+  playbackMode?: PlaybackMode;
 }
 
 const DATABASE = 'sp-m8x-samples';
@@ -58,7 +61,9 @@ function validPad(value: unknown): value is StoredPad {
     typeof record.startPct === 'number' && Number.isFinite(record.startPct) &&
     typeof record.endPct === 'number' && Number.isFinite(record.endPct) &&
     typeof record.pitch === 'number' && Number.isFinite(record.pitch) &&
-    typeof record.loop === 'boolean';
+    typeof record.loop === 'boolean' &&
+    (record.playbackMode === undefined || record.playbackMode === 'one-shot' ||
+      record.playbackMode === 'gate' || record.playbackMode === 'loop');
 }
 
 export async function readStoredPads(): Promise<StoredPad[]> {

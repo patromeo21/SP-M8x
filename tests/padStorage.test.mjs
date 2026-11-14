@@ -79,6 +79,11 @@ test('samples and settings restore atomically and failed replacements preserve o
     await storage.savePadSettings({ ...pad, pitch: 4, loop: true });
     assert.deepEqual(await storage.readStoredPads(), [{ ...pad, pitch: 4, loop: true }]);
     assert.equal(await (await storage.readStoredAudio('B8', 'old')).text(), 'original audio');
+    await storage.savePadSettings({ ...pad, playbackMode: 'gate' });
+    assert.equal((await storage.readStoredPads())[0].playbackMode, 'gate');
+    await storage.savePadSettings({ ...pad, playbackMode: 'invalid' });
+    await assert.rejects(storage.readStoredPads(), /metadata is invalid/);
+    await storage.savePadSettings(pad);
 
     db.failAudioWrite = true;
     const replacement = { ...pad, sampleKey: 'new', name: 'replacement' };

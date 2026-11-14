@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { audioEngine } from '../audio/audioEngine';
 import type { BankId } from '../project/projectController';
-import { readStoredAudio, readStoredPads, savePadSettings, saveSample, type StoredPad } from './padStorage';
+import { readStoredAudio, readStoredPads, savePadSettings, saveSample, type PlaybackMode, type StoredPad } from './padStorage';
 import { percentFromFrame, rangeFromPercent } from './sampleRange';
 
 export const BANKS: readonly BankId[] = ['A', 'B', 'C', 'D'];
@@ -21,10 +21,10 @@ export interface PadSlot {
   startPct: number; // 0-100
   endPct: number; // 0-100
   pitch: number; // semitones
-  loop: boolean;
+  playbackMode: PlaybackMode;
 }
 
-export type PadSlotPatch = Partial<Pick<PadSlot, 'startPct' | 'endPct' | 'pitch' | 'loop'>>;
+export type PadSlotPatch = Partial<Pick<PadSlot, 'startPct' | 'endPct' | 'pitch' | 'playbackMode'>>;
 
 export interface PadBankApi {
   slots: Record<string, PadSlot>;
@@ -35,7 +35,7 @@ export interface PadBankApi {
   selectPad: (padId: string) => void;
   loadSample: (padId: string, buffer: AudioBuffer, name: string, audio: Blob) => void;
   updatePad: (padId: string, patch: PadSlotPatch) => void;
-  triggerPad: (padId: string) => void;
+  triggerPad: (padId: string) => () => void;
   stopAll: () => void;
   storageReady: boolean;
   storageStatus: string;
@@ -50,7 +50,7 @@ const createSlots = (): Record<string, PadSlot> => {
   for (const bank of BANKS) {
     for (let i = 1; i <= PADS_PER_BANK; i++) {
       const id = `${bank}${i}`;
-      slots[id] = { id, name: 'EMPTY', buffer: null, sampleKey: null, loading: false, startPct: 0, endPct: 100, pitch: 0, loop: false };
+      slots[id] = { id, name: 'EMPTY', buffer: null, sampleKey: null, loading: false, startPct: 0, endPct: 100, pitch: 0, playbackMode: 'one-shot' };
     }
   }
   return slots;
@@ -60,7 +60,7 @@ function storedPad(slot: PadSlot): StoredPad {
   if (!slot.sampleKey) throw new Error(`Pad ${slot.id} has no sample.`);
   return {
     id: slot.id, sampleKey: slot.sampleKey, name: slot.name, startPct: slot.startPct,
-    endPct: slot.endPct, pitch: slot.pitch, loop: slot.loop,
+    endPct: slot.endPct, pitch: slot.pitch, loop: slot.playbackMode === 'loop', playbackMode: slot.playbackMode,
   };
 }
 
@@ -77,6 +77,7 @@ export function usePadBank(): PadBankApi {
   const pendingLoads = useRef(new Map<string, Promise<AudioBuffer>>());
   const pendingWrites = useRef(0);
   const failedWrite = useRef(false);
+  const playbackGeneration = useRef(0);
 
   const putSlot = useCallback((slot: PadSlot) => {
     slotsRef.current = { ...slotsRef.current, [slot.id]: slot };
@@ -107,7 +108,7 @@ export function usePadBank(): PadBankApi {
           throw new Error(`Saved slice for ${pad.id} is invalid.`);
         }
         restored[pad.id] = {
-          ...restored[pad.id], ...pad, buffer: null, loading: false,
+          ...restored[pad.id], ...pad, playbackMode: pad.playbackMode ?? (pad.loop ? 'loop' : 'one-shot'), buffer: null, loading: false,
         };
       }
       slotsRef.current = restored;
@@ -144,7 +145,7 @@ export function usePadBank(): PadBankApi {
     }
     putSlot(next);
     if (next.sampleKey) persist(savePadSettings(storedPad(next)));
-    if (patch.loop === false) stopLoop(padId);
+    if (patch.playbackMode && patch.playbackMode !== 'loop') stopLoop(padId);
   }, [persist, putSlot, stopLoop]);
 
   const loadSample = useCallback((padId: string, buffer: AudioBuffer, name: string, audio: Blob) => {
@@ -183,35 +184,51 @@ export function usePadBank(): PadBankApi {
 
   const triggerPad = useCallback((padId: string) => {
     setSelectedPadId(padId);
-    if (!storageReady) return;
+    const noop = () => {};
+    if (!storageReady) return noop;
     const slot = slotsRef.current[padId];
     const sampleKey = slot?.sampleKey;
-    if (!sampleKey) return;
-    if (slot.loop && stopLoop(padId)) return;
+    if (!sampleKey) return noop;
+    const mode = slot.playbackMode;
+    if (mode === 'loop' && stopLoop(padId)) return noop;
+    const generation = playbackGeneration.current;
+    let released = false;
+    let gateVoice: string | null = null;
 
     void audioEngine.initialize().then(() => {
-      if (slotsRef.current[padId].sampleKey !== sampleKey) return null;
+      if (generation !== playbackGeneration.current || (mode === 'gate' && released) ||
+          slotsRef.current[padId].sampleKey !== sampleKey) return null;
       return slot.buffer ?? ensureBuffer(padId, sampleKey);
     }).then((buffer) => {
       const current = slotsRef.current[padId];
-      if (!buffer || current.sampleKey !== sampleKey) return;
-      if (current.loop && stopLoop(padId)) return;
+      if (!buffer || generation !== playbackGeneration.current || (mode === 'gate' && released) ||
+          current.sampleKey !== sampleKey || current.playbackMode !== mode) return;
+      if (mode === 'loop' && stopLoop(padId)) return;
       const { start, end } = rangeFromPercent(current.startPct, current.endPct, buffer.length);
       const voiceId = audioEngine.triggerPad(padId, {
         sliceStart: start / buffer.sampleRate,
         sliceEnd: end / buffer.sampleRate,
         semitoneOffset: current.pitch,
-        loop: current.loop,
+        loop: mode === 'loop',
       });
-      if (current.loop && voiceId) loopVoices.current.set(padId, voiceId);
+      if (mode === 'loop' && voiceId) loopVoices.current.set(padId, voiceId);
+      if (mode === 'gate') gateVoice = voiceId;
     }).catch((error: unknown) => {
       console.error('[usePadBank] Could not play pad:', error);
       setStorageError(true);
       if (!failedWrite.current) setStorageStatus(`COULD NOT PLAY ${padId} — CHECK SAMPLE`);
     });
+    return () => {
+      released = true;
+      if (gateVoice) {
+        audioEngine.stopVoice(gateVoice);
+        gateVoice = null;
+      }
+    };
   }, [ensureBuffer, stopLoop, storageReady]);
 
   const stopAll = useCallback(() => {
+    playbackGeneration.current++;
     loopVoices.current.clear();
     audioEngine.stopAllVoices();
   }, []);

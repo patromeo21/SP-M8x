@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { AudioSampleDropzone } from '../components/AudioSampleDropzone';
 import type { RecordingStatus } from '../audio/inputRecorder';
 import type { PadBankApi, PadSlot } from './usePadBank';
@@ -16,19 +16,39 @@ export interface SamplerWorkbenchProps {
 
 export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
   pad, onUpdatePad, onLoadSample, onAudition, recordingStatus, onRecord, storageReady,
-}) => (
+}) => {
+  const auditions = useRef(new Map<number, () => void>());
+  useEffect(() => {
+    const active = auditions.current;
+    return () => {
+      for (const release of active.values()) release();
+      active.clear();
+    };
+  }, []);
+  const endAudition = (event: React.PointerEvent<HTMLButtonElement>) => {
+    auditions.current.get(event.pointerId)?.();
+    auditions.current.delete(event.pointerId);
+  };
+  return (
   <div className="sampler-workbench bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col shrink-0 font-mono select-none">
     <WaveformEditor pad={pad} onUpdatePad={onUpdatePad} />
     <div className="sampler-actions flex items-center gap-2 mb-2">
-      <button type="button" disabled={!pad.buffer} onPointerDown={() => onAudition(pad.id)}
+      <button type="button" disabled={!pad.buffer} onPointerDown={(event) => {
+        if (auditions.current.has(event.pointerId)) return;
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        auditions.current.set(event.pointerId, onAudition(pad.id));
+      }} onPointerUp={endAudition} onPointerCancel={endAudition} onLostPointerCapture={endAudition}
         className="flex-1 touch-none py-2 rounded bg-cyan-950 border border-cyan-800 text-[10px] font-bold text-[var(--accent-phrase)] disabled:opacity-40 active:scale-95">
         AUDITION
       </button>
-      <button type="button" disabled={!pad.buffer} onClick={() => onUpdatePad(pad.id, { loop: !pad.loop })}
+      <button type="button" disabled={!pad.buffer} onClick={() => onUpdatePad(pad.id, {
+        playbackMode: pad.playbackMode === 'one-shot' ? 'gate' : pad.playbackMode === 'gate' ? 'loop' : 'one-shot',
+      })}
         className={`flex-1 py-2 rounded border text-[10px] font-bold disabled:opacity-40 ${
-          pad.loop ? 'bg-purple-950 border-purple-800 text-purple-300' : 'bg-zinc-900 border-zinc-700 text-zinc-400'
+          pad.playbackMode !== 'one-shot' ? 'bg-purple-950 border-purple-800 text-purple-300' : 'bg-zinc-900 border-zinc-700 text-zinc-400'
         }`}>
-        {pad.loop ? 'LOOP' : 'ONE-SHOT'}
+        {pad.playbackMode.toUpperCase()}
       </button>
     </div>
     <div className="sampler-input flex items-stretch gap-1 min-w-0">
@@ -46,6 +66,7 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
       </div>
     ) : null}
   </div>
-);
+  );
+};
 
 export default SamplerWorkbench;
