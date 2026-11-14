@@ -98,6 +98,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
                 onAudition={padBank.triggerPad}
                 recordingStatus={recorder.status}
                 onRecord={recorder.toggle}
+                storageReady={padBank.storageReady}
               />
 
               {/* Sampler Pads / M8 Deck Matrix Container */}
@@ -192,6 +193,9 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
           <span>VOICES: <strong className="text-zinc-200">{engineStatus.voices}</strong></span>
           <span>BPM: <strong className="text-zinc-200">120.0</strong></span>
           <span>CLOCK: <strong className="text-zinc-200">INTERNAL</strong></span>
+          <span role={padBank.storageError ? 'alert' : 'status'} className={padBank.storageError ? 'text-rose-400' : 'text-zinc-400'}>
+            {padBank.storageStatus}
+          </span>
         </div>
         <div className="text-[9px] text-zinc-600">
           SP-M8x HARDWARE INTERFACE SHELL

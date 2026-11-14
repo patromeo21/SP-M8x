@@ -20,7 +20,7 @@ export class InputRecorder {
 
   constructor(
     private onStatus: (status: RecordingStatus) => void,
-    private onSample: (padId: string, buffer: AudioBuffer, name: string) => void,
+    private onSample: (padId: string, buffer: AudioBuffer, name: string, audio: Blob) => void,
   ) {}
 
   private setStatus(status: RecordingStatus): void {
@@ -104,7 +104,7 @@ export class InputRecorder {
       if (!blob.size) throw new Error('The recording was empty.');
       const buffer = await audioEngine.decodeAudioData(await blob.arrayBuffer());
       if (generation !== this.generation) return;
-      this.onSample(padId, buffer, `REC ${padId}`);
+      this.onSample(padId, buffer, `REC ${padId}`, blob);
       this.setStatus({ phase: 'idle', message: `Recorded to ${padId}.` });
     } catch (error) {
       if (generation !== this.generation) return;

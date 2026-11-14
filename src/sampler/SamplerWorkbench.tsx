@@ -17,6 +17,7 @@ export interface SamplerWorkbenchProps {
   onAudition: PadBankApi['triggerPad'];
   recordingStatus: RecordingStatus;
   onRecord: (padId: string) => void;
+  storageReady: boolean;
 }
 
 const computePeaks = (buffer: AudioBuffer): Float32Array => {
@@ -40,6 +41,7 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
   onAudition,
   recordingStatus,
   onRecord,
+  storageReady,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const peaks = useMemo(() => (pad.buffer ? computePeaks(pad.buffer) : null), [pad.buffer]);
@@ -90,8 +92,8 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
         <canvas ref={canvasRef} width={600} height={96} className="absolute inset-0 w-full h-full" />
         {!pad.buffer && (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-zinc-500 text-[11px]">
-            <span className="text-zinc-400 font-bold mb-1">NO SAMPLE LOADED</span>
-            <span className="text-[9px] text-zinc-600 tracking-widest">Waveform View / Slicing Grid</span>
+            <span className="text-zinc-400 font-bold mb-1">{pad.loading ? 'LOADING SAMPLE' : pad.sampleKey ? pad.name : 'NO SAMPLE LOADED'}</span>
+            <span className="text-[9px] text-zinc-600 tracking-widest">{pad.sampleKey ? 'TAP PAD TO LOAD' : 'Waveform View / Slicing Grid'}</span>
           </div>
         )}
         {pad.buffer && (
@@ -139,10 +141,10 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
       </div>
 
       <div className="sampler-input flex items-stretch gap-1 min-w-0">
-        <AudioSampleDropzone padId={pad.id} onSampleLoaded={onLoadSample} />
+        <AudioSampleDropzone padId={pad.id} onSampleLoaded={onLoadSample} disabled={!storageReady} />
         <button
           type="button"
-          disabled={recordingStatus.phase === 'processing'}
+          disabled={!storageReady || recordingStatus.phase === 'processing'}
           onClick={() => onRecord(pad.id)}
           className="shrink-0 rounded-lg border border-rose-800 bg-rose-950 px-2 text-[10px] font-bold text-rose-300 disabled:opacity-40"
         >

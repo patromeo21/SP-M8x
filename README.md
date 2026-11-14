@@ -2,8 +2,7 @@
 Web based SP/MPC/M8 style sampler/tracker
 
 The shared Web Audio engine lives in `src/audio/audioEngine.ts`. Initialize it
-from a user gesture before triggering playback. Decoded sample buffers are held
-in memory and are not restored when the page reloads.
+from a user gesture before triggering playback.
 
 Select a pad and press REC to record the iPad's microphone or the system-selected
 compatible audio interface; press STOP to finish. Takes stop automatically after
@@ -11,7 +10,10 @@ compatible audio interface; press STOP to finish. Takes stop automatically after
 connection are required. The app does not monitor the input, but speakers or
 interface loopback can still cause feedback. Use headphones and check routing.
 Safari does not provide direct capture of other iPad apps' system audio.
-Recordings and imported samples are lost on reload.
+Imported samples, recordings, and pad settings are saved in this browser using
+IndexedDB. Tap a restored pad to decode and play it; its first tap may be slower.
+Browser storage can be cleared or reclaimed, so it is not a permanent backup.
+Watch the footer for save errors and avoid closing the page while it says SAVING.
 
 Run `npm test` for the audio-engine checks and `npm run build` for the production
 TypeScript and Vite build.

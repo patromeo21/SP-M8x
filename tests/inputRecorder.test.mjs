@@ -62,7 +62,8 @@ test('recording targets the original pad, stops at 60 seconds, and releases inpu
     timers.values().next().value();
     assert.equal(track.stopped, true);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    assert.deepEqual(samples, [['B8', { length: 6 }, 'REC B8']]);
+    assert.deepEqual(samples[0].slice(0, 3), ['B8', { length: 6 }, 'REC B8']);
+    assert.equal(await samples[0][3].text(), 'sample');
     assert.equal(statuses.at(-1).phase, 'idle');
 
     let resolveInput;

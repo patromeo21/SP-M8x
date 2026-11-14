@@ -48,6 +48,7 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({ padBank, rec
       onAudition={padBank.triggerPad}
       recordingStatus={recorder.status}
       onRecord={recorder.toggle}
+      storageReady={padBank.storageReady}
     />
   </div>
 );

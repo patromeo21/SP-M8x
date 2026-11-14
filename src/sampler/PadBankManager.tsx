@@ -38,7 +38,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
       {Array.from({ length: PADS_PER_BANK }, (_, i) => {
         const padId = `${activeBank}${i + 1}`;
         const slot = slots[padId];
-        const hasSample = slot.buffer !== null;
+        const hasSample = slot.sampleKey !== null;
         const isSelected = padId === selectedPadId;
         const isPressed = pressedPads.has(padId);
 
@@ -72,7 +72,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
                 isPressed ? 'text-zinc-900' : hasSample ? 'text-zinc-200' : 'text-zinc-600'
               }`}
             >
-              {slot.name}
+              {slot.loading ? 'LOADING...' : slot.name}
             </span>
           </button>
         );
