@@ -111,6 +111,15 @@
   justify-self: center;
 }
 
+@media (orientation: landscape) and (min-width: 768px) {
+  .sampler-full {
+    grid-template-rows: minmax(0, 34fr) minmax(0, 66fr);
+  }
+  .sampler-full-pads {
+    width: min(100%, 900px);
+  }
+}
+
 .pad-grid, .pad-grid * {
   touch-action: none;
   -webkit-touch-callout: none;
