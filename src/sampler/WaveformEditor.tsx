@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { audioEngine } from '../audio/audioEngine';
 import { percentFromFrame, rangeFromPercent, type SampleRange } from './sampleRange';
 import type { PadBankApi, PadSlot } from './usePadBank';
 
@@ -20,11 +21,13 @@ function computePeaks(buffer: AudioBuffer): Float32Array {
 interface Props {
   pad: PadSlot;
   onUpdatePad: PadBankApi['updatePad'];
+  sliceCount: number;
 }
 
-export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad }) => {
+export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, sliceCount }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const playheadRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ pointerId: number; edge: 'start' | 'end'; range: SampleRange; x: number; origin: number } | null>(null);
   const pitchDrag = useRef<{ pointerId: number; y: number; initial: number; value: number } | null>(null);
   const [preview, setPreview] = useState<SampleRange | null>(null);
@@ -58,7 +61,41 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad }) => {
       const h = Math.max(1, peaks[col] * (height - 8));
       ctx.fillRect(col * colWidth, (height - h) / 2, Math.max(1, colWidth - 0.5), h);
     }
-  }, [peaks, length, range.start, range.end]);
+    ctx.fillStyle = 'rgba(255,255,255,0.28)';
+    for (let index = 1; index < sliceCount; index++) {
+      const frame = range.start + Math.floor(index * (range.end - range.start) / sliceCount);
+      ctx.fillRect(Math.round(frame * width / length), 0, 1, height);
+    }
+  }, [peaks, length, range.start, range.end, sliceCount]);
+
+  useEffect(() => {
+    const playhead = playheadRef.current;
+    const buffer = pad.buffer;
+    if (!playhead || !buffer) return;
+    let frame: number | null = null;
+    const draw = () => {
+      frame = null;
+      const position = audioEngine.getPadPlaybackPosition(pad.id, buffer);
+      if (position === null) {
+        playhead.style.display = 'none';
+      } else {
+        playhead.style.display = 'block';
+        playhead.style.left = `${Math.min(100, Math.max(0, position * 100 / buffer.duration))}%`;
+      }
+      if (audioEngine.hasPadVoices(pad.id, buffer)) frame = requestAnimationFrame(draw);
+    };
+    const update = () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      draw();
+    };
+    const unsubscribe = audioEngine.subscribeVoiceChanges(update);
+    update();
+    return () => {
+      unsubscribe();
+      if (frame !== null) cancelAnimationFrame(frame);
+      playhead.style.display = 'none';
+    };
+  }, [pad.id, pad.buffer]);
 
   const commitRange = (next: SampleRange) => {
     if (!length) return;
@@ -127,6 +164,8 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad }) => {
   return (
     <div ref={containerRef} className="sampler-waveform relative h-24 bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden mb-2 shrink-0">
       <canvas ref={canvasRef} width={600} height={96} className="absolute inset-0 w-full h-full" />
+      <div ref={playheadRef} aria-hidden="true" style={{ display: 'none' }}
+        className="absolute top-0 bottom-0 w-px bg-white pointer-events-none z-[1]" />
       {!pad.buffer && (
         <div className="absolute inset-0 flex flex-col items-center justify-center text-zinc-500 text-[11px] pointer-events-none">
           <span className="text-zinc-400 font-bold">{pad.loading ? 'LOADING SAMPLE' : pad.sampleKey ? pad.name : 'NO SAMPLE LOADED'}</span>

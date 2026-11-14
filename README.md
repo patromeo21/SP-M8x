@@ -20,6 +20,15 @@ The waveform displays the decoded buffer's sample rate, channel count, and
 duration. The browser may resample imported audio, so the displayed rate is not
 necessarily the original file's sample rate. Audition the selected slice after
 editing.
+The white playhead follows the most recently triggered sounding voice of the
+selected pad using the audio clock; it is not compensated for output-device
+latency. The faint vertical lines preview the selected number of grid slices.
+Select 2, 4, 8, or 16 in CHOP and assign the selected S/E region to empty
+pads in the current bank. Change banks to choose a destination. The source is
+unchanged; existing pads are never overwritten, and the operation fails if
+there are not enough empty pads or frames. Slices share their source audio but
+have independently editable markers, pitch, and playback mode. Uneven frame
+counts are distributed between adjacent slices without gaps.
 Tap the playback mode button to cycle ONE-SHOT (plays the selected region),
 GATE (plays while held, up to the end of the region), and LOOP (tap to start
 or stop the region). Modes apply to both pads and AUDITION and are saved per pad.

@@ -17,6 +17,10 @@ export interface ActiveVoice {
   panner?: StereoPannerNode;
   padId: string;
   startTime: number;
+  offset: number;
+  end: number;
+  loop: boolean;
+  playbackRate: number;
 }
 
 const normalizePadKey = (padId: string | number): string => String(padId);
@@ -27,6 +31,7 @@ class AudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private activeVoices = new Map<string, ActiveVoice>();
+  private voiceListeners = new Set<() => void>();
 
   /** Lazily create the one app AudioContext and request resume after user interaction. */
   public async initialize(): Promise<AudioContext> {
@@ -58,6 +63,33 @@ class AudioEngine {
 
   public getActiveVoiceCount(): number {
     return this.activeVoices.size;
+  }
+
+  public subscribeVoiceChanges(listener: () => void): () => void {
+    this.voiceListeners.add(listener);
+    return () => { this.voiceListeners.delete(listener); };
+  }
+
+  public hasPadVoices(padId: string, buffer: AudioBuffer): boolean {
+    for (const voice of this.activeVoices.values()) {
+      if (voice.padId === padId && voice.source.buffer === buffer) return true;
+    }
+    return false;
+  }
+
+  /** Position of the most recently triggered sounding voice for this exact buffer. */
+  public getPadPlaybackPosition(padId: string, buffer: AudioBuffer): number | null {
+    const context = this.ctx;
+    if (!context || context.state !== 'running') return null;
+    let position: number | null = null;
+    for (const voice of this.activeVoices.values()) {
+      if (voice.padId !== padId || voice.source.buffer !== buffer || context.currentTime < voice.startTime) continue;
+      const elapsed = (context.currentTime - voice.startTime) * voice.playbackRate;
+      const length = voice.end - voice.offset;
+      if (length <= 0 || (!voice.loop && elapsed >= length)) continue;
+      position = voice.offset + (voice.loop ? elapsed % length : elapsed);
+    }
+    return position;
   }
 
   public async decodeAudioData(arrayBuffer: ArrayBuffer): Promise<AudioBuffer> {
@@ -202,12 +234,16 @@ class AudioEngine {
 
     const voiceId = `spm8x_${padId}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const startTime = scheduledTime !== undefined ? Math.max(context.currentTime, scheduledTime) : context.currentTime;
-    const voice: ActiveVoice = { source, gainNode, panner, padId, startTime };
+    const voice: ActiveVoice = {
+      source, gainNode, panner, padId, startTime, offset,
+      end: duration === undefined ? source.buffer?.duration ?? offset : offset + duration,
+      loop, playbackRate: source.playbackRate.value,
+    };
     this.activeVoices.set(voiceId, voice);
 
     source.onended = () => {
       this.disconnectVoice(source, gainNode, panner);
-      this.activeVoices.delete(voiceId);
+      if (this.activeVoices.delete(voiceId)) this.notifyVoiceChanges();
     };
 
     try {
@@ -216,6 +252,7 @@ class AudioEngine {
       } else {
         source.start(startTime, offset, duration);
       }
+      this.notifyVoiceChanges();
       return voiceId;
     } catch (error) {
       this.activeVoices.delete(voiceId);
@@ -227,6 +264,7 @@ class AudioEngine {
 
   private releaseVoice(voiceId: string, voice: ActiveVoice): void {
     this.activeVoices.delete(voiceId);
+    this.notifyVoiceChanges();
     try {
       if (this.ctx) {
         const now = this.ctx.currentTime;
@@ -240,6 +278,16 @@ class AudioEngine {
     } catch (error) {
       console.warn('[SP-M8x AudioEngine] Could not stop voice:', error);
       this.disconnectVoice(voice.source, voice.gainNode, voice.panner);
+    }
+  }
+
+  private notifyVoiceChanges(): void {
+    for (const listener of this.voiceListeners) {
+      try {
+        listener();
+      } catch (error) {
+        console.error('[SP-M8x AudioEngine] Voice listener failed:', error);
+      }
     }
   }
 

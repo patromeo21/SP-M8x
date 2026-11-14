@@ -195,11 +195,26 @@
 
   .workspace-controls .sampler-waveform {
     grid-column: 1 / -1;
+    grid-row: 1;
     height: 4rem;
     margin-bottom: 0;
   }
 
   .workspace-controls .sampler-actions {
+    grid-column: 1;
+    grid-row: 2;
+    margin-bottom: 0;
+    min-width: 0;
+  }
+
+  .workspace-controls .sampler-input {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .workspace-controls .sampler-chop {
+    grid-column: 1 / -1;
+    grid-row: 3;
     margin-bottom: 0;
     min-width: 0;
   }
@@ -208,8 +223,10 @@
     padding: 0.25rem;
   }
 
+  .workspace-controls .sampler-chop-status,
   .workspace-controls .sampler-record-status {
     grid-column: 1 / -1;
+    margin-bottom: 0;
     line-height: 1;
   }
 }

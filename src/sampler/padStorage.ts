@@ -9,6 +9,7 @@ export interface StoredPad {
   pitch: number;
   loop: boolean;
   playbackMode?: PlaybackMode;
+  audioKey?: string;
 }
 
 const DATABASE = 'sp-m8x-samples';
@@ -58,6 +59,7 @@ function validPad(value: unknown): value is StoredPad {
   return typeof record.id === 'string' && /^[A-D](?:[1-9]|1[0-6])$/.test(record.id) &&
     typeof record.name === 'string' &&
     typeof record.sampleKey === 'string' &&
+    (record.audioKey === undefined || typeof record.audioKey === 'string') &&
     typeof record.startPct === 'number' && Number.isFinite(record.startPct) &&
     typeof record.endPct === 'number' && Number.isFinite(record.endPct) &&
     typeof record.pitch === 'number' && Number.isFinite(record.pitch) &&
@@ -87,18 +89,30 @@ export async function readStoredAudio(id: string, sampleKey: string): Promise<Bl
   return new Promise((resolve, reject) => {
     const tx = db.transaction([METADATA, AUDIO], 'readonly');
     const metadata = tx.objectStore(METADATA).get(id);
-    const request = tx.objectStore(AUDIO).get(id);
-    request.onsuccess = () => {
-      if (metadata.result?.sampleKey !== sampleKey) reject(new Error(`Saved audio for ${id} changed.`));
-      else if (request.result instanceof Blob) resolve(request.result);
-      else reject(new Error(`Saved audio for ${id} is missing.`));
+    metadata.onsuccess = () => {
+      if (metadata.result?.sampleKey !== sampleKey) {
+        reject(new Error(`Saved audio for ${id} changed.`));
+        return;
+      }
+      const request = tx.objectStore(AUDIO).get(metadata.result.audioKey ?? id);
+      request.onsuccess = () => {
+        if (request.result instanceof Blob) resolve(request.result);
+        else reject(new Error(`Saved audio for ${id} is missing.`));
+      };
+      request.onerror = () => reject(request.error ?? new Error(`Could not read audio for ${id}.`));
     };
-    request.onerror = () => reject(request.error ?? new Error(`Could not read audio for ${id}.`));
+    metadata.onerror = () => reject(metadata.error ?? new Error(`Could not read audio for ${id}.`));
   });
 }
 
+function enqueue(work: () => Promise<void>): Promise<void> {
+  const operation = writes.then(work);
+  writes = operation.catch(() => undefined);
+  return operation;
+}
+
 function writePad(pad: StoredPad, audio?: Blob): Promise<void> {
-  const operation = writes.then(async () => {
+  return enqueue(async () => {
     const db = await openDatabase();
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(audio ? [METADATA, AUDIO] : [METADATA], 'readwrite');
@@ -108,8 +122,20 @@ function writePad(pad: StoredPad, audio?: Blob): Promise<void> {
       tx.onerror = () => reject(tx.error ?? new Error('Could not save sample.'));
       const store = tx.objectStore(METADATA);
       if (audio) {
-        store.put(pad);
-        tx.objectStore(AUDIO).put(audio, pad.id);
+        const all = store.getAll();
+        all.onsuccess = () => {
+          const previous = (all.result as StoredPad[]).find((item) => item.id === pad.id);
+          const audioKey = `source:${pad.sampleKey}`;
+          store.put({ ...pad, audioKey });
+          const audioStore = tx.objectStore(AUDIO);
+          audioStore.put(audio, audioKey);
+          if (previous) {
+            const oldKey = previous.audioKey ?? previous.id;
+            if (oldKey !== audioKey && !(all.result as StoredPad[]).some(
+              (item) => item.id !== pad.id && (item.audioKey ?? item.id) === oldKey,
+            )) audioStore.delete(oldKey);
+          }
+        };
       } else {
         const request = store.get(pad.id);
         request.onsuccess = () => {
@@ -117,14 +143,12 @@ function writePad(pad: StoredPad, audio?: Blob): Promise<void> {
             saveError = new Error(`The sample for ${pad.id} was not saved.`);
             tx.abort();
           } else {
-            store.put(pad);
+            store.put({ ...pad, ...(request.result.audioKey ? { audioKey: request.result.audioKey } : {}) });
           }
         };
       }
     });
   });
-  writes = operation.catch(() => undefined);
-  return operation;
 }
 
 export function saveSample(pad: StoredPad, audio: Blob): Promise<void> {
@@ -133,4 +157,50 @@ export function saveSample(pad: StoredPad, audio: Blob): Promise<void> {
 
 export function savePadSettings(pad: StoredPad): Promise<void> {
   return writePad(pad);
+}
+
+/** Assign all slices in one transaction, converting a legacy pad's audio on demand. */
+export function saveSlices(sourceId: string, sampleKey: string, slices: StoredPad[]): Promise<void> {
+  return enqueue(async () => {
+    const db = await openDatabase();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction([METADATA, AUDIO], 'readwrite');
+      const pads = tx.objectStore(METADATA);
+      const audio = tx.objectStore(AUDIO);
+      let failure: Error | null = null;
+      const abort = (message: string) => { failure = new Error(message); tx.abort(); };
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(failure ?? tx.error ?? new Error('Slice assignment was interrupted.'));
+      tx.onerror = () => reject(tx.error ?? new Error('Could not save slices.'));
+      const request = pads.getAll();
+      request.onsuccess = () => {
+        const existing = request.result as StoredPad[];
+        const source = existing.find((pad) => pad.id === sourceId);
+        if (!source || source.sampleKey !== sampleKey) {
+          abort(`Source pad ${sourceId} changed. Try again.`);
+          return;
+        }
+        if (!slices.length || new Set(slices.map((pad) => pad.id)).size !== slices.length ||
+            slices.some((pad) => pad.sampleKey !== sampleKey || existing.some((item) => item.id === pad.id))) {
+          abort('A destination pad is occupied. No slices were assigned.');
+          return;
+        }
+        const oldKey = source.audioKey ?? source.id;
+        const audioKey = source.audioKey ?? `source:${sampleKey}`;
+        const audioRequest = audio.get(oldKey);
+        audioRequest.onsuccess = () => {
+          if (!(audioRequest.result instanceof Blob)) {
+            abort(`Saved audio for ${sourceId} is missing.`);
+            return;
+          }
+          if (!source.audioKey) {
+            audio.put(audioRequest.result, audioKey);
+            audio.delete(oldKey);
+            pads.put({ ...source, audioKey });
+          }
+          for (const slice of slices) pads.put({ ...slice, audioKey });
+        };
+      };
+    });
+  });
 }

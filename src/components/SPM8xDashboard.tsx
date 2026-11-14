@@ -99,6 +99,8 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
                 recordingStatus={recorder.status}
                 onRecord={recorder.toggle}
                 storageReady={padBank.storageReady}
+                activeBank={padBank.activeBank}
+                onChop={padBank.chopToBank}
               />
 
               {/* Sampler Pads / M8 Deck Matrix Container */}
