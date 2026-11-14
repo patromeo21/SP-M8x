@@ -54,6 +54,11 @@ cancels notes that have not yet started. PHRASE REC arms pad capture while the
 transport runs. Each sounding pad is placed on the nearest step with signed
 eighth-step timing; a step holds one pad, and occupied steps are not overwritten.
 Tap a recorded step in the workspace grid and confirm to clear its note.
+To clear several notes, hold DEL/OP with one finger and tap occupied steps
+with another. Release DEL/OP, then choose DELETE or CANCEL. The operation
+clears notes, pad assignments and timing, but preserves effect commands.
+The table view is not yet implemented; its deletion gesture will be added
+with the table editor.
 Changes inside the scheduler's lookahead may not play until the next loop.
 Phrase playback currently triggers each sample as a one-shot; gate lengths, loop
 recording, effects, and song arrangement are not yet implemented. Restored pads

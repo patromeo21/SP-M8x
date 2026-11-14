@@ -171,6 +171,19 @@ class ProjectController {
     this.notify();
   }
 
+  public clearStepNotes(patternIndex: number, stepIndices: readonly number[]): void {
+    const pattern = this.state.tracker.patterns[patternIndex];
+    if (!pattern) return;
+    let changed = false;
+    for (const index of new Set(stepIndices)) {
+      const step = pattern.steps[index];
+      if (!step || ((!step.note || step.note === '---') && (!step.sampleId || step.sampleId === '--'))) continue;
+      pattern.steps[index] = { ...step, note: '---', sampleId: '--', subTickOffset: 0 };
+      changed = true;
+    }
+    if (changed) this.notify();
+  }
+
   /**
    * Export project state as a downloadable JSON file (.spm8x)
    */

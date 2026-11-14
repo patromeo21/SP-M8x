@@ -3,7 +3,7 @@
  * TrackerGrid.tsx — Step Sequencer Grid Matrix View
  */
 
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import { projectController } from '../project/projectController';
 
 export interface TrackerGridProps {
@@ -17,6 +17,23 @@ export const TrackerGrid: React.FC<TrackerGridProps> = ({ patternId, activeStep 
   // Resolve pattern index safely whether patternId is passed as a string or number
   const patternIndex = typeof patternId === 'number' ? patternId : parseInt(patternId, 10) || 0;
   const currentPattern = projectState.tracker.patterns[patternIndex] || projectState.tracker.patterns[0];
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [holding, setHolding] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const modifierPointer = useRef<number | null>(null);
+  const suppressedClicks = useRef(new Set<number>());
+
+  const endSelection = (pointerId: number, cancelled: boolean) => {
+    if (modifierPointer.current !== pointerId) return;
+    modifierPointer.current = null;
+    setHolding(false);
+    if (cancelled) {
+      setSelected(new Set());
+      setConfirming(false);
+    } else {
+      setConfirming(true);
+    }
+  };
 
   const steps = currentPattern ? currentPattern.steps : [];
 
@@ -26,27 +43,79 @@ export const TrackerGrid: React.FC<TrackerGridProps> = ({ patternId, activeStep 
         <h2 className="text-xs font-bold text-zinc-400">
           TRACKER MATRIX — {currentPattern ? currentPattern.name : `PATTERN ${patternId}`}
         </h2>
-        <span className="text-[10px] text-cyan-400 font-bold">64 STEPS</span>
+        <div className="flex items-center gap-2">
+          {confirming && selected.size > 0 ? (
+            <>
+              <span role="status" className="text-[10px] text-amber-300">{selected.size} SELECTED</span>
+              <button type="button" className="text-[10px] text-rose-300 border border-rose-800 rounded px-2 py-1"
+                onClick={() => {
+                  projectController.clearStepNotes(patternIndex, [...selected]);
+                  setSelected(new Set());
+                  setConfirming(false);
+                }}>DELETE</button>
+              <button type="button" className="text-[10px] text-zinc-300 border border-zinc-700 rounded px-2 py-1"
+                onClick={() => { setSelected(new Set()); setConfirming(false); }}>CANCEL</button>
+            </>
+          ) : (
+            <button type="button" aria-label="Hold DEL OP and tap steps to select for deletion"
+              aria-pressed={holding} className={`touch-none select-none text-[10px] font-bold border rounded px-2 py-1 ${holding ? 'border-rose-400 text-rose-300' : 'border-zinc-700 text-zinc-300'}`}
+              onPointerDown={(event) => {
+                if (modifierPointer.current !== null || !event.isPrimary && event.pointerType === 'mouse') return;
+                event.preventDefault();
+                event.currentTarget.setPointerCapture(event.pointerId);
+                modifierPointer.current = event.pointerId;
+                setSelected(new Set());
+                setConfirming(false);
+                setHolding(true);
+              }}
+              onPointerUp={(event) => endSelection(event.pointerId, false)}
+              onPointerCancel={(event) => endSelection(event.pointerId, true)}
+              onLostPointerCapture={(event) => endSelection(event.pointerId, true)}>
+              DEL/OP
+            </button>
+          )}
+          <span className="text-[10px] text-cyan-400 font-bold">{steps.length} STEPS</span>
+        </div>
       </div>
 
       {/* Grid container for step sequencer cells */}
       <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5 overflow-y-auto max-h-64 p-1">
         {steps.map((step, idx) => {
           const isActive = idx === activeStep;
-          const hasNote = step.note && step.note !== '---';
+          const hasNote = Boolean((step.note && step.note !== '---') || (step.sampleId && step.sampleId !== '--'));
+          const isSelected = selected.has(idx);
 
           return (
             <button
               type="button"
               key={idx}
-              aria-label={`Step ${idx + 1}: ${step.sampleId || 'empty'}. ${hasNote ? 'Tap to clear note' : 'Empty'}`}
+              aria-label={`Step ${idx + 1}: ${step.sampleId || 'empty'}. ${hasNote ? 'Tap to clear note' : 'Empty'}${isSelected ? ', selected for deletion' : ''}`}
+              aria-pressed={isSelected}
+              onPointerDown={(event) => {
+                if (modifierPointer.current === null) {
+                  suppressedClicks.current.delete(idx);
+                  return;
+                }
+                if (!hasNote) return;
+                event.preventDefault();
+                suppressedClicks.current.add(idx);
+                setSelected((previous) => {
+                  const next = new Set(previous);
+                  if (next.has(idx)) next.delete(idx); else next.add(idx);
+                  return next;
+                });
+              }}
+              onPointerCancel={() => suppressedClicks.current.delete(idx)}
               onClick={() => {
+                if (suppressedClicks.current.delete(idx) || modifierPointer.current !== null || confirming) return;
                 if (hasNote && window.confirm(`Clear the note on step ${idx + 1}?`)) {
-                  projectController.updateStep(patternIndex, idx, { note: '---', sampleId: '--', subTickOffset: 0 });
+                  projectController.clearStepNotes(patternIndex, [idx]);
                 }
               }}
               className={`flex flex-col items-center justify-center p-2 rounded border text-[10px] transition-all ${
-                isActive
+                isSelected
+                  ? 'bg-rose-950 border-rose-400 text-rose-200'
+                  : isActive
                   ? 'bg-cyan-950 border-cyan-400 text-cyan-300 shadow-sm shadow-cyan-500/20'
                   : hasNote
                   ? 'bg-zinc-800 border-zinc-700 text-zinc-200'
