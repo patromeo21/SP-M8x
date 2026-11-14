@@ -4,28 +4,36 @@ import { percentFromFrame, rangeFromPercent, type SampleRange } from './sampleRa
 import { createWaveformPeakBuilder, type WaveformPeaks } from './waveformPeaks';
 import type { PadBankApi, PadSlot } from './usePadBank';
 
-const peakCache = new WeakMap<AudioBuffer, { width: number; peaks: WaveformPeaks }>();
+const peakCache = new WeakMap<AudioBuffer, { width: number; start: number; end: number; peaks: WaveformPeaks }>();
 
 interface Props {
   pad: PadSlot;
   onUpdatePad: PadBankApi['updatePad'];
+  onPreviewRange: PadBankApi['previewRange'];
   sliceCount: number;
 }
 
-export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, sliceCount }) => {
+export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRange, sliceCount }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playheadRef = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ pointerId: number; edge: 'start' | 'end'; range: SampleRange; x: number; origin: number } | null>(null);
+  const drag = useRef<{ pointerId: number; edge: 'start' | 'end'; range: SampleRange; original: SampleRange; x: number; origin: number } | null>(null);
   const pitchDrag = useRef<{ pointerId: number; y: number; initial: number; value: number } | null>(null);
+  const panDrag = useRef<{ pointerId: number; x: number; start: number } | null>(null);
   const [preview, setPreview] = useState<SampleRange | null>(null);
   const [pitchPreview, setPitchPreview] = useState<number | null>(null);
   const [precision, setPrecision] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 600, height: 96 });
-  const [rendered, setRendered] = useState<{ buffer: AudioBuffer; width: number; peaks: WaveformPeaks } | null>(null);
-  const peaks = rendered?.buffer === pad.buffer && rendered.width === Math.min(canvasSize.width, pad.buffer.length) ? rendered.peaks : null;
+  const [rendered, setRendered] = useState<{ buffer: AudioBuffer; width: number; start: number; end: number; peaks: WaveformPeaks } | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [position, setPosition] = useState(0);
   const length = pad.buffer?.length ?? 0;
+  const viewLength = Math.max(1, Math.ceil(length / zoom));
+  const viewStart = Math.max(0, Math.min(length - viewLength, Math.round(position * length)));
+  const viewEnd = Math.min(length, viewStart + viewLength);
+  const peaks = rendered?.buffer === pad.buffer && rendered.width === Math.min(canvasSize.width, viewLength) &&
+    rendered.start === viewStart && rendered.end === viewEnd ? rendered.peaks : null;
   const range = preview ?? (length ? rangeFromPercent(pad.startPct, pad.endPct, length) : { start: 0, end: 0 });
 
   useEffect(() => {
@@ -35,7 +43,16 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, sliceCount }
     setPitchPreview(null);
     setPrecision(false);
     setError(null);
-  }, [pad.id, pad.sampleKey]);
+    setZoom(1);
+    setPosition(0);
+    return () => {
+      const active = drag.current;
+      if (active && length) {
+        onPreviewRange(pad.id, percentFromFrame(active.original.start, length), percentFromFrame(active.original.end, length));
+        drag.current = null;
+      }
+    };
+  }, [pad.id, pad.sampleKey, length, onPreviewRange]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -59,26 +76,26 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, sliceCount }
       setRendered(null);
       return;
     }
-    const width = Math.min(canvasSize.width, buffer.length);
+    const width = Math.min(canvasSize.width, viewLength);
     const cached = peakCache.get(buffer);
-    if (cached?.width === width) {
-      setRendered({ buffer, width, peaks: cached.peaks });
+    if (cached?.width === width && cached.start === viewStart && cached.end === viewEnd) {
+      setRendered({ buffer, width, start: viewStart, end: viewEnd, peaks: cached.peaks });
       return;
     }
     setRendered(null);
-    const builder = createWaveformPeakBuilder(buffer, width);
+    const builder = createWaveformPeakBuilder(buffer, width, viewStart, viewEnd);
     let timer: number | undefined;
     const run = () => {
       if (builder.process(16384)) {
-        peakCache.set(buffer, { width, peaks: builder.peaks });
-        setRendered({ buffer, width, peaks: builder.peaks });
+        peakCache.set(buffer, { width, start: viewStart, end: viewEnd, peaks: builder.peaks });
+        setRendered({ buffer, width, start: viewStart, end: viewEnd, peaks: builder.peaks });
       } else {
-        timer = window.setTimeout(run, 0);
+        timer = window.setTimeout(run, zoom > 1 ? 80 : 0);
       }
     };
     timer = window.setTimeout(run, 0);
     return () => { if (timer !== undefined) window.clearTimeout(timer); };
-  }, [pad.buffer, canvasSize.width]);
+  }, [pad.buffer, canvasSize.width, viewLength, viewStart, viewEnd, zoom]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -89,7 +106,7 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, sliceCount }
     if (!peaks || !length) return;
     const colWidth = width / peaks.min.length;
     for (let col = 0; col < peaks.min.length; col++) {
-      const frame = col * length / peaks.min.length;
+      const frame = viewStart + col * viewLength / peaks.min.length;
       ctx.fillStyle = frame >= range.start && frame < range.end ? '#00e6c3' : '#28313d';
       const center = height / 2;
       const scale = (height - 8) / 2;
@@ -100,9 +117,9 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, sliceCount }
     ctx.fillStyle = 'rgba(255,255,255,0.28)';
     for (let index = 1; index < sliceCount; index++) {
       const frame = range.start + Math.floor(index * (range.end - range.start) / sliceCount);
-      ctx.fillRect(Math.round(frame * width / length), 0, 1, height);
+      if (frame >= viewStart && frame <= viewEnd) ctx.fillRect(Math.round((frame - viewStart) * width / viewLength), 0, 1, height);
     }
-  }, [peaks, length, range.start, range.end, sliceCount, canvasSize]);
+  }, [peaks, length, range.start, range.end, sliceCount, canvasSize, viewStart, viewEnd, viewLength]);
 
   useEffect(() => {
     const playhead = playheadRef.current;
@@ -112,11 +129,12 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, sliceCount }
     const draw = () => {
       frame = null;
       const position = audioEngine.getPadPlaybackPosition(pad.id, buffer);
-      if (position === null) {
+      const framePosition = position === null ? null : position * buffer.sampleRate;
+      if (framePosition === null || framePosition < viewStart || framePosition > viewEnd) {
         playhead.style.display = 'none';
       } else {
         playhead.style.display = 'block';
-        playhead.style.left = `${Math.min(100, Math.max(0, position * 100 / buffer.duration))}%`;
+        playhead.style.left = `${Math.min(100, Math.max(0, (framePosition - viewStart) * 100 / viewLength))}%`;
       }
       if (audioEngine.hasPadVoices(pad.id, buffer)) frame = requestAnimationFrame(draw);
     };
@@ -131,7 +149,7 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, sliceCount }
       if (frame !== null) cancelAnimationFrame(frame);
       playhead.style.display = 'none';
     };
-  }, [pad.id, pad.buffer]);
+  }, [pad.id, pad.buffer, viewStart, viewEnd, viewLength]);
 
   const commitRange = (next: SampleRange) => {
     if (!length) return;
@@ -145,12 +163,13 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, sliceCount }
     const active = drag.current;
     const bounds = containerRef.current?.getBoundingClientRect();
     if (!active || active.pointerId !== event.pointerId || !bounds || !length) return;
-    const frame = Math.max(0, Math.min(length, active.origin + Math.round((event.clientX - active.x) * length / bounds.width)));
+    const frame = Math.max(0, Math.min(length, active.origin + Math.round((event.clientX - active.x) * viewLength / bounds.width)));
     const next = active.edge === 'start'
       ? { ...active.range, start: Math.min(frame, active.range.end - 1) }
       : { ...active.range, end: Math.max(frame, active.range.start + 1) };
     active.range = next;
     setPreview(next);
+    onPreviewRange(pad.id, percentFromFrame(next.start, length), percentFromFrame(next.end, length));
   };
 
   const marker = (edge: 'start' | 'end') => (
@@ -159,12 +178,12 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, sliceCount }
       aria-label={`${edge === 'start' ? 'Start' : 'End'} marker`}
       disabled={!pad.buffer}
       className={`slice-handle slice-handle-${edge}`}
-      style={{ left: `clamp(22px, ${length ? range[edge] * 100 / length : edge === 'start' ? 0 : 100}%, calc(100% - 22px))` }}
+      style={{ display: range[edge] < viewStart || range[edge] > viewEnd ? 'none' : undefined, left: `clamp(22px, ${length ? (range[edge] - viewStart) * 100 / viewLength : 0}%, calc(100% - 22px))` }}
       onPointerDown={(event) => {
         if (drag.current) return;
         event.preventDefault();
         event.currentTarget.setPointerCapture(event.pointerId);
-        drag.current = { pointerId: event.pointerId, edge, range, x: event.clientX, origin: range[edge] };
+        drag.current = { pointerId: event.pointerId, edge, range, original: range, x: event.clientX, origin: range[edge] };
       }}
       onPointerMove={moveMarker}
       onPointerUp={(event) => {
@@ -176,13 +195,17 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, sliceCount }
       }}
       onPointerCancel={(event) => {
         if (drag.current?.pointerId !== event.pointerId) return;
+        const original = drag.current.original;
         drag.current = null;
         setPreview(null);
+        onPreviewRange(pad.id, percentFromFrame(original.start, length), percentFromFrame(original.end, length));
       }}
       onLostPointerCapture={(event) => {
         if (drag.current?.pointerId !== event.pointerId) return;
+        const original = drag.current.original;
         drag.current = null;
         setPreview(null);
+        onPreviewRange(pad.id, percentFromFrame(original.start, length), percentFromFrame(original.end, length));
       }}
       onKeyDown={(event) => {
         if (!length || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
@@ -199,7 +222,22 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, sliceCount }
 
   return (
     <div ref={containerRef} className="sampler-waveform relative h-24 bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden mb-2 shrink-0">
-      <canvas ref={canvasRef} width={canvasSize.width} height={canvasSize.height} className="absolute inset-0 w-full h-full" />
+      <canvas ref={canvasRef} width={canvasSize.width} height={canvasSize.height} className="absolute inset-0 w-full h-full"
+        onPointerDown={(event) => {
+          if (zoom === 1 || panDrag.current) return;
+          event.preventDefault();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          panDrag.current = { pointerId: event.pointerId, x: event.clientX, start: position };
+        }}
+        onPointerMove={(event) => {
+          const drag = panDrag.current;
+          const bounds = containerRef.current?.getBoundingClientRect();
+          if (!drag || drag.pointerId !== event.pointerId || !bounds) return;
+          setPosition(Math.max(0, Math.min(1 - 1 / zoom, drag.start - (event.clientX - drag.x) / bounds.width / zoom)));
+        }}
+        onPointerUp={(event) => { if (panDrag.current?.pointerId === event.pointerId) panDrag.current = null; }}
+        onPointerCancel={(event) => { if (panDrag.current?.pointerId === event.pointerId) panDrag.current = null; }}
+        onLostPointerCapture={(event) => { if (panDrag.current?.pointerId === event.pointerId) panDrag.current = null; }} />
       <div ref={playheadRef} aria-hidden="true" style={{ display: 'none' }}
         className="absolute top-0 bottom-0 w-px bg-white pointer-events-none z-[1]" />
       {!pad.buffer && (
@@ -218,6 +256,19 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, sliceCount }
         </div>
         {marker('start')}
         {marker('end')}
+        <div className="wave-zoom">
+          {[0.5, 2].map((factor) => (
+            <button key={factor} type="button" aria-label={factor < 1 ? 'Zoom out waveform' : 'Zoom in waveform'}
+              disabled={factor < 1 ? zoom === 1 : zoom === 32}
+              onClick={() => {
+                const next = Math.max(1, Math.min(32, zoom * factor));
+                const center = position + 0.5 / zoom;
+                setPosition(Math.max(0, Math.min(1 - 1 / next, center - 0.5 / next)));
+                setZoom(next);
+              }}>{factor < 1 ? '−' : '+'}</button>
+          ))}
+          <span>{zoom}×</span>
+        </div>
         <button type="button" className="wave-precision" onClick={() => { setPrecision(!precision); setError(null); }}>
           {precision ? 'DONE' : 'FRAMES'}
         </button>

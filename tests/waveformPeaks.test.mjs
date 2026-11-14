@@ -18,4 +18,8 @@ test('waveform uses signed extrema from every channel without losing narrow peak
   assert.ok(Math.abs(builder.peaks.max[0] - 0.9) < 1e-6);
   assert.ok(Math.abs(builder.peaks.min[1] + 0.7) < 1e-6);
   assert.ok(Math.abs(builder.peaks.max[1] - 0.4) < 1e-6);
+  const zoomed = createWaveformPeakBuilder(buffer, 2, 4, 8);
+  while (!zoomed.process(2)) {}
+  assert.ok(Math.abs(zoomed.peaks.min[1] + 0.7) < 1e-6);
+  assert.ok(Math.abs(zoomed.peaks.max[0] - 0.4) < 1e-6);
 });

@@ -1,7 +1,7 @@
 import { percentFromFrame, rangeFromPercent } from './sampleRange';
 
 export function gridSliceRanges(startPct: number, endPct: number, length: number, count: number) {
-  if (![2, 4, 8, 16].includes(count)) throw new Error('Choose 2, 4, 8 or 16 slices.');
+  if (!Number.isInteger(count) || count < 2 || count > 32) throw new Error('Choose 2 to 32 slices.');
   const { start, end } = rangeFromPercent(startPct, endPct, length);
   if (end - start < count) throw new Error('Selected region has fewer frames than slices.');
   return Array.from({ length: count }, (_, index) => ({

@@ -8,7 +8,7 @@ import { PADS_PER_BANK, formatPadLabel, type PadBankApi } from './usePadBank';
 
 export type PadBankManagerProps = Pick<
   PadBankApi,
-  'slots' | 'activeBank' | 'selectedPadId' | 'triggerPad' | 'deletePads' | 'storageReady'
+  'slots' | 'activeBank' | 'selectedPadId' | 'triggerPad' | 'deletePads' | 'copyPad' | 'storageReady'
 >;
 
 export const PadBankManager: React.FC<PadBankManagerProps> = ({
@@ -17,13 +17,17 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
   selectedPadId,
   triggerPad,
   deletePads,
+  copyPad,
   storageReady,
 }) => {
   // Each finger is tracked by pointerId so simultaneous touches light and release independently.
   const activePointers = useRef(new Map<number, { padId: string; release: () => void }>());
   const gridRef = useRef<HTMLDivElement>(null);
+  const copyingPointer = useRef<{ pointerId: number; source: string } | null>(null);
   const [pressedPads, setPressedPads] = useState<ReadonlySet<string>>(new Set());
   const [selecting, setSelecting] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const [copyError, setCopyError] = useState('');
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -35,6 +39,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
     const pointers = activePointers.current;
     setPressedPads(new Set());
     return () => {
+      copyingPointer.current = null;
       for (const { release } of pointers.values()) release();
       pointers.clear();
     };
@@ -67,6 +72,10 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
     if (activePointers.current.has(event.pointerId)) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
+    if (copying) {
+      if (slots[padId].sampleKey && !copyingPointer.current) copyingPointer.current = { pointerId: event.pointerId, source: padId };
+      return;
+    }
     if (selecting) {
       toggleSelection(padId);
       return;
@@ -76,6 +85,21 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
   };
 
   const handlePointerEnd = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = copyingPointer.current;
+    if (drag?.pointerId === event.pointerId) {
+      copyingPointer.current = null;
+      if (event.type === 'pointerup') {
+        const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLButtonElement>('[data-pad-id]');
+        const destination = target?.dataset.padId;
+        if (destination && destination !== drag.source) {
+          setCopyError('');
+          void copyPad(drag.source, destination).catch((failure: unknown) => {
+            setCopyError(failure instanceof Error ? failure.message : 'Could not copy pad.');
+          });
+        }
+      }
+      return;
+    }
     const active = activePointers.current.get(event.pointerId);
     if (!active) return;
     active.release();
@@ -87,15 +111,23 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
     <div className="flex flex-col flex-1 min-h-0 gap-1">
       <div className="flex items-center justify-between gap-1 text-[9px]">
         <button type="button" disabled={!storageReady || deleting} onClick={() => {
-          setSelecting(!selecting); setSelected(new Set()); setConfirming(false); setError('');
+          setSelecting(!selecting); setCopying(false); setCopyError(''); setSelected(new Set()); setConfirming(false); setError('');
         }} className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-300 disabled:opacity-40">
           {selecting ? 'CANCEL' : 'DELETE PADS'}
         </button>
+        {!selecting && <button type="button" disabled={!storageReady} aria-pressed={copying} onClick={() => {
+          setCopying(!copying); setCopyError('');
+        }} className={`rounded border px-2 py-1 disabled:opacity-40 ${copying ? 'border-cyan-600 text-cyan-300' : 'border-zinc-700 text-zinc-300'}`}>
+          {copying ? 'COPY ON' : 'COPY'}
+        </button>}
         {selecting && <button type="button" disabled={!selected.size || deleting} onClick={() => setConfirming(true)}
           className="rounded border border-rose-800 bg-rose-950 px-2 py-1 text-rose-300 disabled:opacity-40">
           DELETE {selected.size}
         </button>}
       </div>
+      {copying && <div role={copyError ? 'alert' : 'status'} className={`text-[9px] ${copyError ? 'text-rose-300' : 'text-zinc-400'}`}>
+        {copyError || 'DRAG A LOADED PAD TO AN EMPTY PAD'}
+      </div>}
       {confirming && <div role="dialog" aria-label="Confirm pad deletion" className="pad-delete-dialog">
         <div className="pad-delete-dialog-panel">
           <strong>DELETE {selected.size} PAD{selected.size === 1 ? '' : 'S'}?</strong>
@@ -129,6 +161,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
         return (
           <button
             key={padId}
+            data-pad-id={padId}
             type="button"
             aria-pressed={selecting ? isSelected : undefined}
             onClick={(event) => {

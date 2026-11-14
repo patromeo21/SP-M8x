@@ -32,7 +32,13 @@ export function applyTouchOptimizations(): void {
       -webkit-user-select: none;
     }
 
-    .pad-trigger {
+    .app-shell, .app-shell *:not(input):not(textarea):not(select) {
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+    .pad-trigger, .sampler-waveform, .sampler-waveform * {
       touch-action: none;
     }
   `;
@@ -41,5 +47,14 @@ export function applyTouchOptimizations(): void {
   const preventZoom = (event: Event) => event.preventDefault();
   document.addEventListener('gesturestart', preventZoom, { passive: false });
   document.addEventListener('gesturechange', preventZoom, { passive: false });
+  const preventPerformanceGesture = (event: Event) => {
+    const target = event.target;
+    if (!(target instanceof Element) || !target.closest('.app-shell') || target.closest('input, textarea, select')) return;
+    if (event.cancelable) event.preventDefault();
+  };
+  document.addEventListener('touchmove', preventPerformanceGesture, { passive: false });
+  document.addEventListener('dragstart', preventPerformanceGesture);
+  document.addEventListener('selectstart', preventPerformanceGesture);
+  document.addEventListener('contextmenu', preventPerformanceGesture);
   console.log('[TouchOptimizer] Applied mobile touch constraints for iPad 9th Gen.');
 }

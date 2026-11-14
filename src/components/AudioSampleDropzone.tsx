@@ -57,8 +57,7 @@ export const AudioSampleDropzone: React.FC<AudioSampleDropzoneProps> = ({ padId,
           }}
           onChange={handleFileChange}
         />
-        <span>📁</span>
-        <span className="truncate">{`LOAD SAMPLE (${padId})`}</span>
+        <span className="truncate">{`LOAD ${padId}`}</span>
       </label>
       {isLoading && (
         <span className="text-[10px] text-cyan-400 animate-pulse">DECODING AUDIO BUFFER...</span>

@@ -34,11 +34,12 @@ test('restored slices share a single decode and each receives the buffer', async
   let finishDeletion;
   let holdAssignment = false;
   let finishAssignment;
+  const stopped = [];
   const engine = {
     initialize: async () => {},
     decodeAudioData: () => { decodeCount++; return new Promise((resolve) => { releaseDecode = () => resolve(buffer); }); },
     setPadBuffer: (id, value) => registered.set(id, value), clearPadBuffer: (id) => registered.delete(id),
-    triggerPad: () => 'voice', stopVoice: () => {}, stopAllVoices: () => {},
+    triggerPad: () => 'voice', stopVoice: (id) => stopped.push(id), stopAllVoices: () => {},
   };
   const storage = {
     readStoredPads: async () => [pad('A1'), pad('A2'), pad('A3')],
@@ -86,9 +87,17 @@ test('restored slices share a single decode and each receives the buffer', async
     releaseDecode();
     await flush();
     api = render();
+    api.updatePad('A1', { playbackMode: 'gate' });
+    assert.ok(stopped.includes('A1'));
+    api.updatePad('A1', { playbackMode: 'one-shot' });
     assert.equal(api.slots.A1.buffer, buffer);
     assert.equal(api.slots.A2.buffer, buffer);
     assert.equal(registered.get('A1'), buffer);
+    holdAssignment = false;
+    const many = await render().chopToBank('A1', 'C', 32);
+    assert.deepEqual(many.slice(0, 3), ['C1', 'C2', 'C3']);
+    assert.deepEqual(many.slice(15, 18), ['C16', 'D1', 'D2']);
+    assert.equal(many.at(-1), 'D16');
     assert.equal(registered.get('A2'), buffer);
     api.triggerPad('A3');
     await flush();
@@ -135,6 +144,11 @@ test('restored slices share a single decode and each receives the buffer', async
     assert.equal(render().slots.A1.sampleKey, 'shared');
     assert.equal(registered.has('A4'), false);
     assert.equal(registered.get('A1'), buffer);
+    holdAssignment = false;
+    await render().copyPad('A1', 'A4');
+    assert.equal(render().slots.A4.buffer, buffer);
+    await assert.rejects(render().copyPad('A1', 'A4'), /occupied/);
+    assert.equal(render().slots.A1.sampleKey, 'shared');
   } finally {
     delete globalThis.__padTest;
   }

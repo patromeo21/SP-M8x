@@ -36,7 +36,9 @@ export interface PadBankApi {
   selectPad: (padId: string) => void;
   loadSample: (padId: string, buffer: AudioBuffer, name: string, audio: Blob) => void;
   updatePad: (padId: string, patch: PadSlotPatch) => void;
+  previewRange: (padId: string, startPct: number, endPct: number) => void;
   chopToBank: (padId: string, bank: BankId, count: number) => Promise<string[]>;
+  copyPad: (sourceId: string, destinationId: string) => Promise<void>;
   deletePads: (padIds: string[]) => Promise<void>;
   triggerPad: (padId: string) => () => void;
   stopAll: () => void;
@@ -158,8 +160,22 @@ export function usePadBank(): PadBankApi {
     }
     putSlot(next);
     if (next.sampleKey) persist(savePadSettings(storedPad(next)));
-    if (patch.playbackMode && patch.playbackMode !== 'loop') stopLoop(padId);
+    if (patch.playbackMode && patch.playbackMode !== current.playbackMode) {
+      stopLoop(padId);
+      if (patch.playbackMode === 'gate') audioEngine.stopVoice(padId);
+    }
   }, [persist, putSlot, stopLoop]);
+
+  const previewRange = useCallback((padId: string, startPct: number, endPct: number) => {
+    const current = slotsRef.current[padId];
+    if (!current?.buffer || reservedPads.current.has(padId)) return;
+    const range = rangeFromPercent(startPct, endPct, current.buffer.length);
+    putSlot({
+      ...current,
+      startPct: percentFromFrame(range.start, current.buffer.length),
+      endPct: percentFromFrame(range.end, current.buffer.length),
+    });
+  }, [putSlot]);
 
   const loadSample = useCallback((padId: string, buffer: AudioBuffer, name: string, audio: Blob) => {
     const current = slotsRef.current[padId];
@@ -216,9 +232,13 @@ export function usePadBank(): PadBankApi {
     const current = slotsRef.current[padId];
     if (current.sampleKey !== sampleKey) throw new Error('Source sample changed. Try again.');
     const ranges = gridSliceRanges(current.startPct, current.endPct, buffer.length, count);
-    const ids = Array.from({ length: PADS_PER_BANK }, (_, index) => `${bank}${index + 1}`)
+    const bankIndex = BANKS.indexOf(bank);
+    const destinationBanks = count > 16
+      ? Array.from({ length: BANKS.length }, (_, index) => BANKS[(bankIndex + index) % BANKS.length])
+      : [bank];
+    const ids = destinationBanks.flatMap((destination) => Array.from({ length: PADS_PER_BANK }, (_, index) => `${destination}${index + 1}`))
       .filter((id) => !slotsRef.current[id].sampleKey && !reservedPads.current.has(id));
-    if (ids.length < count) throw new Error(`Bank ${bank} needs ${count} empty pads; ${ids.length} available.`);
+    if (ids.length < count) throw new Error(`${count} empty pads needed; ${ids.length} available${count <= 16 ? ` in bank ${bank}` : ''}.`);
     const destinations = ids.slice(0, count);
     destinations.forEach((id) => reservedPads.current.add(id));
     const slices = destinations.map((id, index): PadSlot => ({
@@ -252,6 +272,41 @@ export function usePadBank(): PadBankApi {
       destinations.forEach((id) => reservedPads.current.delete(id));
     }
   }, [ensureBuffer, storageReady]);
+
+  const copyPad = useCallback(async (sourceId: string, destinationId: string): Promise<void> => {
+    if (!storageReady || failedWrite.current) throw new Error('Sample storage is unavailable or has unsaved changes.');
+    const source = slotsRef.current[sourceId];
+    const destination = slotsRef.current[destinationId];
+    if (!source?.sampleKey) throw new Error('Source pad is empty.');
+    if (!destination || destination.sampleKey || reservedPads.current.has(destinationId)) throw new Error('Destination pad is occupied or busy.');
+    const sampleKey = source.sampleKey;
+    reservedPads.current.add(destinationId);
+    pendingWrites.current++;
+    setStorageStatus('SAVING');
+    try {
+      const buffer = source.buffer ?? await ensureBuffer(sourceId, sampleKey);
+      const current = slotsRef.current[sourceId];
+      if (current.sampleKey !== sampleKey) throw new Error('Source sample changed.');
+      const copy: PadSlot = { ...current, id: destinationId, buffer, loading: false };
+      await saveSlices(sourceId, sampleKey, [storedPad(copy)]);
+      audioEngine.setPadBuffer(destinationId, buffer);
+      putSlot(copy);
+      if (!failedWrite.current) {
+        setStorageError(false);
+        setStorageStatus(pendingWrites.current > 1 ? 'SAVING' : 'PAD COPIED');
+      }
+    } catch (error) {
+      console.error('[usePadBank] Could not copy pad:', error);
+      if (!failedWrite.current) {
+        setStorageError(true);
+        setStorageStatus('PAD COPY FAILED');
+      }
+      throw error;
+    } finally {
+      pendingWrites.current--;
+      reservedPads.current.delete(destinationId);
+    }
+  }, [ensureBuffer, putSlot, storageReady]);
 
   const removePads = useCallback(async (padIds: string[]) => {
     if (!storageReady || failedWrite.current) throw new Error('Sample storage is unavailable or has unsaved changes.');
@@ -353,7 +408,9 @@ export function usePadBank(): PadBankApi {
     selectPad: setSelectedPadId,
     loadSample,
     updatePad,
+    previewRange,
     chopToBank,
+    copyPad,
     deletePads: removePads,
     triggerPad,
     stopAll,

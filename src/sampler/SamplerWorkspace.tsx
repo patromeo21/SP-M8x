@@ -15,8 +15,8 @@ export interface SamplerWorkspaceProps {
 }
 
 export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({ padBank, recorder }) => (
-  <div className="flex-1 grid grid-cols-2 gap-3 overflow-y-auto">
-    <div className="bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col gap-2">
+  <div className="sampler-full flex-1 grid gap-3 overflow-hidden min-h-0">
+    <div className="sampler-full-pads bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col gap-2 min-h-0">
       <div className="flex items-center justify-between border-b border-[var(--border-grid)] pb-2">
         <span className="text-[10px] font-bold text-[var(--accent-phrase)] tracking-wider">PAD BANKS</span>
         <div className="flex space-x-1">
@@ -40,14 +40,15 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({ padBank, rec
         selectedPadId={padBank.selectedPadId}
         triggerPad={padBank.triggerPad}
         deletePads={padBank.deletePads}
+        copyPad={padBank.copyPad}
         storageReady={padBank.storageReady}
       />
     </div>
     <SamplerWorkbench
       pad={padBank.selectedPad}
       onUpdatePad={padBank.updatePad}
+      onPreviewRange={padBank.previewRange}
       onLoadSample={padBank.loadSample}
-      onAudition={padBank.triggerPad}
       recordingStatus={recorder.status}
       onRecord={recorder.toggle}
       storageReady={padBank.storageReady}

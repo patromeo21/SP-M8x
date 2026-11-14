@@ -68,6 +68,42 @@
   outline: 2px solid var(--accent-phrase);
 }
 
+.sampler-toolbar {
+  display: grid;
+  grid-template-columns: minmax(52px, 1fr) minmax(56px, 1fr) minmax(40px, .7fr) minmax(36px, .6fr) minmax(67px, 1.1fr);
+  gap: 3px;
+  margin-bottom: 4px;
+  min-width: 0;
+}
+.sampler-toolbar > button, .sampler-toolbar > select, .sampler-toolbar .sample-file-label {
+  min-height: 36px;
+}
+.sampler-toolbar .sample-dropzone {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  gap: 0;
+}
+.sampler-toolbar .sample-file-label {
+  padding: 2px;
+  font-size: 9px;
+}
+
+.sampler-full {
+  grid-template-rows: minmax(0, 45fr) minmax(0, 55fr);
+}
+.sampler-full .sampler-workbench {
+  grid-row: 1;
+  min-height: 0;
+}
+.sampler-full .sampler-waveform {
+  flex: 1 1 auto;
+  min-height: 4rem;
+}
+.sampler-full-pads {
+  grid-row: 2;
+}
+
 .pad-grid, .pad-grid * {
   touch-action: none;
   -webkit-touch-callout: none;
@@ -143,6 +179,25 @@
 .wave-precision { left: 48px; }
 .wave-pitch { right: 48px; touch-action: none; }
 .wave-pitch-active { width: 130px; }
+.wave-zoom {
+  position: absolute;
+  z-index: 3;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  background: #111827;
+  color: #a1a1aa;
+  font-size: 9px;
+}
+.wave-zoom button {
+  min-width: 24px;
+  min-height: 24px;
+  color: #00e6c3;
+  font-size: 14px;
+}
+.wave-zoom button:disabled { opacity: 0.35; }
 .pitch-scale {
   position: relative;
   display: block;
@@ -211,9 +266,6 @@
     padding: 0.375rem;
   }
   .workspace-controls .sampler-workbench {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 0.25rem;
     min-height: 0;
   }
 
@@ -223,38 +275,12 @@
   }
 
   .workspace-controls .sampler-waveform {
-    grid-column: 1 / -1;
-    grid-row: 1;
     height: 4rem;
     margin-bottom: 0;
   }
 
-  .workspace-controls .sampler-actions {
-    grid-column: 1;
-    grid-row: 2;
-    margin-bottom: 0;
-    min-width: 0;
-  }
-
-  .workspace-controls .sampler-input {
-    grid-column: 2;
-    grid-row: 2;
-  }
-
-  .workspace-controls .sampler-chop {
-    grid-column: 1 / -1;
-    grid-row: 3;
-    margin-bottom: 0;
-    min-width: 0;
-  }
-
-  .workspace-controls .sample-dropzone {
-    padding: 0.25rem;
-  }
-
   .workspace-controls .sampler-chop-status,
   .workspace-controls .sampler-record-status {
-    grid-column: 1 / -1;
     margin-bottom: 0;
     line-height: 1;
   }

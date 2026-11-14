@@ -94,8 +94,8 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
               <SamplerWorkbench
                 pad={padBank.selectedPad}
                 onUpdatePad={padBank.updatePad}
+                onPreviewRange={padBank.previewRange}
                 onLoadSample={padBank.loadSample}
-                onAudition={padBank.triggerPad}
                 recordingStatus={recorder.status}
                 onRecord={recorder.toggle}
                 storageReady={padBank.storageReady}
@@ -153,6 +153,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
                       selectedPadId={padBank.selectedPadId}
                       triggerPad={padBank.triggerPad}
                       deletePads={padBank.deletePads}
+                      copyPad={padBank.copyPad}
                       storageReady={padBank.storageReady}
                     />
                   </div>
