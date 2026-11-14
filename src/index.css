@@ -55,6 +55,24 @@
     env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
+.sample-frame-input {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.sample-frame-input:focus {
+  position: absolute;
+  z-index: 10;
+  right: 0;
+  top: 0;
+  width: 8rem;
+  height: 44px;
+  padding: 0.25rem 0.5rem;
+  background: #18181b;
+  border: 1px solid var(--accent-table);
+  border-radius: 0.25rem;
+}
+
 @media (max-height: 680px) {
   .workspace-controls {
     gap: 0.25rem;

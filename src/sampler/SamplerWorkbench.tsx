@@ -3,10 +3,11 @@
  * SamplerWorkbench.tsx — Waveform / slicing workbench for the selected pad
  */
 
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AudioSampleDropzone } from '../components/AudioSampleDropzone';
 import { formatPadLabel, type PadBankApi, type PadSlot } from './usePadBank';
 import type { RecordingStatus } from '../audio/inputRecorder';
+import { percentFromFrame, rangeFromPercent } from './sampleRange';
 
 const WAVE_COLUMNS = 240;
 
@@ -44,9 +45,14 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
   storageReady,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [sliceError, setSliceError] = useState<string | null>(null);
   const peaks = useMemo(() => (pad.buffer ? computePeaks(pad.buffer) : null), [pad.buffer]);
   const duration = pad.buffer?.duration ?? 0;
   const sampleRate = pad.buffer?.sampleRate ?? 44100;
+  const length = pad.buffer?.length ?? 0;
+  const range = length ? rangeFromPercent(pad.startPct, pad.endPct, length) : { start: 0, end: 0 };
+
+  useEffect(() => setSliceError(null), [pad.id, pad.sampleKey]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -109,10 +115,12 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
       </div>
 
       <div className="sampler-sliders grid grid-cols-3 gap-2 mb-2">
-        <SliderCell label="START" display={`${pad.startPct}%`} min={0} max={99} value={pad.startPct} disabled={!pad.buffer}
-          onChange={(value) => update({ startPct: value })} />
-        <SliderCell label="END" display={`${pad.endPct}%`} min={1} max={100} value={pad.endPct} disabled={!pad.buffer}
-          onChange={(value) => update({ endPct: value })} />
+        <SampleRangeCell key={`${pad.id}-start`} label="START" value={range.start} min={0} max={Math.max(0, range.end - 1)}
+          disabled={!pad.buffer} onError={setSliceError}
+          onChange={(value) => { setSliceError(null); update({ startPct: percentFromFrame(value, length) }); }} />
+        <SampleRangeCell key={`${pad.id}-end`} label="END" value={range.end} min={range.start + 1} max={length}
+          disabled={!pad.buffer} onError={setSliceError}
+          onChange={(value) => { setSliceError(null); update({ endPct: percentFromFrame(value, length) }); }} />
         <SliderCell label="PITCH" display={`${pad.pitch > 0 ? '+' : ''}${pad.pitch}ST`} min={-12} max={12} value={pad.pitch}
           disabled={!pad.buffer} onChange={(value) => update({ pitch: value })} />
       </div>
@@ -158,6 +166,62 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
             recordingStatus.phase === 'processing' ? `PROCESSING ${recordingStatus.padId}` : recordingStatus.message}
         </div>
       ) : null}
+      {sliceError && <div role="alert" className="sampler-record-status text-[9px] text-rose-300">{sliceError}</div>}
+    </div>
+  );
+};
+
+interface SampleRangeCellProps {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  disabled: boolean;
+  onChange: (value: number) => void;
+  onError: (message: string | null) => void;
+}
+
+const SampleRangeCell: React.FC<SampleRangeCellProps> = ({ label, value, min, max, disabled, onChange, onError }) => {
+  const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => setDraft(String(value)), [value, disabled]);
+
+  const commit = () => {
+    const frame = Number(draft);
+    if (!/^\d+$/.test(draft) || !Number.isSafeInteger(frame) || frame < min || frame > max) {
+      onError(`${label} frame must be ${min}–${max}.`);
+      setDraft(String(value));
+      return;
+    }
+    onChange(frame);
+  };
+
+  return (
+    <div className="relative flex min-w-0 flex-col bg-zinc-900/60 border border-zinc-800 rounded p-1.5">
+      <div className="flex min-w-0 flex-col text-[8px]">
+        <span className="text-zinc-400 font-bold leading-none">{label}</span>
+        <input
+          aria-label={`${label} sample frame`}
+          type="text"
+          inputMode="numeric"
+          value={draft}
+          disabled={disabled}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }}
+          className="sample-frame-input min-w-0 w-full bg-transparent text-right text-[var(--accent-table)] disabled:opacity-40"
+        />
+      </div>
+      <input
+        aria-label={`${label} sample slider`}
+        type="range"
+        min={min}
+        max={Math.max(min, max)}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="w-full accent-[var(--accent-table)] cursor-pointer h-1 bg-zinc-800 rounded disabled:opacity-40"
+      />
     </div>
   );
 };

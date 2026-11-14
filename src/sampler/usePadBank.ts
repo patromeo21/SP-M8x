@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { audioEngine } from '../audio/audioEngine';
 import type { BankId } from '../project/projectController';
 import { readStoredAudio, readStoredPads, savePadSettings, saveSample, type StoredPad } from './padStorage';
+import { percentFromFrame, rangeFromPercent } from './sampleRange';
 
 export const BANKS: readonly BankId[] = ['A', 'B', 'C', 'D'];
 export const PADS_PER_BANK = 16;
@@ -102,10 +103,11 @@ export function usePadBank(): PadBankApi {
       if (!active) return;
       const restored = { ...slotsRef.current };
       for (const pad of saved) {
-        const startPct = Math.max(0, Math.min(99, pad.startPct));
+        if (pad.startPct < 0 || pad.endPct > 100 || pad.startPct >= pad.endPct) {
+          throw new Error(`Saved slice for ${pad.id} is invalid.`);
+        }
         restored[pad.id] = {
-          ...restored[pad.id], ...pad, buffer: null, loading: false, startPct,
-          endPct: Math.max(startPct + 1, Math.min(100, pad.endPct)),
+          ...restored[pad.id], ...pad, buffer: null, loading: false,
         };
       }
       slotsRef.current = restored;
@@ -135,8 +137,11 @@ export function usePadBank(): PadBankApi {
     const current = slotsRef.current[padId];
     if (!current) return;
     const next = { ...current, ...patch };
-    next.startPct = Math.max(0, Math.min(next.startPct, 99));
-    next.endPct = Math.max(next.startPct + 1, Math.min(next.endPct, 100));
+    if (next.buffer) {
+      const { start, end } = rangeFromPercent(next.startPct, next.endPct, next.buffer.length);
+      next.startPct = percentFromFrame(start, next.buffer.length);
+      next.endPct = percentFromFrame(end, next.buffer.length);
+    }
     putSlot(next);
     if (next.sampleKey) persist(savePadSettings(storedPad(next)));
     if (patch.loop === false) stopLoop(padId);
@@ -191,10 +196,10 @@ export function usePadBank(): PadBankApi {
       const current = slotsRef.current[padId];
       if (!buffer || current.sampleKey !== sampleKey) return;
       if (current.loop && stopLoop(padId)) return;
-      const duration = buffer.duration;
+      const { start, end } = rangeFromPercent(current.startPct, current.endPct, buffer.length);
       const voiceId = audioEngine.triggerPad(padId, {
-        sliceStart: (current.startPct / 100) * duration,
-        sliceEnd: (current.endPct / 100) * duration,
+        sliceStart: start / buffer.sampleRate,
+        sliceEnd: end / buffer.sampleRate,
         semitoneOffset: current.pitch,
         loop: current.loop,
       });

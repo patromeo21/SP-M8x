@@ -14,6 +14,8 @@ Imported samples, recordings, and pad settings are saved in this browser using
 IndexedDB. Tap a restored pad to decode and play it; its first tap may be slower.
 Browser storage can be cleared or reclaimed, so it is not a permanent backup.
 Watch the footer for save errors and avoid closing the page while it says SAVING.
+The START and END fields are sample-frame offsets; END is exclusive. Type a
+frame number or use the sliders, then audition the selected slice.
 
 Run `npm test` for the audio-engine checks and `npm run build` for the production
 TypeScript and Vite build.
