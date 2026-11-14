@@ -1,12 +1,4 @@
-/**
- * SP-M8x Hybrid Music Production Suite
- * SPM8xDashboard.tsx — Main Hardware Layout Shell (iPad Optimized)
- */
-
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { TrackerGrid } from '../tracker/TrackerGrid';
-import { PadBankManager } from '../sampler/PadBankManager';
-import { SamplerWorkbench } from '../sampler/SamplerWorkbench';
 import { SamplerWorkspace } from '../sampler/SamplerWorkspace';
 import { usePadBank, useEngineStatus } from '../sampler/usePadBank';
 import { useInputRecorder } from '../sampler/useInputRecorder';
@@ -17,22 +9,17 @@ import { trackerBridge } from '../tracker/trackerBridge';
 import { projectController } from '../project/projectController';
 import { PhraseTableEditor } from '../tracker/PhraseTableEditor';
 
-export type WorkspaceTab = 'workspace' | 'song' | 'phrase/table' | 'sampler';
+export type WorkspaceTab = 'phrase' | 'table' | 'song' | 'mixer' | 'sampler';
 
 export interface SPM8xDashboardProps {
   initialTab?: WorkspaceTab;
   activeStep?: number;
 }
 
-export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
-  initialTab = 'workspace',
-  activeStep = 0,
-}) => {
+export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'phrase', activeStep = 0 }) => {
   const [currentTab, setCurrentTab] = useState<WorkspaceTab>(initialTab);
-  const [deckMode, setDeckMode] = useState<'pads' | 'm8'>('pads');
   const padBank = usePadBank();
   const recorder = useInputRecorder(padBank.loadSample);
-  const { activeBank, setActiveBank } = padBank;
   const engineStatus = useEngineStatus();
   const [audioError, setAudioError] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -95,191 +82,46 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
     })();
   }, [padBank.preparePads, playing, starting]);
 
-  const triggerPad = useCallback((padId: string) => {
-    return padBank.triggerPad(padId, (time) => {
-      if (!recordingRef.current) return;
-      const position = trackerEngine.recordPosition(time);
-      if (position) {
-        const state = projectController.getState();
-        const patternIndex = state.settings.activePatternIndex;
-        const step = state.tracker.patterns[patternIndex]?.steps[position.step];
-        if (step && (!step.sampleId || step.sampleId === '--') && (!step.note || step.note === '---')) {
-          projectController.updateStep(patternIndex, position.step, {
-            note: 'C-4', sampleId: padId, subTickOffset: position.subTickOffset,
-          });
-          setTransportMessage('');
-        } else {
-          setTransportMessage(`Step ${position.step + 1} occupied — not recorded.`);
-        }
-      }
-    });
-  }, [padBank.triggerPad]);
-
-  const visibleStep = playing ? playhead : activeStep;
+  const triggerPad = useCallback((padId: string) => padBank.triggerPad(padId, (time) => {
+    if (!recordingRef.current) return;
+    const position = trackerEngine.recordPosition(time);
+    if (!position) return;
+    const state = projectController.getState();
+    const patternIndex = state.settings.activePatternIndex;
+    const step = state.tracker.patterns[patternIndex]?.steps[position.step];
+    if (step && (!step.sampleId || step.sampleId === '--') && (!step.note || step.note === '---')) {
+      projectController.updateStep(patternIndex, position.step, {
+        note: 'C-4', sampleId: padId, subTickOffset: position.subTickOffset,
+      });
+      setTransportMessage('');
+    } else {
+      setTransportMessage(`Step ${position.step + 1} occupied — not recorded.`);
+    }
+  }), [padBank.triggerPad]);
 
   return (
     <div className="app-shell flex flex-col w-full bg-[var(--bg-shell-deep)] text-[var(--text-primary)] font-mono overflow-hidden select-none">
-      
-      {/* 1. Persistent Top Navigation Bar */}
       <header className="flex items-center justify-between px-4 py-2 bg-[var(--bg-canvas)] border-b border-[var(--border-grid)] shrink-0">
-        <div className="flex items-center space-x-3">
-          <h1 className="text-xs font-black tracking-widest text-[var(--accent-phrase)] drop-shadow-[0_0_8px_rgba(34,211,238,0.4)]">
-            SP-M8x <span className="text-zinc-500 font-normal">v0.9.2</span>
-          </h1>
-          <span className="text-[10px] bg-zinc-900 text-zinc-400 px-2 py-0.5 rounded border border-zinc-800">
-            IPAD 9TH GEN TARGET
-          </span>
-        </div>
-
-        {/* Workspace Tab Switcher */}
+        <h1 className="text-xs font-black tracking-widest text-[var(--accent-phrase)]">SP-M8x <span className="text-zinc-500 font-normal">v0.9.2</span></h1>
         <nav className="flex items-center space-x-1 bg-zinc-950 p-1 rounded-lg border border-[var(--border-grid)]">
-          {(['workspace', 'song', 'phrase/table', 'sampler'] as WorkspaceTab[]).map((tab) => {
-            const isActive = currentTab === tab;
-            let activeColorClass = 'text-[var(--accent-phrase)] border-[var(--accent-phrase)] bg-cyan-950/40';
-            if (tab === 'phrase/table') activeColorClass = 'text-[var(--accent-table)] border-[var(--accent-table)] bg-purple-950/40';
-            if (tab === 'song') activeColorClass = 'text-[var(--accent-song)] border-[var(--accent-song)] bg-green-950/40';
-
-            return (
-              <button
-                key={tab}
-                onClick={() => setCurrentTab(tab)}
-                className={`px-3 py-1 text-[10px] font-bold tracking-wider rounded transition-all uppercase border ${
-                  isActive
-                    ? `${activeColorClass} shadow-[0_0_10px_rgba(0,0,0,0.5)]`
-                    : 'text-zinc-500 border-transparent hover:text-zinc-300'
-                }`}
-              >
-                [ {tab} ]
-              </button>
-            );
-          })}
+          {(['phrase', 'table', 'song', 'mixer', 'sampler'] as const).map((tab) => <button key={tab} type="button" onClick={() => setCurrentTab(tab)}
+            className={`px-3 py-1 text-[10px] font-bold tracking-wider rounded uppercase border ${currentTab === tab ? 'text-[var(--accent-phrase)] border-[var(--accent-phrase)] bg-cyan-950/40' : 'text-zinc-500 border-transparent'}`}>[ {tab} ]</button>)}
         </nav>
       </header>
-
-      {/* 2. Main Viewport Container */}
       <main className="flex-1 flex overflow-hidden p-3 gap-3 bg-[var(--bg-shell-deep)]">
-        {currentTab === 'workspace' ? (
-          /* 60 / 40 Split Workspace Frame */
-          <>
-            {/* Left Pane: Tracker Matrix (60%) */}
-            <section className="w-[60%] flex flex-col bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 overflow-hidden shadow-xl">
-              <div className="flex items-center justify-between mb-2 pb-2 border-b border-[var(--border-grid)]">
-                <span className="text-[10px] font-bold text-zinc-400 tracking-wider">
-                  TRACKER SEQUENCER (64 STEPS)
-                </span>
-                <span className="text-[10px] text-[var(--accent-phrase)] font-bold">
-                  STEP: {visibleStep < 0 ? '--' : String(visibleStep).padStart(2, '0')} / 63
-                </span>
-              </div>
-              <div className="flex-1 overflow-hidden flex flex-col">
-                <TrackerGrid patternId={projectController.getState().settings.activePatternIndex} activeStep={visibleStep} />
-              </div>
-            </section>
-
-            {/* Right Pane: Module Vertical Stack (40%) */}
-            <section className="workspace-controls w-[40%] flex flex-col gap-3 overflow-y-auto">
-              {/* Sampler Workbench Scaffold */}
-              <SamplerWorkbench
-                pad={padBank.selectedPad}
-                onUpdatePad={padBank.updatePad}
-                onPreviewRange={padBank.previewRange}
-                onLoadSample={padBank.loadSample}
-                recordingStatus={recorder.status}
-                onRecord={recorder.toggle}
-                storageReady={padBank.storageReady}
-                activeBank={padBank.activeBank}
-                onChop={padBank.chopToBank}
-              />
-
-              {/* Sampler Pads / M8 Deck Matrix Container */}
-              <div className="workspace-deck bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col flex-1">
-                <div className="workspace-deck-heading flex items-center justify-between border-b border-[var(--border-grid)] pb-2 mb-2">
-                  <div className="flex items-center space-x-2">
-                    <span className="text-[10px] font-bold text-[var(--accent-phrase)] tracking-wider">
-                      PAD BANKS & M8 DECKS
-                    </span>
-                  </div>
-                  <div className="flex space-x-1">
-                    <button
-                      onClick={() => setDeckMode('pads')}
-                      className={`text-[9px] px-2 py-0.5 rounded font-bold transition-all ${
-                        deckMode === 'pads' ? 'bg-cyan-950 text-[var(--accent-phrase)] border border-cyan-800' : 'bg-zinc-900 text-zinc-500'
-                      }`}
-                    >
-                      PADS
-                    </button>
-                    <button
-                      onClick={() => setDeckMode('m8')}
-                      className={`text-[9px] px-2 py-0.5 rounded font-bold transition-all ${
-                        deckMode === 'm8' ? 'bg-purple-950 text-purple-300 border border-purple-800' : 'bg-zinc-900 text-zinc-500'
-                      }`}
-                    >
-                      M8 DECK
-                    </button>
-                  </div>
-                </div>
-
-                {deckMode === 'pads' ? (
-                  <div className="flex flex-col flex-1 gap-2">
-                    <div className="flex justify-between items-center bg-zinc-950 px-2 py-1 rounded text-[9px]">
-                      <span className="text-zinc-400">BANK: <strong className="text-cyan-400">{activeBank}</strong></span>
-                      <div className="flex space-x-1">
-                        {(['A', 'B', 'C', 'D'] as const).map((b) => (
-                          <button
-                            key={b}
-                            onClick={() => setActiveBank(b)}
-                            className={`px-2 py-0.5 rounded ${activeBank === b ? 'bg-cyan-900 text-cyan-200' : 'bg-zinc-900 text-zinc-400'}`}
-                          >
-                            {b}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <PadBankManager
-                      slots={padBank.slots}
-                      activeBank={activeBank}
-                      selectedPadId={padBank.selectedPadId}
-                      triggerPad={triggerPad}
-                      deletePads={padBank.deletePads}
-                      copyPad={padBank.copyPad}
-                      storageReady={padBank.storageReady}
-                    />
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-4 gap-2 flex-1 items-center p-2 bg-zinc-950/40 rounded border border-zinc-800/60">
-                    {['UP', 'DOWN', 'LEFT', 'RIGHT', 'EDIT', 'PLAY', 'SHIFT', 'BND'].map((btn) => (
-                      <button key={btn} onClick={btn === 'PLAY' ? toggleTransport : undefined} className="bg-zinc-900 border border-zinc-700 rounded py-3 text-[10px] font-bold text-zinc-300 hover:bg-cyan-950 hover:text-cyan-300 transition-all">
-                        {btn}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </section>
-          </>
-        ) : currentTab === 'sampler' ? (
-          <SamplerWorkspace padBank={padBank} recorder={recorder} triggerPad={triggerPad} />
-        ) : currentTab === 'phrase/table' ? (
-          <PhraseTableEditor slots={padBank.slots} activeStep={visibleStep} transportBusy={playing || starting} />
-        ) : (
-          <div className="flex-1 flex items-center justify-center bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl">
-            <div className="text-center">
-              <h2 className="text-sm font-bold text-[var(--accent-phrase)] uppercase tracking-widest mb-1">
-                -- {currentTab} VIEW --
-              </h2>
-              <p className="text-[11px] text-zinc-500">
-                {currentTab === 'song' && '6-track arrangement view is planned. current grid in wired yet.'}
-              </p>
-            </div>
-          </div>
-        )}
+        {currentTab === 'phrase' || currentTab === 'table'
+          ? <PhraseTableEditor slots={padBank.slots} activeStep={playing ? playhead : activeStep} transportBusy={playing || starting} mode={currentTab} />
+          : currentTab === 'sampler'
+            ? <SamplerWorkspace padBank={padBank} recorder={recorder} triggerPad={triggerPad} />
+            : <section className="flex-1 p-4 bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl">
+                <h2 className="text-sm text-cyan-300 uppercase">{currentTab}</h2>
+                <p className="text-xs text-zinc-400 mt-2">{currentTab === 'song' ? 'Song arrangement is not yet implemented.' : 'Mixer routing and performance effects are not yet implemented. Master gain is available below.'}</p>
+              </section>}
       </main>
-
-      {/* 3. Footer Transport / Status Bar */}
       <footer className="flex items-center justify-between px-4 py-2 bg-[var(--bg-canvas)] border-t border-[var(--border-grid)] text-[10px] text-zinc-400 shrink-0">
         <div className="flex items-center space-x-4">
           <span className="flex items-center space-x-1.5">
-            <span className={`w-2 h-2 rounded-full ${engineStatus.state === 'running' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
+            <span className={`w-2 h-2 rounded-full ${engineStatus.state === 'running' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
             {engineStatus.state === 'running' ? <span className="text-zinc-300 font-bold">ENGINE READY</span> :
               engineStatus.state === 'closed' ? <span role="alert" className="text-rose-300 font-bold">AUDIO CLOSED — RELOAD</span> :
               <button type="button" className="text-amber-300 font-bold" onClick={() => {
@@ -288,28 +130,16 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
                   console.error('[SP-M8x] Could not resume audio:', error);
                   setAudioError(true);
                 });
-              }}>
-                {audioError ? 'AUDIO BLOCKED — TAP TO RETRY' : engineStatus.state === 'idle' ? 'TAP TO START AUDIO' : 'AUDIO PAUSED — TAP TO RESUME'}
-              </button>}
+              }}>{audioError ? 'AUDIO BLOCKED — TAP TO RETRY' : engineStatus.state === 'idle' ? 'TAP TO START AUDIO' : 'AUDIO PAUSED — TAP TO RESUME'}</button>}
           </span>
           <span>VOICES: <strong className="text-zinc-200">{engineStatus.voices}</strong></span>
-          <button type="button" onClick={toggleTransport} className="text-cyan-300 font-bold">
-            {starting ? 'CANCEL' : playing ? 'STOP' : 'PLAY'}
-          </button>
-          <button type="button" aria-pressed={armed} onClick={() => setArmed(!armed)}
-            className={armed ? 'text-rose-400 font-bold' : 'text-zinc-400'}>
-            {armed ? 'PHRASE REC ARMED' : 'PHRASE REC'}
-          </button>
+          <button type="button" onClick={toggleTransport} className="text-cyan-300 font-bold">{starting ? 'CANCEL' : playing ? 'STOP' : 'PLAY'}</button>
+          <button type="button" aria-pressed={armed} onClick={() => setArmed(!armed)} className={armed ? 'text-rose-400 font-bold' : 'text-zinc-400'}>{armed ? 'PHRASE REC ARMED' : 'PHRASE REC'}</button>
           <span>BPM: <strong className="text-zinc-200">{projectController.getState().settings.bpm.toFixed(1)}</strong></span>
           <MasterOutput />
-          <span role={padBank.storageError ? 'alert' : 'status'} className={padBank.storageError ? 'text-rose-400' : 'text-zinc-400'}>
-            {padBank.storageStatus}
-          </span>
+          <span role={padBank.storageError ? 'alert' : 'status'} className={padBank.storageError ? 'text-rose-400' : 'text-zinc-400'}>{padBank.storageStatus}</span>
           {projectController.hasSaveError() && <span role="alert" className="text-rose-400">PHRASE SAVE FAILED</span>}
           {transportMessage && <span role="alert" className="text-rose-400">{transportMessage}</span>}
-        </div>
-        <div className="text-[9px] text-zinc-600">
-          SP-M8x HARDWARE INTERFACE SHELL
         </div>
       </footer>
     </div>

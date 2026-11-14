@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { projectController, type Pattern, type TrackerTable } from '../project/projectController';
 import type { PadSlot } from '../sampler/usePadBank';
 import { useStepDeletion } from './useStepDeletion';
+import { phraseTimingMarkers } from './phraseTiming';
 
 const fieldClass = 'bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-zinc-100';
 const buttonClass = 'border border-zinc-700 rounded px-2 py-1 text-zinc-300';
@@ -12,10 +13,10 @@ interface EditorProps {
   slots: Record<string, PadSlot>;
   activeStep: number;
   transportBusy: boolean;
+  mode: 'phrase' | 'table';
 }
 
-export function PhraseTableEditor({ slots, activeStep, transportBusy }: EditorProps) {
-  const [mode, setMode] = useState<'phrase' | 'table'>('phrase');
+export function PhraseTableEditor({ slots, activeStep, transportBusy, mode }: EditorProps) {
   const [tableId, setTableId] = useState<number | null>(null);
   const state = projectController.getState();
   const patternIndex = state.settings.activePatternIndex;
@@ -27,8 +28,6 @@ export function PhraseTableEditor({ slots, activeStep, transportBusy }: EditorPr
   return (
     <section className="flex-1 min-h-0 flex flex-col gap-2 p-3 bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl font-mono text-xs">
       <div className="flex items-center gap-2">
-        <button type="button" className={`${buttonClass} ${mode === 'phrase' ? 'text-cyan-300 border-cyan-500' : ''}`} onClick={() => setMode('phrase')}>PHRASE</button>
-        <button type="button" className={`${buttonClass} ${mode === 'table' ? 'text-purple-300 border-purple-500' : ''}`} onClick={() => setMode('table')}>TABLE</button>
         {mode === 'phrase' ? (
           <>
             <label>PHRASE <select aria-label="Active phrase" className={fieldClass} value={patternIndex} disabled={transportBusy}
@@ -50,7 +49,10 @@ export function PhraseTableEditor({ slots, activeStep, transportBusy }: EditorPr
       </div>
       {mode === 'phrase'
         ? <PhraseRows key={pattern.id} pattern={pattern} patternIndex={patternIndex} slots={slots} activeStep={activeStep} transportBusy={transportBusy} />
-        : table ? <TableRows key={table.id} table={table} /> : <p className="text-zinc-400">Create a table, then assign it to a phrase step.</p>}
+        : <div className="flex-1 min-h-0 flex flex-col gap-2">
+            <PhraseTimingGrid pattern={pattern} patternIndex={patternIndex} />
+            {table ? <TableRows key={table.id} table={table} /> : <p className="text-zinc-400">Create a reusable table, then assign it to a phrase step.</p>}
+          </div>}
     </section>
   );
 }
@@ -67,17 +69,14 @@ function PhraseRows({ pattern, patternIndex, slots, activeStep, transportBusy }:
   const pads = Object.values(slots).filter((slot) => slot.sampleKey);
 
   return (
-    <div className="flex-1 min-h-0 flex gap-4">
-      <div className="flex flex-col min-h-0 w-3/5">
+    <div className="flex-1 min-h-0 flex flex-col gap-4">
+      <div className="flex flex-col min-h-0">
         <div className="flex items-center gap-2 mb-1 text-[10px]">
-          {[0, 1, 2, 3].map((index) => <button key={index} type="button" className={`${buttonClass} ${page === index ? 'border-cyan-400 text-cyan-300' : ''}`}
+          {[0, 1].map((index) => <button key={index} type="button" className={`${buttonClass} ${page === index ? 'border-cyan-400 text-cyan-300' : ''}`}
             onClick={() => { setPage(index); setSelected(index * 16); }}>{index + 1}</button>)}
           <span className="ml-auto">{deletion.controls}</span>
         </div>
-        <div className="grid grid-cols-[3rem_1fr_1fr_3rem_3rem_3rem] text-zinc-500 text-[10px] px-2">
-          <span>STEP</span><span>NOTE</span><span>PAD</span><span>VEL</span><span>µ</span><span>TBL</span>
-        </div>
-        <div className="flex-1 min-h-0 flex flex-col">
+        <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(16, minmax(0, 1fr))' }}>
           {pattern.steps.slice(page * 16, page * 16 + 16).map((item, offset) => {
             const index = page * 16 + offset;
             const occupied = Boolean((item.note && item.note !== '---') || (item.sampleId && item.sampleId !== '--'));
@@ -86,14 +85,14 @@ function PhraseRows({ pattern, patternIndex, slots, activeStep, transportBusy }:
               onPointerDown={(event) => deletion.onPointerDown(event, index, occupied)}
               onPointerCancel={() => deletion.onPointerCancel(index)}
               onClick={() => { if (!deletion.consumeClick(index)) setSelected(index); }}
-              className={`grid grid-cols-[3rem_1fr_1fr_3rem_3rem_3rem] text-left px-2 flex-1 min-h-0 border-b border-zinc-800 ${deletion.selected.has(index) ? 'bg-rose-950 text-rose-200' : selected === index ? 'bg-cyan-950 text-cyan-200' : 'text-zinc-300'} ${activeStep === index ? 'border-l-4 border-l-cyan-400' : ''}`}>
+              className={`flex flex-col text-left px-1 py-2 min-w-0 border border-zinc-800 ${deletion.selected.has(index) ? 'bg-rose-950 text-rose-200' : selected === index ? 'bg-cyan-950 text-cyan-200' : 'text-zinc-300'} ${activeStep === index ? 'border-cyan-400' : ''}`}>
               <span>{String(index + 1).padStart(2, '0')}</span><span>{item.note || '---'}</span><span>{item.sampleId || '--'}</span>
               <span>{occupied ? item.velocity ?? 127 : '--'}</span><span>{occupied ? item.subTickOffset ?? 0 : '--'}</span><span>{item.tableId ?? '--'}</span>
             </button>;
           })}
         </div>
       </div>
-      {step && <div className="flex flex-col gap-3 text-zinc-400">
+      {step && <div className="flex flex-wrap items-start gap-3 text-zinc-400">
         <strong className="text-cyan-300">EDIT STEP {String(selected + 1).padStart(2, '0')}</strong>
         <label className="flex flex-col gap-1">PAD
           <select aria-label="Step pad" className={fieldClass} value={step.sampleId || '--'} disabled={transportBusy}
@@ -131,8 +130,52 @@ function PhraseRows({ pattern, patternIndex, slots, activeStep, transportBusy }:
             {projectController.getTables().map((table) => <option key={table.id} value={table.id}>{table.name}</option>)}
           </select>
         </label>
+        <button type="button" className={buttonClass} disabled={!assigned} onClick={() => {
+          if (window.confirm(`Clear the note on step ${selected + 1}?`)) projectController.clearStepNotes(patternIndex, [selected]);
+        }}>CLEAR NOTE</button>
         {transportBusy && <span className="text-amber-300">Stop to change pad assignments.</span>}
       </div>}
+    </div>
+  );
+}
+
+function PhraseTimingGrid({ pattern, patternIndex }: { pattern: Pattern; patternIndex: number }) {
+  const [page, setPage] = useState(0);
+  const [selected, setSelected] = useState<number | null>(null);
+  const events = phraseTimingMarkers(pattern.steps, page);
+  const step = selected === null ? null : pattern.steps[selected];
+  return (
+    <div className="border border-zinc-800 rounded p-2">
+      <div className="flex items-center gap-2 text-[10px] mb-1">
+        <strong className="text-purple-300">PHRASE TIMING — 64 POSITIONS / PAGE</strong>
+        {[0, 1].map((index) => <button key={index} type="button" className={`${buttonClass} ${page === index ? 'text-purple-300 border-purple-400' : ''}`}
+          onClick={() => { setPage(index); setSelected(null); }}>PAGE {index + 1}</button>)}
+        <span className="text-zinc-400">½ cell = ⅛ step · tap a marker to nudge</span>
+      </div>
+      <div className="grid text-[9px] text-zinc-500" style={{ gridTemplateColumns: 'repeat(16, minmax(0, 1fr))' }}>
+        {Array.from({ length: 16 }, (_, index) => <span key={index}>{String(page * 16 + index + 1).padStart(2, '0')}</span>)}
+      </div>
+      <div className="relative h-16 border border-zinc-700 bg-zinc-950">
+        <div className="absolute inset-0 grid" style={{ gridTemplateColumns: 'repeat(64, minmax(0, 1fr))' }}>
+          {Array.from({ length: 64 }, (_, index) => <span key={index} className={index % 4 === 0 ? 'border-l border-zinc-500' : 'border-l border-zinc-800'} />)}
+        </div>
+        {events.map(({ index, tick }) => <button key={index} type="button"
+          aria-label={`Timing note step ${index + 1}, offset ${pattern.steps[index].subTickOffset ?? 0}`}
+          title={`${pattern.steps[index].sampleId} step ${index + 1}, offset ${pattern.steps[index].subTickOffset ?? 0}/8`}
+          onClick={() => setSelected(index)}
+          className={`absolute h-7 min-w-[22px] rounded px-1 text-[9px] ${selected === index ? 'bg-cyan-400 text-black' : 'bg-purple-800 text-white'}`}
+          style={{ top: index % 2 ? '32px' : '2px', left: `${tick / 128 * 100}%`, transform: tick === 0 ? undefined : 'translateX(-50%)' }}>{pattern.steps[index].sampleId}</button>)}
+      </div>
+      <div className="flex gap-2 items-center mt-1 text-[10px] text-zinc-400">
+        {step && selected !== null && <>
+          <span>STEP {selected + 1} {step.sampleId} · {step.note} · VEL {step.velocity ?? 127}</span>
+          <label>OFFSET <select aria-label="Timing note offset" className={fieldClass} value={step.subTickOffset ?? 0}
+            onChange={(event) => projectController.updateStep(patternIndex, selected, { subTickOffset: Number(event.target.value) })}>
+            {Array.from({ length: 9 }, (_, i) => i - 4).map((value) => <option key={value} value={value}>{value > 0 ? `+${value}` : value}</option>)}
+          </select></label>
+        </>}
+        <span className="ml-auto">FX latch, swing and stutter automation not yet available</span>
+      </div>
     </div>
   );
 }

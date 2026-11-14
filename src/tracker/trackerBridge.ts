@@ -30,7 +30,7 @@ const PAD_ID_PATTERN = /^[A-D](?:[1-9]|1[0-6])$/;
 const EMPTY_NOTE = '---';
 const EMPTY_SAMPLE = '--';
 const FALLBACK_PAD_ID = 'A1';
-const DEFAULT_STEP_COUNT = 64;
+const DEFAULT_STEP_COUNT = 32;
 
 function noteOffset(note: string): number {
   const match = /^([A-G])([#-])(\d)$/.exec(note);

@@ -49,19 +49,26 @@ voices for that pad.
 On the first tap after a reload, a saved sample may need to decode; a gate
 released before loading completes will not play.
 
-The footer PLAY starts the active 64-step phrase at the saved tempo and STOP
+The footer PLAY starts the active 32-step phrase at the saved tempo and STOP
 cancels notes that have not yet started. PHRASE REC arms pad capture while the
 transport runs. Each sounding pad is placed on the nearest step with signed
 eighth-step timing; a step holds one pad, and occupied steps are not overwritten.
-Tap a recorded step in the workspace grid and confirm to clear its note.
+In PHRASE select a step and choose CLEAR NOTE to clear its note after confirmation,
+or choose EMPTY in its pad selector.
 To clear several notes, hold DEL/OP with one finger and tap occupied steps
 with another. Release DEL/OP, then choose DELETE or CANCEL. The operation
 clears notes, pad assignments and timing, but preserves effect commands.
-In PHRASE/TABLE, select PHRASE for four pages of 16 steps. Select a row to
+In PHRASE there are two pages of 16 steps. Select a step to
 assign a loaded pad, note, velocity, microtiming and an optional table. Stop
 transport before changing pad assignments or the active phrase. NEW PHRASE
-creates another 64-step phrase; song arrangement is not implemented yet.
-Select TABLE to create reusable 16-tick pitch and volume macros, then assign a
+creates another 32-step phrase; song arrangement is not implemented yet.
+Existing 64-step phrases are split into two named phrases on first load, with a
+local-storage backup of the old project. Each new phrase plays separately;
+song arrangement for joining them is not implemented yet.
+TABLE shows a 64-position timeline for each 16-step phrase page. Markers at
+half-cell positions represent eighth-step offsets. Tap a marker to change its
+offset; FX latch, swing and stutter automation are not implemented yet.
+In TABLE create reusable 16-tick pitch and volume macros, then assign a
 table to a phrase step. Each note starts its table at tick 1; ticks are spaced
 at one eighth of a phrase step and values hold until changed. Pitch is relative
 to the pad and phrase note, and table volume multiplies step velocity. After

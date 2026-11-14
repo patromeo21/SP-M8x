@@ -59,14 +59,39 @@ export interface ProjectState {
 export type ProjectStateListener = (state: ProjectState) => void;
 
 const STORAGE_KEY = 'SP_M8X_PROJECT_STATE_V1';
+const MIGRATION_BACKUP_KEY = 'SP_M8X_PROJECT_STATE_BEFORE_32_STEPS';
+const PHRASE_LENGTH = 32;
+
+function splitLongPhrases(state: ProjectState): boolean {
+  const patterns = state.tracker.patterns;
+  if (!patterns.some((pattern) => pattern.steps.length > PHRASE_LENGTH)) return false;
+  let nextId = patterns.reduce((max, pattern) => Math.max(max, pattern.id), 0) + 1;
+  const continuations: Pattern[] = [];
+  for (const pattern of patterns) {
+    if (pattern.steps.length <= PHRASE_LENGTH) continue;
+    const originalSteps = pattern.steps;
+    pattern.steps = originalSteps.slice(0, PHRASE_LENGTH);
+    for (let start = PHRASE_LENGTH; start < originalSteps.length; start += PHRASE_LENGTH) {
+      const steps = originalSteps.slice(start, start + PHRASE_LENGTH);
+      while (steps.length < PHRASE_LENGTH) steps.push({ note: '---', sampleId: '--' });
+      continuations.push({ id: nextId++, name: `${pattern.name} (part ${start / PHRASE_LENGTH + 1})`, steps });
+    }
+  }
+  patterns.push(...continuations);
+  return true;
+}
 
 class ProjectController {
   private state: ProjectState;
   private listeners: Set<ProjectStateListener> = new Set();
   private saveFailed = false;
+  private migrationBackup: string | null = null;
 
   constructor() {
-    this.state = this.loadFromLocalStorage() || this.getDefaultState();
+    const loaded = this.loadFromLocalStorage();
+    this.state = loaded || this.getDefaultState();
+    if (loaded && splitLongPhrases(this.state)) this.saveToLocalStorage();
+    else this.migrationBackup = null;
   }
 
   private getDefaultState(): ProjectState {
@@ -100,7 +125,7 @@ class ProjectController {
           {
             id: 1,
             name: 'Pattern 01',
-            steps: Array.from({ length: 64 }, () => ({
+            steps: Array.from({ length: PHRASE_LENGTH }, () => ({
               note: '---',
               sampleId: '--',
             })),
@@ -116,6 +141,7 @@ class ProjectController {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         console.log('[ProjectController] Loaded project state from localStorage.');
+        this.migrationBackup = saved;
         return JSON.parse(saved);
       }
     } catch (e) {
@@ -127,6 +153,10 @@ class ProjectController {
   private saveToLocalStorage(): void {
     try {
       if (typeof window === 'undefined') return;
+      if (this.migrationBackup !== null) {
+        localStorage.setItem(MIGRATION_BACKUP_KEY, this.migrationBackup);
+        this.migrationBackup = null;
+      }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
       this.saveFailed = false;
     } catch (e) {
@@ -170,7 +200,7 @@ class ProjectController {
     const id = patterns.reduce((max, pattern) => Math.max(max, pattern.id), 0) + 1;
     patterns.push({
       id, name: `Pattern ${String(id).padStart(2, '0')}`,
-      steps: Array.from({ length: 64 }, () => ({ note: '---', sampleId: '--' })),
+      steps: Array.from({ length: PHRASE_LENGTH }, () => ({ note: '---', sampleId: '--' })),
     });
     this.state.settings.activePatternIndex = patterns.length - 1;
     this.notify();
@@ -277,6 +307,7 @@ class ProjectController {
       return;
     }
     this.state = jsonData;
+    splitLongPhrases(this.state);
     this.notify();
     console.log('[ProjectController] Project successfully imported and state updated.');
   }
