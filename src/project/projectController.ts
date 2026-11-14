@@ -18,6 +18,19 @@ export interface TrackerStepItem {
   sampleId: string;
   fx?: string;
   subTickOffset?: number;
+  velocity?: number;
+  tableId?: number | null;
+}
+
+export interface TableStep {
+  pitch: number | null;
+  volume: number | null;
+}
+
+export interface TrackerTable {
+  id: number;
+  name: string;
+  steps: TableStep[];
 }
 
 export interface Pattern {
@@ -39,6 +52,7 @@ export interface ProjectState {
   };
   tracker: {
     patterns: Pattern[];
+    tables?: TrackerTable[];
   };
 }
 
@@ -151,6 +165,23 @@ class ProjectController {
     this.notify();
   }
 
+  public createPattern(): void {
+    const patterns = this.state.tracker.patterns;
+    const id = patterns.reduce((max, pattern) => Math.max(max, pattern.id), 0) + 1;
+    patterns.push({
+      id, name: `Pattern ${String(id).padStart(2, '0')}`,
+      steps: Array.from({ length: 64 }, () => ({ note: '---', sampleId: '--' })),
+    });
+    this.state.settings.activePatternIndex = patterns.length - 1;
+    this.notify();
+  }
+
+  public setActivePattern(index: number): void {
+    if (!Number.isInteger(index) || !this.state.tracker.patterns[index]) return;
+    this.state.settings.activePatternIndex = index;
+    this.notify();
+  }
+
   public updatePadMetadata(padId: string, metadata: Partial<PadProjectData>): void {
     if (!this.state.sampler.pads[padId]) return;
     this.state.sampler.pads[padId] = {
@@ -178,7 +209,47 @@ class ProjectController {
     for (const index of new Set(stepIndices)) {
       const step = pattern.steps[index];
       if (!step || ((!step.note || step.note === '---') && (!step.sampleId || step.sampleId === '--'))) continue;
-      pattern.steps[index] = { ...step, note: '---', sampleId: '--', subTickOffset: 0 };
+      pattern.steps[index] = { ...step, note: '---', sampleId: '--', subTickOffset: 0, velocity: undefined, tableId: null };
+      changed = true;
+    }
+    if (changed) this.notify();
+  }
+
+  public getTables(): TrackerTable[] {
+    return this.state.tracker.tables ?? [];
+  }
+
+  public createTable(): number {
+    const tables = this.state.tracker.tables ?? (this.state.tracker.tables = []);
+    const id = tables.reduce((max, table) => Math.max(max, table.id), 0) + 1;
+    tables.push({
+      id,
+      name: `Table ${String(id).padStart(2, '0')}`,
+      steps: Array.from({ length: 16 }, () => ({ pitch: null, volume: null })),
+    });
+    this.notify();
+    return id;
+  }
+
+  public updateTableStep(tableId: number, stepIndex: number, changes: Partial<TableStep>): void {
+    const step = this.getTables().find((table) => table.id === tableId)?.steps[stepIndex];
+    if (!step) return;
+    if (changes.pitch !== undefined && changes.pitch !== null &&
+        (!Number.isInteger(changes.pitch) || changes.pitch < -24 || changes.pitch > 24)) throw new Error('Table pitch must be -24 to 24.');
+    if (changes.volume !== undefined && changes.volume !== null &&
+        (!Number.isInteger(changes.volume) || changes.volume < 0 || changes.volume > 127)) throw new Error('Table volume must be 0 to 127.');
+    Object.assign(step, changes);
+    this.notify();
+  }
+
+  public clearTableSteps(tableId: number, stepIndices: readonly number[]): void {
+    const table = this.getTables().find((item) => item.id === tableId);
+    if (!table) return;
+    let changed = false;
+    for (const index of new Set(stepIndices)) {
+      const step = table.steps[index];
+      if (!step || (step.pitch === null && step.volume === null)) continue;
+      table.steps[index] = { pitch: null, volume: null };
       changed = true;
     }
     if (changed) this.notify();

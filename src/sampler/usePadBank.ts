@@ -376,8 +376,10 @@ export function usePadBank(): PadBankApi {
         semitoneOffset: current.pitch,
         loop: mode === 'loop',
       });
-      const context = audioEngine.getContext();
-      if (voiceId && onTriggered && context) onTriggered(context.currentTime);
+      if (voiceId && onTriggered) {
+        const context = audioEngine.getContext();
+        if (context) onTriggered(context.currentTime);
+      }
       if (mode === 'loop' && voiceId) loopVoices.current.set(padId, voiceId);
       if (mode === 'gate') gateVoice = voiceId;
     }).catch((error: unknown) => {

@@ -32,6 +32,13 @@ const EMPTY_SAMPLE = '--';
 const FALLBACK_PAD_ID = 'A1';
 const DEFAULT_STEP_COUNT = 64;
 
+function noteOffset(note: string): number {
+  const match = /^([A-G])([#-])(\d)$/.exec(note);
+  if (!match) return 0;
+  const semitones: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+  return (Number(match[3]) + 1) * 12 + semitones[match[1]] + (match[2] === '#' ? 1 : 0) - 60;
+}
+
 class TrackerBridge {
   private padSettingsProvider: PadSettingsProvider | null = null;
   private pendingVoices: PendingVoice[] = [];
@@ -72,14 +79,26 @@ class TrackerBridge {
     const settings = this.padSettingsProvider?.(padId);
     const startPct = settings?.startPct ?? 0;
     const endPct = settings?.endPct ?? 100;
+    const table = projectController.getState().tracker.tables?.find((item) => item.id === step.tableId);
+    const modulation = table?.steps.flatMap((item, index) => {
+      if (item.pitch === null && item.volume === null) return [];
+      return [{
+        offset: index * stepDuration / 8,
+        ...(item.pitch === null ? {} : { semitoneOffset: item.pitch }),
+        ...(item.volume === null ? {} : { volume: item.volume / 127 }),
+      }];
+    });
+    const velocity = typeof step.velocity === 'number' && Number.isFinite(step.velocity)
+      ? Math.max(0, Math.min(127, step.velocity)) / 127 : 1;
 
     const voiceId = audioEngine.triggerPad(padId, {
       sliceStart: (startPct / 100) * buffer.duration,
       sliceEnd: (endPct / 100) * buffer.duration,
-      semitoneOffset: settings?.pitch ?? 0,
-      volume: 1,
+      semitoneOffset: (settings?.pitch ?? 0) + noteOffset(step.note),
+      volume: velocity,
       loop: false,
       scheduledTime,
+      modulation,
     });
 
     this.prunePending();

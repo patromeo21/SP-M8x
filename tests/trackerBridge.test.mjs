@@ -19,9 +19,9 @@ test('bridge schedules pad slices and signed microtiming and cancels future voic
     getState: () => ({
       settings: { activePatternIndex: 0 },
       tracker: { patterns: [{ steps: [
-        { sampleId: 'A1', note: 'C-4', subTickOffset: -2 },
+        { sampleId: 'A1', note: 'D-4', velocity: 64, tableId: 1, subTickOffset: -2 },
         { sampleId: '--', note: '---' },
-      ] }] },
+      ] }], tables: [{ id: 1, steps: [{ pitch: 12, volume: 64 }, { pitch: null, volume: null }, { pitch: -2, volume: null }] }] },
     }),
   };
   try {
@@ -38,7 +38,12 @@ test('bridge schedules pad slices and signed microtiming and cancels future voic
     assert.equal(triggered.length, 1);
     assert.equal(triggered[0].options.sliceStart, 0.5);
     assert.equal(triggered[0].options.sliceEnd, 1.5);
-    assert.equal(triggered[0].options.semitoneOffset, 3);
+    assert.equal(triggered[0].options.semitoneOffset, 5);
+    assert.equal(triggered[0].options.volume, 64 / 127);
+    assert.deepEqual(triggered[0].options.modulation, [
+      { offset: 0, semitoneOffset: 12, volume: 64 / 127 },
+      { offset: 0.03125, semitoneOffset: -2 },
+    ]);
     assert.ok(Math.abs(triggered[0].options.scheduledTime - 1.16875) < 1e-8);
     trackerBridge.cancelPending();
     assert.deepEqual(stopped, ['voice1']);

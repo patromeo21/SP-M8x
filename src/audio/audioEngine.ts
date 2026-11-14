@@ -21,6 +21,13 @@ export interface ActiveVoice {
   end: number;
   loop: boolean;
   playbackRate: number;
+  rateChanges?: { time: number; rate: number }[];
+}
+
+export interface VoiceModulation {
+  offset: number;
+  semitoneOffset?: number;
+  volume?: number;
 }
 
 const normalizePadKey = (padId: string | number): string => String(padId);
@@ -96,7 +103,16 @@ class AudioEngine {
     let position: number | null = null;
     for (const voice of this.activeVoices.values()) {
       if (voice.padId !== padId || voice.source.buffer !== buffer || context.currentTime < voice.startTime) continue;
-      const elapsed = (context.currentTime - voice.startTime) * voice.playbackRate;
+      let elapsed = 0;
+      let cursor = voice.startTime;
+      let rate = voice.playbackRate;
+      for (const change of voice.rateChanges ?? []) {
+        if (change.time > context.currentTime) break;
+        elapsed += (change.time - cursor) * rate;
+        cursor = change.time;
+        rate = change.rate;
+      }
+      elapsed += (context.currentTime - cursor) * rate;
       const length = voice.end - voice.offset;
       if (length <= 0 || (!voice.loop && elapsed >= length)) continue;
       position = voice.offset + (voice.loop ? elapsed % length : elapsed);
@@ -130,6 +146,7 @@ class AudioEngine {
       semitoneOffset?: number;
       loop?: boolean;
       scheduledTime?: number; // Added to support lookahead sample-accurate scheduling
+      modulation?: VoiceModulation[];
     } = {},
   ): string | null {
     const context = this.ctx;
@@ -151,11 +168,26 @@ class AudioEngine {
     }
 
     const semitones = clamp(options.semitoneOffset ?? 0, -48, 48);
-    source.playbackRate.value = Math.pow(2, semitones / 12);
+    const baseRate = Math.pow(2, semitones / 12);
+    source.playbackRate.value = baseRate;
 
     const voiceGain = context.createGain();
-    const targetGainTime = options.scheduledTime ?? context.currentTime;
-    voiceGain.gain.setValueAtTime(clamp(options.volume ?? 1, 0, 1), targetGainTime);
+    const targetGainTime = Math.max(options.scheduledTime ?? context.currentTime, context.currentTime);
+    const volume = clamp(options.volume ?? 1, 0, 1);
+    voiceGain.gain.setValueAtTime(volume, targetGainTime);
+    const rateChanges: { time: number; rate: number }[] = [];
+    for (const change of [...(options.modulation ?? [])].sort((a, b) => a.offset - b.offset)) {
+      if (!Number.isFinite(change.offset) || change.offset < 0) continue;
+      const time = targetGainTime + change.offset;
+      if (change.semitoneOffset !== undefined && Number.isFinite(change.semitoneOffset)) {
+        const rate = Math.pow(2, clamp(semitones + change.semitoneOffset, -48, 48) / 12);
+        source.playbackRate.setValueAtTime(rate, time);
+        rateChanges.push({ time, rate });
+      }
+      if (change.volume !== undefined && Number.isFinite(change.volume)) {
+        voiceGain.gain.setValueAtTime(volume * clamp(change.volume, 0, 1), time);
+      }
+    }
     
     source.connect(voiceGain);
     voiceGain.connect(this.masterGain);
@@ -168,6 +200,9 @@ class AudioEngine {
       duration,
       source.loop,
       options.scheduledTime,
+      undefined,
+      rateChanges,
+      baseRate,
     );
   }
 
@@ -258,6 +293,8 @@ class AudioEngine {
     loop: boolean,
     scheduledTime?: number,
     panner?: StereoPannerNode,
+    rateChanges?: { time: number; rate: number }[],
+    baseRate?: number,
   ): string | null {
     const context = this.ctx;
     if (!context) return null;
@@ -267,7 +304,7 @@ class AudioEngine {
     const voice: ActiveVoice = {
       source, gainNode, panner, padId, startTime, offset,
       end: duration === undefined ? source.buffer?.duration ?? offset : offset + duration,
-      loop, playbackRate: source.playbackRate.value,
+      loop, playbackRate: baseRate ?? source.playbackRate.value, rateChanges,
     };
     this.activeVoices.set(voiceId, voice);
 

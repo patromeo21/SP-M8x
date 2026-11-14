@@ -57,8 +57,19 @@ Tap a recorded step in the workspace grid and confirm to clear its note.
 To clear several notes, hold DEL/OP with one finger and tap occupied steps
 with another. Release DEL/OP, then choose DELETE or CANCEL. The operation
 clears notes, pad assignments and timing, but preserves effect commands.
-The table view is not yet implemented; its deletion gesture will be added
-with the table editor.
+In PHRASE/TABLE, select PHRASE for four pages of 16 steps. Select a row to
+assign a loaded pad, note, velocity, microtiming and an optional table. Stop
+transport before changing pad assignments or the active phrase. NEW PHRASE
+creates another 64-step phrase; song arrangement is not implemented yet.
+Select TABLE to create reusable 16-tick pitch and volume macros, then assign a
+table to a phrase step. Each note starts its table at tick 1; ticks are spaced
+at one eighth of a phrase step and values hold until changed. Pitch is relative
+to the pad and phrase note, and table volume multiplies step velocity. After
+tick 16 the final values hold until the voice ends. The DEL/OP gesture clears
+selected table ticks after confirmation. Table changes affect newly scheduled
+voices, not voices already playing.
+Other table commands, looping, adjustable table rates and phrase optcodes are
+not yet implemented.
 Changes inside the scheduler's lookahead may not play until the next loop.
 Phrase playback currently triggers each sample as a one-shot; gate lengths, loop
 recording, effects, and song arrangement are not yet implemented. Restored pads

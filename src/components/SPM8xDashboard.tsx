@@ -15,6 +15,7 @@ import { MasterOutput } from '../audio/MasterOutput';
 import { trackerEngine } from '../tracker/trackerEngine';
 import { trackerBridge } from '../tracker/trackerBridge';
 import { projectController } from '../project/projectController';
+import { PhraseTableEditor } from '../tracker/PhraseTableEditor';
 
 export type WorkspaceTab = 'workspace' | 'song' | 'phrase/table' | 'sampler';
 
@@ -258,6 +259,8 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
           </>
         ) : currentTab === 'sampler' ? (
           <SamplerWorkspace padBank={padBank} recorder={recorder} triggerPad={triggerPad} />
+        ) : currentTab === 'phrase/table' ? (
+          <PhraseTableEditor slots={padBank.slots} activeStep={visibleStep} transportBusy={playing || starting} />
         ) : (
           <div className="flex-1 flex items-center justify-center bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl">
             <div className="text-center">
@@ -266,7 +269,6 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
               </h2>
               <p className="text-[11px] text-zinc-500">
                 {currentTab === 'song' && '6-track arrangement view is planned. current grid in wired yet.'}
-                {currentTab === 'phrase/table' && 'Unified tracker columns are planned. current project does not expose all requested fields.'}
               </p>
             </div>
           </div>

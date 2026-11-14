@@ -11,7 +11,8 @@ const asModuleUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).t
 
 class AudioParamMock {
   value = 0;
-  setValueAtTime(value) { this.value = value; }
+  events = [];
+  setValueAtTime(value, time) { this.value = value; this.events.push({ value, time }); }
   setTargetAtTime(value) { this.value = value; }
   cancelScheduledValues() {}
   linearRampToValueAtTime(value) { this.value = value; }
@@ -143,4 +144,20 @@ test('one engine resumes, decodes, schedules voices, and cleans up', async () =>
   const pannedSource = context.sources[3];
   pannedSource.onended();
   assert.equal(context.panners[0].disconnected, true);
+
+  context.currentTime = 20;
+  const modulated = audioEngine.triggerPad('A1', {
+    scheduledTime: 20.1, volume: 0.5,
+    modulation: [{ offset: 0, semitoneOffset: 12, volume: 0.5 }, { offset: 0.25, semitoneOffset: 0, volume: 0 }],
+  });
+  const modulatedSource = context.sources[4];
+  assert.deepEqual(modulatedSource.playbackRate.events, [{ value: 2, time: 20.1 }, { value: 1, time: 20.35 }]);
+  assert.deepEqual(modulatedSource.connections[0].gain.events, [
+    { value: 0.5, time: 20.1 }, { value: 0.25, time: 20.1 }, { value: 0, time: 20.35 },
+  ]);
+  context.currentTime = 20.2;
+  assert.ok(Math.abs(audioEngine.getPadPlaybackPosition('A1', buffer) - 0.2) < 1e-8);
+  context.currentTime = 20.4;
+  assert.ok(Math.abs(audioEngine.getPadPlaybackPosition('A1', buffer) - 0.55) < 1e-8);
+  audioEngine.stopVoice(modulated);
 });

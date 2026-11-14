@@ -28,7 +28,7 @@ test('batch deletion persists once, preserving effects and unselected notes', as
     assert.equal(writes, 1);
     assert.equal(updates, 1);
     const steps = JSON.parse(saved.get('SP_M8X_PROJECT_STATE_V1')).tracker.patterns[0].steps;
-    assert.deepEqual(steps[0], { note: '---', sampleId: '--', fx: 'V01', subTickOffset: 0 });
+    assert.deepEqual(steps[0], { note: '---', sampleId: '--', fx: 'V01', subTickOffset: 0, tableId: null });
     assert.equal(steps[1].sampleId, '--');
     assert.equal(steps[2].sampleId, 'A3');
     projectController.clearStepNotes(0, [0, 1]);
