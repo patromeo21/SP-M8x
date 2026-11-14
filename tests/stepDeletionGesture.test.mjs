@@ -67,6 +67,12 @@ test('held DEL/OP selects several rows, confirms once, and cancels on interrupti
     assert.equal(api.selected.size, 0);
     assert.equal(api.controls.type, 'button');
     assert.deepEqual(cleared, [[3, 5]]);
+
+    api.controls.props.onPointerDown(event(1));
+    api = render();
+    api.controls.props.onPointerUp(event(1));
+    api = render();
+    assert.equal(api.consumeClick(2), false, 'an empty DEL/OP gesture must not block editing');
   } finally {
     delete globalThis.gestureReact;
   }

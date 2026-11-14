@@ -109,13 +109,18 @@ test('one engine resumes, decodes, schedules voices, and cleans up', async () =>
   const sourceNode = context.sources[0];
   assert.deepEqual(sourceNode.startArgs, [11, 0.25, 0.75]);
   assert.equal(audioEngine.getPadPlaybackPosition('A1', buffer), null);
+  assert.equal(audioEngine.isVoiceSounding(voiceId), false);
+  assert.equal(audioEngine.hasVoice(voiceId), true);
   context.currentTime = 11.25;
+  assert.equal(audioEngine.isVoiceSounding(voiceId), true);
   assert.equal(audioEngine.getPadPlaybackPosition('A1', buffer), 0.5);
   assert.equal(audioEngine.getPadPlaybackPosition('A1', { duration: 2 }), null);
   context.currentTime = 11.75;
   assert.equal(audioEngine.getPadPlaybackPosition('A1', buffer), null);
+  assert.equal(audioEngine.isVoiceSounding(voiceId), false);
   context.currentTime = 10;
   audioEngine.stopVoice(voiceId);
+  assert.equal(audioEngine.hasVoice(voiceId), false);
   assert.equal(notifications, 2);
   assert.equal(audioEngine.hasPadVoices('A1', buffer), false);
   assert.equal(sourceNode.stopTime, 10);

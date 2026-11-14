@@ -96,28 +96,44 @@ class AudioEngine {
     return false;
   }
 
+  public hasVoice(voiceId: string): boolean {
+    return this.activeVoices.has(voiceId);
+  }
+
+  public isVoiceSounding(voiceId: string): boolean {
+    const voice = this.activeVoices.get(voiceId);
+    const context = this.ctx;
+    return Boolean(voice && context?.state === 'running' && this.voicePosition(voice, context.currentTime) !== null);
+  }
+
   /** Position of the most recently triggered sounding voice for this exact buffer. */
   public getPadPlaybackPosition(padId: string, buffer: AudioBuffer): number | null {
     const context = this.ctx;
     if (!context || context.state !== 'running') return null;
     let position: number | null = null;
     for (const voice of this.activeVoices.values()) {
-      if (voice.padId !== padId || voice.source.buffer !== buffer || context.currentTime < voice.startTime) continue;
-      let elapsed = 0;
-      let cursor = voice.startTime;
-      let rate = voice.playbackRate;
-      for (const change of voice.rateChanges ?? []) {
-        if (change.time > context.currentTime) break;
-        elapsed += (change.time - cursor) * rate;
-        cursor = change.time;
-        rate = change.rate;
-      }
-      elapsed += (context.currentTime - cursor) * rate;
-      const length = voice.end - voice.offset;
-      if (length <= 0 || (!voice.loop && elapsed >= length)) continue;
-      position = voice.offset + (voice.loop ? elapsed % length : elapsed);
+      if (voice.padId !== padId || voice.source.buffer !== buffer) continue;
+      const current = this.voicePosition(voice, context.currentTime);
+      if (current !== null) position = current;
     }
     return position;
+  }
+
+  private voicePosition(voice: ActiveVoice, now: number): number | null {
+    if (now < voice.startTime) return null;
+    let elapsed = 0;
+    let cursor = voice.startTime;
+    let rate = voice.playbackRate;
+    for (const change of voice.rateChanges ?? []) {
+      if (change.time > now) break;
+      elapsed += (change.time - cursor) * rate;
+      cursor = change.time;
+      rate = change.rate;
+    }
+    elapsed += (now - cursor) * rate;
+    const length = voice.end - voice.offset;
+    if (length <= 0 || (!voice.loop && elapsed >= length)) return null;
+    return voice.offset + (voice.loop ? elapsed % length : elapsed);
   }
 
   public async decodeAudioData(arrayBuffer: ArrayBuffer): Promise<AudioBuffer> {

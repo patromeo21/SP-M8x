@@ -16,7 +16,7 @@ export interface SPM8xDashboardProps {
   activeStep?: number;
 }
 
-export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'phrase', activeStep = 0 }) => {
+export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'phrase', activeStep = -1 }) => {
   const [currentTab, setCurrentTab] = useState<WorkspaceTab>(initialTab);
   const padBank = usePadBank();
   const recorder = useInputRecorder(padBank.loadSample);

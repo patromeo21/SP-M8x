@@ -26,6 +26,12 @@ interface PendingVoice {
   time: number;
 }
 
+interface TableVoice extends PendingVoice {
+  tableId: number;
+  tickDuration: number;
+  tickCount: number;
+}
+
 const PAD_ID_PATTERN = /^[A-D](?:[1-9]|1[0-6])$/;
 const EMPTY_NOTE = '---';
 const EMPTY_SAMPLE = '--';
@@ -42,6 +48,7 @@ function noteOffset(note: string): number {
 class TrackerBridge {
   private padSettingsProvider: PadSettingsProvider | null = null;
   private pendingVoices: PendingVoice[] = [];
+  private tableVoices: TableVoice[] = [];
 
   /** Lets the sampler UI supply live slice/pitch settings without coupling the bridge to React. */
   public setPadSettingsProvider(provider: PadSettingsProvider | null): void {
@@ -102,7 +109,28 @@ class TrackerBridge {
     });
 
     this.prunePending();
-    if (voiceId) this.pendingVoices.push({ voiceId, time: scheduledTime });
+    if (voiceId) {
+      this.pendingVoices.push({ voiceId, time: scheduledTime });
+      if (table && table.steps.length) {
+        this.tableVoices = this.tableVoices.filter((voice) => audioEngine.hasVoice(voice.voiceId));
+        this.tableVoices.push({
+          voiceId, time: Math.max(scheduledTime, now), tableId: table.id,
+          tickDuration: stepDuration / 8, tickCount: table.steps.length,
+        });
+      }
+    }
+  }
+
+  public getPlayingTableTicks(tableId: number): number[] {
+    const context = audioEngine.getContext();
+    if (!context || context.state !== 'running') return [];
+    this.tableVoices = this.tableVoices.filter((voice) => audioEngine.hasVoice(voice.voiceId));
+    const ticks = new Set<number>();
+    for (const voice of this.tableVoices) {
+      if (voice.tableId !== tableId || context.currentTime < voice.time || !audioEngine.isVoiceSounding(voice.voiceId)) continue;
+      ticks.add(Math.min(voice.tickCount - 1, Math.floor((context.currentTime - voice.time) / voice.tickDuration)));
+    }
+    return [...ticks].sort((a, b) => a - b);
   }
 
   /** Cancels voices that were scheduled but have not started yet (used when playback stops). */
@@ -112,6 +140,7 @@ class TrackerBridge {
       if (pending.time > now) audioEngine.stopVoice(pending.voiceId);
     }
     this.pendingVoices = [];
+    this.tableVoices = [];
   }
 
   private prunePending(): void {

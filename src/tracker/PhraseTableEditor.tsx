@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { projectController, type Pattern, type TrackerTable } from '../project/projectController';
 import type { PadSlot } from '../sampler/usePadBank';
 import { useStepDeletion } from './useStepDeletion';
 import { phraseTimingMarkers } from './phraseTiming';
+import { trackerBridge } from './trackerBridge';
 
 const fieldClass = 'bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-zinc-100';
 const buttonClass = 'border border-zinc-700 rounded px-2 py-1 text-zinc-300';
@@ -50,8 +51,8 @@ export function PhraseTableEditor({ slots, activeStep, transportBusy, mode }: Ed
       {mode === 'phrase'
         ? <PhraseRows key={pattern.id} pattern={pattern} patternIndex={patternIndex} slots={slots} activeStep={activeStep} transportBusy={transportBusy} />
         : <div className="flex-1 min-h-0 flex flex-col gap-2">
-            <PhraseTimingGrid pattern={pattern} patternIndex={patternIndex} />
-            {table ? <TableRows key={table.id} table={table} /> : <p className="text-zinc-400">Create a reusable table, then assign it to a phrase step.</p>}
+            <PhraseTimingGrid pattern={pattern} patternIndex={patternIndex} activeStep={activeStep} />
+            {table ? <TableRows key={table.id} table={table} playing={activeStep >= 0} /> : <p className="text-zinc-400">Create a reusable table, then assign it to a phrase step.</p>}
           </div>}
     </section>
   );
@@ -73,6 +74,8 @@ function PhraseRows({ pattern, patternIndex, slots, activeStep, transportBusy }:
       <div className="flex flex-col min-h-0">
         <div className="flex items-center gap-2 mb-1 text-[10px]">
           {[0, 1].map((index) => <button key={index} type="button" className={`${buttonClass} ${page === index ? 'border-cyan-400 text-cyan-300' : ''}`}
+            aria-label={`Phrase page ${index + 1}${activeStep >= index * 16 && activeStep < (index + 1) * 16 ? ', playing' : ''}`}
+            style={activeStep >= index * 16 && activeStep < (index + 1) * 16 ? { boxShadow: 'inset 0 -2px #22d3ee' } : undefined}
             onClick={() => { setPage(index); setSelected(index * 16); }}>{index + 1}</button>)}
           <span className="ml-auto">{deletion.controls}</span>
         </div>
@@ -85,6 +88,8 @@ function PhraseRows({ pattern, patternIndex, slots, activeStep, transportBusy }:
               onPointerDown={(event) => deletion.onPointerDown(event, index, occupied)}
               onPointerCancel={() => deletion.onPointerCancel(index)}
               onClick={() => { if (!deletion.consumeClick(index)) setSelected(index); }}
+              data-playing={activeStep === index || undefined}
+              style={activeStep === index ? { boxShadow: 'inset 0 0 0 2px #22d3ee' } : undefined}
               className={`flex flex-col text-left px-1 py-2 min-w-0 border border-zinc-800 ${deletion.selected.has(index) ? 'bg-rose-950 text-rose-200' : selected === index ? 'bg-cyan-950 text-cyan-200' : 'text-zinc-300'} ${activeStep === index ? 'border-cyan-400' : ''}`}>
               <span>{String(index + 1).padStart(2, '0')}</span><span>{item.note || '---'}</span><span>{item.sampleId || '--'}</span>
               <span>{occupied ? item.velocity ?? 127 : '--'}</span><span>{occupied ? item.subTickOffset ?? 0 : '--'}</span><span>{item.tableId ?? '--'}</span>
@@ -139,7 +144,7 @@ function PhraseRows({ pattern, patternIndex, slots, activeStep, transportBusy }:
   );
 }
 
-function PhraseTimingGrid({ pattern, patternIndex }: { pattern: Pattern; patternIndex: number }) {
+function PhraseTimingGrid({ pattern, patternIndex, activeStep }: { pattern: Pattern; patternIndex: number; activeStep: number }) {
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
   const events = phraseTimingMarkers(pattern.steps, page);
@@ -149,6 +154,8 @@ function PhraseTimingGrid({ pattern, patternIndex }: { pattern: Pattern; pattern
       <div className="flex items-center gap-2 text-[10px] mb-1">
         <strong className="text-purple-300">PHRASE TIMING — 64 POSITIONS / PAGE</strong>
         {[0, 1].map((index) => <button key={index} type="button" className={`${buttonClass} ${page === index ? 'text-purple-300 border-purple-400' : ''}`}
+          aria-label={`Timing page ${index + 1}${activeStep >= index * 16 && activeStep < (index + 1) * 16 ? ', playing' : ''}`}
+          style={activeStep >= index * 16 && activeStep < (index + 1) * 16 ? { boxShadow: 'inset 0 -2px #22d3ee' } : undefined}
           onClick={() => { setPage(index); setSelected(null); }}>PAGE {index + 1}</button>)}
         <span className="text-zinc-400">½ cell = ⅛ step · tap a marker to nudge</span>
       </div>
@@ -159,6 +166,10 @@ function PhraseTimingGrid({ pattern, patternIndex }: { pattern: Pattern; pattern
         <div className="absolute inset-0 grid" style={{ gridTemplateColumns: 'repeat(64, minmax(0, 1fr))' }}>
           {Array.from({ length: 64 }, (_, index) => <span key={index} className={index % 4 === 0 ? 'border-l border-zinc-500' : 'border-l border-zinc-800'} />)}
         </div>
+        {activeStep >= page * 16 && activeStep < (page + 1) * 16 && <span
+          aria-label={`Playing phrase step ${activeStep + 1}`} data-playing-step={activeStep}
+          className="absolute top-0 bottom-0 w-0.5 bg-cyan-400 pointer-events-none"
+          style={{ left: `${(activeStep - page * 16) / 16 * 100}%` }} />}
         {events.map(({ index, tick }) => <button key={index} type="button"
           aria-label={`Timing note step ${index + 1}, offset ${pattern.steps[index].subTickOffset ?? 0}`}
           title={`${pattern.steps[index].sampleId} step ${index + 1}, offset ${pattern.steps[index].subTickOffset ?? 0}/8`}
@@ -180,21 +191,41 @@ function PhraseTimingGrid({ pattern, patternIndex }: { pattern: Pattern; pattern
   );
 }
 
-function TableRows({ table }: { table: TrackerTable }) {
+function TableRows({ table, playing }: { table: TrackerTable; playing: boolean }) {
   const [selected, setSelected] = useState(0);
+  const [playingTicks, setPlayingTicks] = useState<number[]>([]);
+  useEffect(() => {
+    if (!playing) {
+      setPlayingTicks([]);
+      return;
+    }
+    let frame: number;
+    const update = () => {
+      const ticks = trackerBridge.getPlayingTableTicks(table.id);
+      setPlayingTicks((previous) => previous.length === ticks.length && previous.every((tick, index) => tick === ticks[index]) ? previous : ticks);
+      frame = requestAnimationFrame(update);
+    };
+    frame = requestAnimationFrame(update);
+    return () => cancelAnimationFrame(frame);
+  }, [playing, table.id]);
   const deletion = useStepDeletion((indices) => projectController.clearTableSteps(table.id, indices));
   const step = table.steps[selected];
   return (
     <div className="flex-1 min-h-0 flex gap-4">
       <div className="flex flex-col min-h-0 w-3/5">
-        <div className="flex justify-between items-center mb-1 text-[10px]"><span>TICK / PITCH / VOLUME</span>{deletion.controls}</div>
-        <div className="flex-1 min-h-0 flex flex-col">
+        <div className="flex justify-between items-center mb-1 text-[10px]">
+          <span>TICK / PITCH / VOLUME {playingTicks.length > 0 && `· PLAY ${playingTicks.map((tick) => String(tick + 1).padStart(2, '0')).join(', ')}`}</span>
+          {deletion.controls}
+        </div>
+        <div className="flex-1 min-h-0 flex flex-col overflow-y-auto">
           {table.steps.map((item, index) => <button type="button" key={index} aria-label={`Table tick ${index + 1}`}
             aria-pressed={deletion.selected.has(index)}
             onPointerDown={(event) => deletion.onPointerDown(event, index, item.pitch !== null || item.volume !== null)}
             onPointerCancel={() => deletion.onPointerCancel(index)}
             onClick={() => { if (!deletion.consumeClick(index)) setSelected(index); }}
-            className={`grid grid-cols-3 text-left px-2 flex-1 min-h-0 border-b border-zinc-800 ${deletion.selected.has(index) ? 'bg-rose-950 text-rose-200' : selected === index ? 'bg-purple-950 text-purple-200' : 'text-zinc-300'}`}>
+            data-playing={playingTicks.includes(index) || undefined}
+            style={playingTicks.includes(index) ? { boxShadow: 'inset 3px 0 #22d3ee' } : undefined}
+            className={`grid grid-cols-3 text-left px-2 flex-1 min-h-[32px] shrink-0 border-b border-zinc-800 ${deletion.selected.has(index) ? 'bg-rose-950 text-rose-200' : selected === index ? 'bg-purple-950 text-purple-200' : 'text-zinc-300'}`}>
             <span>{String(index + 1).padStart(2, '0')}</span><span>{item.pitch ?? '--'}</span><span>{item.volume ?? '--'}</span>
           </button>)}
         </div>

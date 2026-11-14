@@ -64,6 +64,8 @@ There are two pages of 16 steps. Select a step to
 assign a loaded pad, note, velocity, microtiming and an optional table. Stop
 transport before changing pad assignments or the active phrase. NEW PHRASE
 creates another 32-step phrase; song arrangement is not implemented yet.
+The playhead highlights the playing step and page without switching the page
+you are editing.
 Existing 64-step phrases are split into two named phrases on first load, with a
 local-storage backup of the old project. Each new phrase plays separately;
 song arrangement for joining them is not implemented yet.
@@ -77,6 +79,10 @@ to the pad and phrase note, and table volume multiplies step velocity. After
 tick 16 the final values hold until the voice ends. The DEL/OP gesture clears
 selected table ticks after confirmation. Table changes affect newly scheduled
 voices, not voices already playing.
+While the transport runs, the selected table highlights the ticks of sounding
+voices that use it; overlapping voices can highlight several ticks. The final
+tick remains highlighted while its value holds. Scroll the tick list to reach
+rows that do not fit; the current ticks also appear above the list.
 Other table commands, looping, adjustable table rates and phrase optcodes are
 not yet implemented.
 Changes inside the scheduler's lookahead may not play until the next loop.

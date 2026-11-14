@@ -67,6 +67,6 @@ export function useStepDeletion(clear: (indices: number[]) => void) {
       });
     },
     onPointerCancel: (index: number) => { suppressedClicks.current.delete(index); },
-    consumeClick: (index: number) => suppressedClicks.current.delete(index) || pointer.current !== null || confirming,
+    consumeClick: (index: number) => suppressedClicks.current.delete(index) || pointer.current !== null || (confirming && selected.size > 0),
   };
 }

@@ -6,13 +6,22 @@ import ts from 'typescript';
 const moduleUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`;
 
 test('bridge schedules pad slices and signed microtiming and cancels future voices', async () => {
-  const context = { currentTime: 1 };
+  const context = { currentTime: 1, state: 'running' };
   const triggered = [];
   const stopped = [];
+  const voices = new Set();
+  const sounding = new Set();
   globalThis.bridgeTestAudio = {
     getContext: () => context,
     getPadBuffer: (id) => id === 'A1' ? { duration: 2 } : undefined,
-    triggerPad: (id, options) => { triggered.push({ id, options }); return `voice${triggered.length}`; },
+    triggerPad: (id, options) => {
+      triggered.push({ id, options });
+      const voice = `voice${triggered.length}`;
+      voices.add(voice);
+      return voice;
+    },
+    hasVoice: (id) => voices.has(id),
+    isVoiceSounding: (id) => sounding.has(id),
     stopVoice: (id) => stopped.push(id),
   };
   globalThis.bridgeTestProject = {
@@ -45,10 +54,26 @@ test('bridge schedules pad slices and signed microtiming and cancels future voic
       { offset: 0.03125, semitoneOffset: -2 },
     ]);
     assert.ok(Math.abs(triggered[0].options.scheduledTime - 1.16875) < 1e-8);
+    assert.deepEqual(trackerBridge.getPlayingTableTicks(1), [], 'future voices are not displayed');
+    context.currentTime = triggered[0].options.scheduledTime + 0.02;
+    sounding.add('voice1');
+    assert.deepEqual(trackerBridge.getPlayingTableTicks(1), [1]);
+    assert.deepEqual(trackerBridge.getPlayingTableTicks(2), [], 'other tables do not show this voice');
+    trackerBridge.scheduleStep(0, context.currentTime + 0.05125, 0.125);
+    sounding.add('voice2');
+    assert.deepEqual(trackerBridge.getPlayingTableTicks(1), [1], 'a scheduled future voice has not started');
+    context.currentTime = triggered[1].options.scheduledTime + 0.0001;
+    assert.deepEqual(trackerBridge.getPlayingTableTicks(1), [0, 2], 'overlapping voices show their own ticks');
+    sounding.delete('voice2');
+    context.currentTime += 1;
+    assert.deepEqual(trackerBridge.getPlayingTableTicks(1), [2], 'last tick holds while voice sounds');
+    sounding.delete('voice1');
+    assert.deepEqual(trackerBridge.getPlayingTableTicks(1), [], 'ended voice does not show a tick');
+    context.currentTime = 1;
     trackerBridge.cancelPending();
-    assert.deepEqual(stopped, ['voice1']);
+    assert.deepEqual(stopped, ['voice2']);
     trackerBridge.scheduleStep(0, 0.5, 0.125);
-    assert.equal(triggered.length, 1, 'overdue notes must not fire late');
+    assert.equal(triggered.length, 2, 'overdue notes must not fire late');
   } finally {
     delete globalThis.bridgeTestAudio;
     delete globalThis.bridgeTestProject;
