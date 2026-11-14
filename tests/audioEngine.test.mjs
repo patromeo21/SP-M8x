@@ -71,6 +71,13 @@ test('one engine resumes, decodes, schedules voices, and cleans up', async () =>
   assert.equal(first, context);
   assert.equal(second, context);
   assert.equal(AudioContextMock.instances.length, 1);
+  context.state = 'interrupted';
+  context.rejectResume = true;
+  await assert.rejects(audioEngine.initialize(), /resume blocked/);
+  assert.equal(audioEngine.getContext(), context);
+  context.rejectResume = false;
+  assert.equal(await audioEngine.initialize(), context);
+  assert.equal(context.state, 'running');
 
   const input = new ArrayBuffer(8);
   await audioEngine.decodeAudioData(input);

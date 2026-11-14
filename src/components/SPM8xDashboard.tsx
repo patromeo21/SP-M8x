@@ -10,6 +10,7 @@ import { SamplerWorkbench } from '../sampler/SamplerWorkbench';
 import { SamplerWorkspace } from '../sampler/SamplerWorkspace';
 import { usePadBank, useEngineStatus } from '../sampler/usePadBank';
 import { useInputRecorder } from '../sampler/useInputRecorder';
+import { audioEngine } from '../audio/audioEngine';
 
 export type WorkspaceTab = 'workspace' | 'song' | 'phrase/table' | 'sampler';
 
@@ -28,6 +29,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
   const recorder = useInputRecorder(padBank.loadSample);
   const { activeBank, setActiveBank } = padBank;
   const engineStatus = useEngineStatus();
+  const [audioError, setAudioError] = useState(false);
 
   return (
     <div className="app-shell flex flex-col w-full bg-[var(--bg-shell-deep)] text-[var(--text-primary)] font-mono overflow-hidden select-none">
@@ -191,9 +193,17 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
         <div className="flex items-center space-x-4">
           <span className="flex items-center space-x-1.5">
             <span className={`w-2 h-2 rounded-full ${engineStatus.state === 'running' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
-            <span className="text-zinc-300 font-bold">
-              {engineStatus.state === 'running' ? 'ENGINE READY' : 'TAP A PAD TO START AUDIO'}
-            </span>
+            {engineStatus.state === 'running' ? <span className="text-zinc-300 font-bold">ENGINE READY</span> :
+              engineStatus.state === 'closed' ? <span role="alert" className="text-rose-300 font-bold">AUDIO CLOSED — RELOAD</span> :
+              <button type="button" className="text-amber-300 font-bold" onClick={() => {
+                setAudioError(false);
+                void audioEngine.initialize().catch((error: unknown) => {
+                  console.error('[SP-M8x] Could not resume audio:', error);
+                  setAudioError(true);
+                });
+              }}>
+                {audioError ? 'AUDIO BLOCKED — TAP TO RETRY' : engineStatus.state === 'idle' ? 'TAP TO START AUDIO' : 'AUDIO PAUSED — TAP TO RESUME'}
+              </button>}
           </span>
           <span>VOICES: <strong className="text-zinc-200">{engineStatus.voices}</strong></span>
           <span>BPM: <strong className="text-zinc-200">120.0</strong></span>

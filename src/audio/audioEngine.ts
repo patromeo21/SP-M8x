@@ -47,7 +47,8 @@ class AudioEngine {
       this.masterGain.connect(this.ctx.destination);
     }
 
-    if (this.ctx.state === 'suspended') {
+    const state: string = this.ctx.state;
+    if (state === 'suspended' || state === 'interrupted') {
       await this.ctx.resume();
     }
     if (this.ctx.state !== 'running') {

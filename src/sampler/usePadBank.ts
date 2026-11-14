@@ -421,7 +421,7 @@ export function usePadBank(): PadBankApi {
 }
 
 export interface EngineStatus {
-  state: AudioContextState | 'idle';
+  state: AudioContextState | 'interrupted' | 'idle';
   voices: number;
 }
 
