@@ -44,8 +44,10 @@ export class InputRecorder {
         throw new Error('Audio recording is unavailable. Use Safari on a secure connection.');
       }
 
-      await audioEngine.initialize();
-      if (generation !== this.generation) return;
+      const initialization = audioEngine.initialize().then(
+        () => null,
+        (error: unknown) => error instanceof Error ? error : new Error('Could not start audio.'),
+      );
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
       });
@@ -54,6 +56,9 @@ export class InputRecorder {
         return;
       }
       this.stream = stream;
+      const initializationError = await initialization;
+      if (generation !== this.generation) return;
+      if (initializationError) throw initializationError;
       const recorder = new MediaRecorder(stream);
       this.recorder = recorder;
       this.chunks = [];
@@ -73,13 +78,17 @@ export class InputRecorder {
     } catch (error) {
       if (generation !== this.generation) return;
       console.error('[InputRecorder] Could not start recording:', error);
-      this.fail(error instanceof Error ? error.message : 'Could not start recording. Check microphone permissions.');
+      const denied = error instanceof Error && (error.name === 'NotAllowedError' || error.name === 'SecurityError');
+      this.fail(denied
+        ? 'Microphone access blocked. Check Safari website and iPad microphone permissions.'
+        : error instanceof Error ? error.message : 'Could not start recording. Check microphone permissions.');
     }
   }
 
   stop(): void {
     if (this.status.phase === 'requesting') {
       this.generation++;
+      this.releaseInput();
       this.setStatus({ phase: 'idle', message: 'Recording cancelled.' });
       return;
     }

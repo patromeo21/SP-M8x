@@ -3,7 +3,7 @@
  * AudioSampleDropzone.tsx — Touch-Optimized Audio File Importer Component
  */
 
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { audioEngine } from '../audio/audioEngine';
 
 interface AudioSampleDropzoneProps {
@@ -13,7 +13,6 @@ interface AudioSampleDropzoneProps {
 }
 
 export const AudioSampleDropzone: React.FC<AudioSampleDropzoneProps> = ({ padId, onSampleLoaded, disabled }) => {
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -22,6 +21,7 @@ export const AudioSampleDropzone: React.FC<AudioSampleDropzoneProps> = ({ padId,
     if (!files || files.length === 0) return;
 
     const file = files[0];
+    const targetPadId = padId;
     e.target.value = '';
     setIsLoading(true);
     setErrorMessage(null);
@@ -31,7 +31,7 @@ export const AudioSampleDropzone: React.FC<AudioSampleDropzoneProps> = ({ padId,
       const audioBuffer = await audioEngine.decodeAudioData(arrayBuffer);
       console.log(`[AudioSampleDropzone] Successfully decoded audio file: ${file.name} (${audioBuffer.duration.toFixed(2)}s)`);
       
-      onSampleLoaded(padId, audioBuffer, file.name, file);
+      onSampleLoaded(targetPadId, audioBuffer, file.name, file);
     } catch (err) {
       console.error(`[AudioSampleDropzone] Failed to decode audio file "${file.name}":`, err);
       setErrorMessage('Could not load sample. Check the file and audio permissions.');
@@ -42,28 +42,24 @@ export const AudioSampleDropzone: React.FC<AudioSampleDropzoneProps> = ({ padId,
 
   return (
     <div className="sample-dropzone flex flex-1 min-w-0 flex-col items-center justify-center p-3 bg-zinc-950 border border-zinc-800 rounded-xl gap-2 font-mono select-none">
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="audio/*,.wav,.mp3,.flac,.aiff,.m4a"
-        className="hidden"
-        onChange={handleFileChange}
-      />
-      <button
-        type="button"
-        disabled={disabled || isLoading}
-        onPointerDown={() => {
+      <label className={`sample-file-label relative w-full py-2 px-3 bg-zinc-900 border border-zinc-700 rounded-lg text-xs font-bold text-zinc-300 flex items-center justify-center gap-2 ${disabled || isLoading ? 'opacity-40' : ''}`}>
+        <input
+          type="file"
+          accept="audio/*,.wav,.mp3,.flac,.aiff,.aif,.m4a"
+          disabled={disabled || isLoading}
+          aria-label={`Load sample for ${padId}`}
+          className="sample-file-input"
+          onClick={() => {
           void audioEngine.initialize().catch((error: unknown) => {
             console.error('[AudioSampleDropzone] Could not start audio:', error);
             setErrorMessage('Could not start audio. Check audio permissions.');
           });
-          fileInputRef.current?.click();
-        }}
-        className="w-full py-2 px-3 bg-zinc-900 border border-zinc-700 hover:border-cyan-500 rounded-lg text-xs font-bold text-zinc-300 transition-all flex items-center justify-center gap-2 active:scale-95 disabled:opacity-40"
-      >
+          }}
+          onChange={handleFileChange}
+        />
         <span>📁</span>
         <span className="truncate">{`LOAD SAMPLE (${padId})`}</span>
-      </button>
+      </label>
       {isLoading && (
         <span className="text-[10px] text-cyan-400 animate-pulse">DECODING AUDIO BUFFER...</span>
       )}

@@ -77,9 +77,11 @@ test('recording targets the original pad, stops at 60 seconds, and releases inpu
     assert.equal(track.stopped, true);
     assert.equal(samples.length, 1);
 
-    globalThis.navigator.mediaDevices.getUserMedia = async () => { throw new Error('Permission denied'); };
+    globalThis.navigator.mediaDevices.getUserMedia = async () => {
+      throw new DOMException('Permission denied', 'NotAllowedError');
+    };
     await recorder.start('A2');
-    assert.deepEqual(statuses.at(-1), { phase: 'error', message: 'Permission denied' });
+    assert.match(statuses.at(-1).message, /Safari website and iPad microphone permissions/);
     assert.equal(samples.length, 1);
 
     track.stopped = false;
@@ -89,6 +91,20 @@ test('recording targets the original pad, stops at 60 seconds, and releases inpu
     assert.equal(track.stopped, true);
     assert.match(statuses.at(-1).message, /disconnected/);
     assert.equal(samples.length, 1);
+
+    let resolveAudio;
+    let requested = false;
+    globalThis.recorderTestAudio.initialize = () => new Promise((resolve) => { resolveAudio = resolve; });
+    globalThis.navigator.mediaDevices.getUserMedia = async () => { requested = true; return stream; };
+    track.stopped = false;
+    const waiting = recorder.start('A4');
+    assert.equal(requested, true, 'microphone request must occur in the initiating gesture');
+    await Promise.resolve();
+    recorder.stop();
+    assert.equal(track.stopped, true);
+    resolveAudio({});
+    await waiting;
+    assert.equal(statuses.at(-1).phase, 'idle');
     recorder.dispose();
   } finally {
     globalThis.window = globals.window;
