@@ -9,6 +9,7 @@ import { PadBankManager } from '../sampler/PadBankManager';
 import { SamplerWorkbench } from '../sampler/SamplerWorkbench';
 import { SamplerWorkspace } from '../sampler/SamplerWorkspace';
 import { usePadBank, useEngineStatus } from '../sampler/usePadBank';
+import { useInputRecorder } from '../sampler/useInputRecorder';
 
 export type WorkspaceTab = 'workspace' | 'song' | 'phrase/table' | 'sampler';
 
@@ -24,6 +25,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
   const [currentTab, setCurrentTab] = useState<WorkspaceTab>(initialTab);
   const [deckMode, setDeckMode] = useState<'pads' | 'm8'>('pads');
   const padBank = usePadBank();
+  const recorder = useInputRecorder(padBank.loadSample);
   const { activeBank, setActiveBank } = padBank;
   const engineStatus = useEngineStatus();
 
@@ -94,6 +96,8 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
                 onUpdatePad={padBank.updatePad}
                 onLoadSample={padBank.loadSample}
                 onAudition={padBank.triggerPad}
+                recordingStatus={recorder.status}
+                onRecord={recorder.toggle}
               />
 
               {/* Sampler Pads / M8 Deck Matrix Container */}
@@ -160,7 +164,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
             </section>
           </>
         ) : currentTab === 'sampler' ? (
-          <SamplerWorkspace padBank={padBank} />
+          <SamplerWorkspace padBank={padBank} recorder={recorder} />
         ) : (
           <div className="flex-1 flex items-center justify-center bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl">
             <div className="text-center">

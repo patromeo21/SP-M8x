@@ -7,12 +7,14 @@ import React from 'react';
 import { BANKS, type PadBankApi } from './usePadBank';
 import { PadBankManager } from './PadBankManager';
 import { SamplerWorkbench } from './SamplerWorkbench';
+import { useInputRecorder } from './useInputRecorder';
 
 export interface SamplerWorkspaceProps {
   padBank: PadBankApi;
+  recorder: ReturnType<typeof useInputRecorder>;
 }
 
-export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({ padBank }) => (
+export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({ padBank, recorder }) => (
   <div className="flex-1 grid grid-cols-2 gap-3 overflow-y-auto">
     <div className="bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col gap-2">
       <div className="flex items-center justify-between border-b border-[var(--border-grid)] pb-2">
@@ -44,6 +46,8 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({ padBank }) =
       onUpdatePad={padBank.updatePad}
       onLoadSample={padBank.loadSample}
       onAudition={padBank.triggerPad}
+      recordingStatus={recorder.status}
+      onRecord={recorder.toggle}
     />
   </div>
 );

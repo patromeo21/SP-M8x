@@ -56,11 +56,18 @@
 }
 
 @media (max-height: 680px) {
+  .workspace-controls {
+    gap: 0.25rem;
+  }
+
   .workspace-controls .sampler-workbench,
   .workspace-controls .workspace-deck {
     padding: 0.5rem;
   }
 
+  .workspace-controls .workspace-deck {
+    padding: 0.375rem;
+  }
   .workspace-controls .sampler-workbench {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -92,5 +99,10 @@
 
   .workspace-controls .sample-dropzone {
     padding: 0.25rem;
+  }
+
+  .workspace-controls .sampler-record-status {
+    grid-column: 1 / -1;
+    line-height: 1;
   }
 }

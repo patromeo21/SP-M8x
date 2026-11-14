@@ -6,6 +6,7 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { AudioSampleDropzone } from '../components/AudioSampleDropzone';
 import { formatPadLabel, type PadBankApi, type PadSlot } from './usePadBank';
+import type { RecordingStatus } from '../audio/inputRecorder';
 
 const WAVE_COLUMNS = 240;
 
@@ -14,6 +15,8 @@ export interface SamplerWorkbenchProps {
   onUpdatePad: PadBankApi['updatePad'];
   onLoadSample: PadBankApi['loadSample'];
   onAudition: PadBankApi['triggerPad'];
+  recordingStatus: RecordingStatus;
+  onRecord: (padId: string) => void;
 }
 
 const computePeaks = (buffer: AudioBuffer): Float32Array => {
@@ -35,6 +38,8 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
   onUpdatePad,
   onLoadSample,
   onAudition,
+  recordingStatus,
+  onRecord,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const peaks = useMemo(() => (pad.buffer ? computePeaks(pad.buffer) : null), [pad.buffer]);
@@ -133,7 +138,24 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
         </button>
       </div>
 
-      <AudioSampleDropzone padId={pad.id} onSampleLoaded={onLoadSample} />
+      <div className="sampler-input flex items-stretch gap-1 min-w-0">
+        <AudioSampleDropzone padId={pad.id} onSampleLoaded={onLoadSample} />
+        <button
+          type="button"
+          disabled={recordingStatus.phase === 'processing'}
+          onClick={() => onRecord(pad.id)}
+          className="shrink-0 rounded-lg border border-rose-800 bg-rose-950 px-2 text-[10px] font-bold text-rose-300 disabled:opacity-40"
+        >
+          {recordingStatus.phase === 'recording' ? 'STOP' : recordingStatus.phase === 'requesting' ? 'CANCEL' : recordingStatus.phase === 'processing' ? 'WAIT' : 'REC'}
+        </button>
+      </div>
+      {recordingStatus.phase !== 'idle' || recordingStatus.message ? (
+        <div role={recordingStatus.phase === 'error' ? 'alert' : 'status'} className="sampler-record-status text-[9px] text-rose-300">
+          {recordingStatus.phase === 'recording' ? `REC ${recordingStatus.padId} · MAX 60S` :
+            recordingStatus.phase === 'requesting' ? `REQUESTING INPUT FOR ${recordingStatus.padId}` :
+            recordingStatus.phase === 'processing' ? `PROCESSING ${recordingStatus.padId}` : recordingStatus.message}
+        </div>
+      ) : null}
     </div>
   );
 };
