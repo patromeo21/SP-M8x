@@ -36,8 +36,15 @@ export const TrackerGrid: React.FC<TrackerGridProps> = ({ patternId, activeStep 
           const hasNote = step.note && step.note !== '---';
 
           return (
-            <div
+            <button
+              type="button"
               key={idx}
+              aria-label={`Step ${idx + 1}: ${step.sampleId || 'empty'}. ${hasNote ? 'Tap to clear note' : 'Empty'}`}
+              onClick={() => {
+                if (hasNote && window.confirm(`Clear the note on step ${idx + 1}?`)) {
+                  projectController.updateStep(patternIndex, idx, { note: '---', sampleId: '--', subTickOffset: 0 });
+                }
+              }}
               className={`flex flex-col items-center justify-center p-2 rounded border text-[10px] transition-all ${
                 isActive
                   ? 'bg-cyan-950 border-cyan-400 text-cyan-300 shadow-sm shadow-cyan-500/20'
@@ -51,7 +58,7 @@ export const TrackerGrid: React.FC<TrackerGridProps> = ({ patternId, activeStep 
               </span>
               <span className="font-bold tracking-wider">{step.note || '---'}</span>
               <span className="text-[8px] text-zinc-400 mt-0.5">{step.sampleId || '--'}</span>
-            </div>
+            </button>
           );
         })}
       </div>

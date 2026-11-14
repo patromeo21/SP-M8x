@@ -17,6 +17,7 @@ export interface TrackerStepItem {
   note: string;
   sampleId: string;
   fx?: string;
+  subTickOffset?: number;
 }
 
 export interface Pattern {
@@ -48,6 +49,7 @@ const STORAGE_KEY = 'SP_M8X_PROJECT_STATE_V1';
 class ProjectController {
   private state: ProjectState;
   private listeners: Set<ProjectStateListener> = new Set();
+  private saveFailed = false;
 
   constructor() {
     this.state = this.loadFromLocalStorage() || this.getDefaultState();
@@ -112,9 +114,15 @@ class ProjectController {
     try {
       if (typeof window === 'undefined') return;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
+      this.saveFailed = false;
     } catch (e) {
+      this.saveFailed = true;
       console.error('[ProjectController] Failed to save to localStorage:', e);
     }
+  }
+
+  public hasSaveError(): boolean {
+    return this.saveFailed;
   }
 
   public getState(): ProjectState {

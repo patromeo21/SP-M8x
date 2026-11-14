@@ -32,6 +32,7 @@ class AudioContextMock {
   destination = new NodeMock();
   sources = [];
   panners = [];
+  analysers = [];
   rejectResume = true;
 
   constructor() { AudioContextMock.instances.push(this); }
@@ -40,6 +41,15 @@ class AudioContextMock {
     this.state = 'running';
   }
   createGain() { return Object.assign(new NodeMock(), { gain: new AudioParamMock() }); }
+  createChannelSplitter() { return new NodeMock(); }
+  createAnalyser() {
+    const node = Object.assign(new NodeMock(), {
+      level: 0,
+      getFloatTimeDomainData(data) { data.fill(this.level); },
+    });
+    this.analysers.push(node);
+    return node;
+  }
   createStereoPanner() {
     const node = Object.assign(new NodeMock(), { pan: new AudioParamMock() });
     this.panners.push(node);
@@ -78,6 +88,9 @@ test('one engine resumes, decodes, schedules voices, and cleans up', async () =>
   context.rejectResume = false;
   assert.equal(await audioEngine.initialize(), context);
   assert.equal(context.state, 'running');
+  context.analysers[1].level = -1.25;
+  assert.equal(audioEngine.getOutputPeak(), 1.25);
+  context.analysers[1].level = 0;
 
   const input = new ArrayBuffer(8);
   await audioEngine.decodeAudioData(input);
@@ -104,7 +117,7 @@ test('one engine resumes, decodes, schedules voices, and cleans up', async () =>
   audioEngine.stopVoice(voiceId);
   assert.equal(notifications, 2);
   assert.equal(audioEngine.hasPadVoices('A1', buffer), false);
-  assert.equal(sourceNode.stopTime, 10.01);
+  assert.equal(sourceNode.stopTime, 10);
   assert.equal(sourceNode.disconnected, false);
   sourceNode.onended();
   assert.equal(notifications, 2);

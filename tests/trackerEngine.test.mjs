@@ -5,19 +5,16 @@ import ts from 'typescript';
 
 const moduleUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`;
 
-test('tracker initializes audio and triggers steps against the audio clock', async () => {
+test('lookahead schedules on the audio clock, records microtiming and cancels future notes', async () => {
   const calls = [];
   const context = { currentTime: 12.5, state: 'running' };
   let interval;
+  let cancelled = 0;
   let resolveStart;
   globalThis.window = {
-    setInterval(callback, delay) {
-      interval = { callback, delay };
-      return 1;
-    },
+    setInterval(callback, delay) { interval = { callback, delay }; return 1; },
+    clearInterval() { interval = undefined; },
   };
-  const originalClearInterval = globalThis.clearInterval;
-  globalThis.clearInterval = () => { interval = undefined; };
   globalThis.trackerTestAudio = {
     initialize: () => Promise.resolve(context),
     getContext: () => context,
@@ -25,6 +22,7 @@ test('tracker initializes audio and triggers steps against the audio clock', asy
   globalThis.trackerTestBridge = {
     scheduleStep: (...args) => calls.push(args),
     getStepCount: () => 2,
+    cancelPending: () => { cancelled++; },
   };
 
   try {
@@ -36,25 +34,37 @@ test('tracker initializes audio and triggers steps against the audio clock', asy
       .replace("'../audio/audioEngine'", `'${moduleUrl('export const audioEngine = globalThis.trackerTestAudio;')}'`);
     const { TrackerEngine } = await import(moduleUrl(source));
     const tracker = new TrackerEngine(120);
-    tracker.start();
-    await Promise.resolve();
-    assert.equal(interval.delay, 125);
+    const steps = [];
+    tracker.setCallbacks((step) => steps.push(step), () => {});
+    await tracker.start();
+    assert.equal(interval.delay, 25);
+    assert.deepEqual(calls.map(([step]) => step), [0]);
+    assert.ok(Math.abs(calls[0][1] - 12.58) < 1e-8);
+    assert.equal(calls[0][2], 0.125);
+    assert.equal(tracker.recordPosition(12.55), null);
+    assert.deepEqual(tracker.recordPosition(12.58 + 0.125 * 0.7), { step: 1, subTickOffset: -2 });
+    context.currentTime = 12.56;
     interval.callback();
-    context.currentTime = 13;
+    assert.deepEqual(calls.map(([step]) => step), [0, 1]);
+    context.currentTime = 12.71;
     interval.callback();
+    assert.equal(steps.at(-1), 1);
+    assert.deepEqual(calls.map(([step]) => step), [0, 1, 0]);
+    context.currentTime = 20;
     interval.callback();
-    assert.deepEqual(calls, [[0, 12.5], [1, 13], [0, 13]]);
+    assert.ok(calls.length < 8, 'missed steps must not be replayed as a burst');
     tracker.stop();
     assert.equal(interval, undefined);
+    assert.equal(cancelled, 1);
+    assert.equal(tracker.recordPosition(20), null);
 
     globalThis.trackerTestAudio.initialize = () => new Promise((resolve) => { resolveStart = resolve; });
-    tracker.start();
+    const pending = tracker.start();
     tracker.stop();
     resolveStart(context);
-    await Promise.resolve();
+    await pending;
     assert.equal(interval, undefined);
   } finally {
-    globalThis.clearInterval = originalClearInterval;
     delete globalThis.trackerTestAudio;
     delete globalThis.trackerTestBridge;
     delete globalThis.window;

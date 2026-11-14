@@ -30,6 +30,9 @@ const clamp = (value: number, min: number, max: number): number =>
 class AudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
+  private outputMeters: [AnalyserNode, AnalyserNode] | null = null;
+  private meterSamples = new Float32Array(2048);
+  private masterVolume = 0.8;
   private activeVoices = new Map<string, ActiveVoice>();
   private voiceListeners = new Set<() => void>();
 
@@ -43,8 +46,16 @@ class AudioEngine {
 
       this.ctx = new AudioContextClass({ latencyHint: 'interactive' });
       this.masterGain = this.ctx.createGain();
-      this.masterGain.gain.setValueAtTime(0.8, this.ctx.currentTime);
+      this.masterGain.gain.setValueAtTime(this.masterVolume, this.ctx.currentTime);
       this.masterGain.connect(this.ctx.destination);
+      const splitter = this.ctx.createChannelSplitter(2);
+      const left = this.ctx.createAnalyser();
+      const right = this.ctx.createAnalyser();
+      left.fftSize = right.fftSize = this.meterSamples.length;
+      this.masterGain.connect(splitter);
+      splitter.connect(left, 0);
+      splitter.connect(right, 1);
+      this.outputMeters = [left, right];
     }
 
     const state: string = this.ctx.state;
@@ -219,9 +230,23 @@ class AudioEngine {
   }
 
   public setMasterVolume(volume: number): void {
+    this.masterVolume = clamp(volume, 0, 1);
     if (this.masterGain && this.ctx) {
-      this.masterGain.gain.setTargetAtTime(clamp(volume, 0, 1), this.ctx.currentTime, 0.01);
+      this.masterGain.gain.setTargetAtTime(this.masterVolume, this.ctx.currentTime, 0.01);
     }
+  }
+
+  /** Latest analyser window only; short peaks between reads can be missed. */
+  public getOutputPeak(): number {
+    if (!this.outputMeters || this.ctx?.state !== 'running') return 0;
+    let peak = 0;
+    for (const meter of this.outputMeters) {
+      meter.getFloatTimeDomainData(this.meterSamples);
+      for (let i = 0; i < this.meterSamples.length; i++) {
+        peak = Math.max(peak, Math.abs(this.meterSamples[i]));
+      }
+    }
+    return peak;
   }
 
   private startVoice(
@@ -273,6 +298,10 @@ class AudioEngine {
     try {
       if (this.ctx) {
         const now = this.ctx.currentTime;
+        if (voice.startTime > now) {
+          voice.source.stop(now);
+          return;
+        }
         voice.gainNode.gain.cancelScheduledValues(now);
         voice.gainNode.gain.setValueAtTime(voice.gainNode.gain.value, now);
         voice.gainNode.gain.linearRampToValueAtTime(0.0001, now + 0.01);

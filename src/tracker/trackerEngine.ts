@@ -1,90 +1,98 @@
-/**
- * SP-M8x Hybrid Music Production Suite
- * trackerEngine.ts — Step Sequencer Playhead & Tracker Bridge Integration
- */
-
 import { trackerBridge } from './trackerBridge';
 import { audioEngine } from '../audio/audioEngine';
 
+const LOOKAHEAD_SECONDS = 0.1;
+const TIMER_MS = 25;
+
 export class TrackerEngine {
-  private currentStep: number = 0;
-  private isPlaying: boolean = false;
+  private playing = false;
   private timerId: number | null = null;
-  private startGeneration = 0;
-  private bpm: number = 120;
-  private onStepCallback?: (step: number) => void;
+  private generation = 0;
+  private startTime = 0;
+  private nextStep = 0;
+  private lastDisplayedStep = -1;
+  private bpm: number;
+  private onStep?: (step: number) => void;
+  private onStopped?: (reason?: string) => void;
 
-  constructor(bpm: number = 120) {
+  constructor(bpm = 120) {
     this.bpm = bpm;
   }
 
-  public setStepCallback(callback: (step: number) => void): void {
-    this.onStepCallback = callback;
+  public setCallbacks(onStep: (step: number) => void, onStopped: (reason?: string) => void): void {
+    this.onStep = onStep;
+    this.onStopped = onStopped;
   }
 
-  public setBpm(bpm: number): void {
+  public async start(bpm = this.bpm): Promise<void> {
+    if (this.playing) return;
+    if (!Number.isFinite(bpm) || bpm < 40 || bpm > 300) throw new Error('Invalid tempo.');
     this.bpm = bpm;
-    if (this.isPlaying) {
-      this.stop();
-      this.start();
-    }
+    const generation = ++this.generation;
+    const context = await audioEngine.initialize();
+    if (generation !== this.generation) return;
+    this.playing = true;
+    this.startTime = context.currentTime + 0.08;
+    this.nextStep = 0;
+    this.lastDisplayedStep = -1;
+    this.tick();
+    if (!this.playing) throw new Error('Audio paused before transport started.');
+    this.timerId = window.setInterval(() => this.tick(), TIMER_MS);
   }
 
-  public start(): void {
-    if (this.isPlaying) return;
-    this.isPlaying = true;
-    const generation = ++this.startGeneration;
-
-    void audioEngine.initialize().then(() => {
-      if (!this.isPlaying || generation !== this.startGeneration) return;
-      const intervalMs = (60000 / this.bpm) / 4;
-      this.timerId = window.setInterval(() => {
-        this.tick();
-      }, intervalMs);
-      console.log(`[TrackerEngine] Started playback at ${this.bpm} BPM`);
-    }).catch((error: unknown) => {
-      if (generation !== this.startGeneration) return;
-      this.isPlaying = false;
-      console.error('[TrackerEngine] Could not start audio:', error);
-    });
-  }
-
-  public stop(): void {
-    if (!this.isPlaying) return;
-    this.isPlaying = false;
-    this.startGeneration++;
+  public stop(reason?: string): void {
+    this.generation++;
+    const wasPlaying = this.playing;
+    this.playing = false;
     if (this.timerId !== null) {
-      clearInterval(this.timerId);
+      window.clearInterval(this.timerId);
       this.timerId = null;
     }
-    console.log('[TrackerEngine] Stopped playback');
+    trackerBridge.cancelPending();
+    if (wasPlaying) this.onStopped?.(reason);
   }
 
-  public togglePlay(): boolean {
-    if (this.isPlaying) {
-      this.stop();
-    } else {
-      this.start();
-    }
-    return this.isPlaying;
+  /** Nearest step plus signed eighth-step microtiming relative to the audio clock. */
+  public recordPosition(time: number): { step: number; subTickOffset: number } | null {
+    if (!this.playing || time < this.startTime) return null;
+    const position = (time - this.startTime) / this.stepDuration;
+    const nearest = Math.round(position);
+    return {
+      step: nearest % trackerBridge.getStepCount(),
+      subTickOffset: Math.max(-4, Math.min(4, Math.round((position - nearest) * 8))),
+    };
+  }
+
+  private get stepDuration(): number {
+    return 60 / this.bpm / 4;
   }
 
   private tick(): void {
-    if (this.onStepCallback) {
-      this.onStepCallback(this.currentStep);
-    }
-
     const context = audioEngine.getContext();
     if (!context || context.state !== 'running') {
-      console.error('[TrackerEngine] Audio context is not running; stopping playback.');
-      this.stop();
+      this.stop('Audio paused; tap PLAY to restart.');
       return;
     }
-    trackerBridge.scheduleStep(this.currentStep, context.currentTime);
+    const now = context.currentTime;
+    const duration = this.stepDuration;
+    const stepCount = trackerBridge.getStepCount();
+    const displayStep = now < this.startTime ? -1 : Math.floor((now - this.startTime) / duration) % stepCount;
+    if (displayStep !== this.lastDisplayedStep) {
+      this.lastDisplayedStep = displayStep;
+      this.onStep?.(displayStep);
+    }
 
-    this.currentStep = (this.currentStep + 1) % trackerBridge.getStepCount();
+    // Include half a step for negatively offset notes in the next step.
+    const horizon = now + LOOKAHEAD_SECONDS + duration / 2;
+    this.nextStep = Math.max(this.nextStep, Math.ceil((now - duration / 2 - this.startTime) / duration));
+    while (this.startTime + this.nextStep * duration < horizon) {
+      const stepTime = this.startTime + this.nextStep * duration;
+      if (stepTime + duration / 2 >= now) {
+        trackerBridge.scheduleStep(this.nextStep % stepCount, stepTime, duration);
+      }
+      this.nextStep++;
+    }
   }
 }
 
 export const trackerEngine = new TrackerEngine();
-export default trackerEngine;

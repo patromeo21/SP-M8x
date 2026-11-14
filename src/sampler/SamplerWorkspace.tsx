@@ -12,9 +12,10 @@ import { useInputRecorder } from './useInputRecorder';
 export interface SamplerWorkspaceProps {
   padBank: PadBankApi;
   recorder: ReturnType<typeof useInputRecorder>;
+  triggerPad?: PadBankApi['triggerPad'];
 }
 
-export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({ padBank, recorder }) => (
+export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({ padBank, recorder, triggerPad = padBank.triggerPad }) => (
   <div className="sampler-full flex-1 grid gap-3 overflow-hidden min-h-0">
     <div className="sampler-full-pads bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col gap-2 min-h-0">
       <div className="flex items-center justify-between border-b border-[var(--border-grid)] pb-2">
@@ -38,7 +39,7 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({ padBank, rec
         slots={padBank.slots}
         activeBank={padBank.activeBank}
         selectedPadId={padBank.selectedPadId}
-        triggerPad={padBank.triggerPad}
+        triggerPad={triggerPad}
         deletePads={padBank.deletePads}
         copyPad={padBank.copyPad}
         storageReady={padBank.storageReady}

@@ -40,7 +40,9 @@ export interface PadBankApi {
   chopToBank: (padId: string, bank: BankId, count: number) => Promise<string[]>;
   copyPad: (sourceId: string, destinationId: string) => Promise<void>;
   deletePads: (padIds: string[]) => Promise<void>;
-  triggerPad: (padId: string) => () => void;
+  triggerPad: (padId: string, onTriggered?: (time: number) => void) => () => void;
+  preparePads: (padIds: string[]) => Promise<void>;
+  getPadSettings: (padId: string) => PadSlot | undefined;
   stopAll: () => void;
   storageReady: boolean;
   storageStatus: string;
@@ -345,7 +347,7 @@ export function usePadBank(): PadBankApi {
     }
   }, [storageReady]);
 
-  const triggerPad = useCallback((padId: string) => {
+  const triggerPad = useCallback((padId: string, onTriggered?: (time: number) => void) => {
     setSelectedPadId(padId);
     const noop = () => {};
     if (!storageReady) return noop;
@@ -374,6 +376,8 @@ export function usePadBank(): PadBankApi {
         semitoneOffset: current.pitch,
         loop: mode === 'loop',
       });
+      const context = audioEngine.getContext();
+      if (voiceId && onTriggered && context) onTriggered(context.currentTime);
       if (mode === 'loop' && voiceId) loopVoices.current.set(padId, voiceId);
       if (mode === 'gate') gateVoice = voiceId;
     }).catch((error: unknown) => {
@@ -390,6 +394,17 @@ export function usePadBank(): PadBankApi {
       }
     };
   }, [ensureBuffer, stopLoop, storageReady]);
+
+  const preparePads = useCallback(async (padIds: string[]) => {
+    if (!storageReady) throw new Error('Pads are still restoring.');
+    for (const id of new Set(padIds)) {
+      const slot = slotsRef.current[id];
+      if (!slot?.sampleKey) throw new Error(`Phrase references empty pad ${id}.`);
+      if (!slot.buffer) await ensureBuffer(id, slot.sampleKey);
+    }
+  }, [ensureBuffer, storageReady]);
+
+  const getPadSettings = useCallback((padId: string) => slotsRef.current[padId], []);
 
   const stopAll = useCallback(() => {
     playbackGeneration.current++;
@@ -413,6 +428,8 @@ export function usePadBank(): PadBankApi {
     copyPad,
     deletePads: removePads,
     triggerPad,
+    preparePads,
+    getPadSettings,
     stopAll,
     storageReady,
     storageStatus,

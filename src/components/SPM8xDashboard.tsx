@@ -3,7 +3,7 @@
  * SPM8xDashboard.tsx — Main Hardware Layout Shell (iPad Optimized)
  */
 
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { TrackerGrid } from '../tracker/TrackerGrid';
 import { PadBankManager } from '../sampler/PadBankManager';
 import { SamplerWorkbench } from '../sampler/SamplerWorkbench';
@@ -11,6 +11,10 @@ import { SamplerWorkspace } from '../sampler/SamplerWorkspace';
 import { usePadBank, useEngineStatus } from '../sampler/usePadBank';
 import { useInputRecorder } from '../sampler/useInputRecorder';
 import { audioEngine } from '../audio/audioEngine';
+import { MasterOutput } from '../audio/MasterOutput';
+import { trackerEngine } from '../tracker/trackerEngine';
+import { trackerBridge } from '../tracker/trackerBridge';
+import { projectController } from '../project/projectController';
 
 export type WorkspaceTab = 'workspace' | 'song' | 'phrase/table' | 'sampler';
 
@@ -30,6 +34,87 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
   const { activeBank, setActiveBank } = padBank;
   const engineStatus = useEngineStatus();
   const [audioError, setAudioError] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [armed, setArmed] = useState(false);
+  const [playhead, setPlayhead] = useState(-1);
+  const [transportMessage, setTransportMessage] = useState('');
+  const [, refreshProject] = useState(0);
+  const startGeneration = useRef(0);
+  const recordingRef = useRef(false);
+  recordingRef.current = armed && playing;
+
+  useEffect(() => {
+    trackerBridge.setPadSettingsProvider(padBank.getPadSettings);
+    trackerEngine.setCallbacks(setPlayhead, (reason) => {
+      setPlaying(false);
+      setPlayhead(-1);
+      if (reason) setTransportMessage(reason);
+    });
+    const unsubscribe = projectController.subscribe(() => refreshProject((value) => value + 1));
+    return () => {
+      startGeneration.current++;
+      trackerEngine.stop();
+      trackerBridge.setPadSettingsProvider(null);
+      unsubscribe();
+    };
+  }, [padBank.getPadSettings]);
+
+  const toggleTransport = useCallback(() => {
+    if (playing || starting) {
+      startGeneration.current++;
+      trackerEngine.stop();
+      setStarting(false);
+      setPlaying(false);
+      setPlayhead(-1);
+      return;
+    }
+    const generation = ++startGeneration.current;
+    setStarting(true);
+    setTransportMessage('');
+    void (async () => {
+      try {
+        await audioEngine.initialize();
+        const state = projectController.getState();
+        const pattern = state.tracker.patterns[state.settings.activePatternIndex];
+        if (!pattern) throw new Error('Active phrase is unavailable.');
+        const ids = pattern.steps.map((step) => step.sampleId).filter((id) => id && id !== '--');
+        await padBank.preparePads(ids);
+        if (generation !== startGeneration.current) return;
+        await trackerEngine.start(state.settings.bpm);
+        if (generation !== startGeneration.current) return;
+        setPlaying(true);
+      } catch (error) {
+        if (generation !== startGeneration.current) return;
+        console.error('[SP-M8x] Could not start transport:', error);
+        setTransportMessage(error instanceof Error ? error.message : 'Could not start transport.');
+      } finally {
+        if (generation === startGeneration.current) setStarting(false);
+      }
+    })();
+  }, [padBank.preparePads, playing, starting]);
+
+  const triggerPad = useCallback((padId: string) => {
+    return padBank.triggerPad(padId, (time) => {
+      if (!recordingRef.current) return;
+      const position = trackerEngine.recordPosition(time);
+      if (position) {
+        const state = projectController.getState();
+        const patternIndex = state.settings.activePatternIndex;
+        const step = state.tracker.patterns[patternIndex]?.steps[position.step];
+        if (step && (!step.sampleId || step.sampleId === '--') && (!step.note || step.note === '---')) {
+          projectController.updateStep(patternIndex, position.step, {
+            note: 'C-4', sampleId: padId, subTickOffset: position.subTickOffset,
+          });
+          setTransportMessage('');
+        } else {
+          setTransportMessage(`Step ${position.step + 1} occupied — not recorded.`);
+        }
+      }
+    });
+  }, [padBank.triggerPad]);
+
+  const visibleStep = playing ? playhead : activeStep;
 
   return (
     <div className="app-shell flex flex-col w-full bg-[var(--bg-shell-deep)] text-[var(--text-primary)] font-mono overflow-hidden select-none">
@@ -82,11 +167,11 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
                   TRACKER SEQUENCER (64 STEPS)
                 </span>
                 <span className="text-[10px] text-[var(--accent-phrase)] font-bold">
-                  STEP: {String(activeStep).padStart(2, '0')} / 63
+                  STEP: {visibleStep < 0 ? '--' : String(visibleStep).padStart(2, '0')} / 63
                 </span>
               </div>
               <div className="flex-1 overflow-hidden flex flex-col">
-                <TrackerGrid patternId={0} activeStep={activeStep} />
+                <TrackerGrid patternId={projectController.getState().settings.activePatternIndex} activeStep={visibleStep} />
               </div>
             </section>
 
@@ -153,7 +238,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
                       slots={padBank.slots}
                       activeBank={activeBank}
                       selectedPadId={padBank.selectedPadId}
-                      triggerPad={padBank.triggerPad}
+                      triggerPad={triggerPad}
                       deletePads={padBank.deletePads}
                       copyPad={padBank.copyPad}
                       storageReady={padBank.storageReady}
@@ -162,7 +247,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
                 ) : (
                   <div className="grid grid-cols-4 gap-2 flex-1 items-center p-2 bg-zinc-950/40 rounded border border-zinc-800/60">
                     {['UP', 'DOWN', 'LEFT', 'RIGHT', 'EDIT', 'PLAY', 'SHIFT', 'BND'].map((btn) => (
-                      <button key={btn} className="bg-zinc-900 border border-zinc-700 rounded py-3 text-[10px] font-bold text-zinc-300 hover:bg-cyan-950 hover:text-cyan-300 transition-all">
+                      <button key={btn} onClick={btn === 'PLAY' ? toggleTransport : undefined} className="bg-zinc-900 border border-zinc-700 rounded py-3 text-[10px] font-bold text-zinc-300 hover:bg-cyan-950 hover:text-cyan-300 transition-all">
                         {btn}
                       </button>
                     ))}
@@ -172,7 +257,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
             </section>
           </>
         ) : currentTab === 'sampler' ? (
-          <SamplerWorkspace padBank={padBank} recorder={recorder} />
+          <SamplerWorkspace padBank={padBank} recorder={recorder} triggerPad={triggerPad} />
         ) : (
           <div className="flex-1 flex items-center justify-center bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl">
             <div className="text-center">
@@ -206,11 +291,20 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
               </button>}
           </span>
           <span>VOICES: <strong className="text-zinc-200">{engineStatus.voices}</strong></span>
-          <span>BPM: <strong className="text-zinc-200">120.0</strong></span>
-          <span>CLOCK: <strong className="text-zinc-200">INTERNAL</strong></span>
+          <button type="button" onClick={toggleTransport} className="text-cyan-300 font-bold">
+            {starting ? 'CANCEL' : playing ? 'STOP' : 'PLAY'}
+          </button>
+          <button type="button" aria-pressed={armed} onClick={() => setArmed(!armed)}
+            className={armed ? 'text-rose-400 font-bold' : 'text-zinc-400'}>
+            {armed ? 'PHRASE REC ARMED' : 'PHRASE REC'}
+          </button>
+          <span>BPM: <strong className="text-zinc-200">{projectController.getState().settings.bpm.toFixed(1)}</strong></span>
+          <MasterOutput />
           <span role={padBank.storageError ? 'alert' : 'status'} className={padBank.storageError ? 'text-rose-400' : 'text-zinc-400'}>
             {padBank.storageStatus}
           </span>
+          {projectController.hasSaveError() && <span role="alert" className="text-rose-400">PHRASE SAVE FAILED</span>}
+          {transportMessage && <span role="alert" className="text-rose-400">{transportMessage}</span>}
         </div>
         <div className="text-[9px] text-zinc-600">
           SP-M8x HARDWARE INTERFACE SHELL

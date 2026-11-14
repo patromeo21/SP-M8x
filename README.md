@@ -49,5 +49,20 @@ voices for that pad.
 On the first tap after a reload, a saved sample may need to decode; a gate
 released before loading completes will not play.
 
+The footer PLAY starts the active 64-step phrase at the saved tempo and STOP
+cancels notes that have not yet started. PHRASE REC arms pad capture while the
+transport runs. Each sounding pad is placed on the nearest step with signed
+eighth-step timing; a step holds one pad, and occupied steps are not overwritten.
+Tap a recorded step in the workspace grid and confirm to clear its note.
+Changes inside the scheduler's lookahead may not play until the next loop.
+Phrase playback currently triggers each sample as a one-shot; gate lengths, loop
+recording, effects, and song arrangement are not yet implemented. Restored pads
+used by the phrase are decoded before playback starts. Phrase data is saved in
+browser local storage, separately from pad audio; check for save errors.
+
+The MASTER slider changes output gain. PEAK is a sampled stereo output level,
+not a continuous clip detector or a limiter: it can miss brief peaks and does
+not measure true peaks. Multiple pads can overload the output; keep levels low.
+
 Run `npm test` for the audio-engine checks and `npm run build` for the production
 TypeScript and Vite build.

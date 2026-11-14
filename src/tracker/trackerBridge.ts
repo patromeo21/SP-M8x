@@ -50,9 +50,14 @@ class TrackerBridge {
    * Schedules the step at an exact AudioContext timestamp (seconds).
    * Empty steps, invalid pad IDs, and pads without a loaded buffer are skipped.
    */
-  public scheduleStep(stepIndex: number, scheduledTime: number): void {
+  public scheduleStep(stepIndex: number, stepTime: number, stepDuration: number): void {
     const step = this.getActivePattern()?.steps[stepIndex];
     if (!step) return;
+    const rawOffset = step.subTickOffset;
+    const offset = typeof rawOffset === 'number' && Number.isFinite(rawOffset) ? Math.max(-4, Math.min(4, rawOffset)) : 0;
+    const scheduledTime = stepTime + offset * stepDuration / 8;
+    const now = audioEngine.getContext()?.currentTime ?? 0;
+    if (scheduledTime < now - 0.01) return;
 
     const hasSample = Boolean(step.sampleId) && step.sampleId !== EMPTY_SAMPLE;
     const hasNote = Boolean(step.note) && step.note !== EMPTY_NOTE;
