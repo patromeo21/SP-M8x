@@ -97,7 +97,21 @@ test('restored slices share a single decode and each receives the buffer', async
     const gateVoice = triggered.at(-1).voice;
     releaseGate();
     assert.deepEqual(stopped, [gateVoice], 'only the newly triggered gate voice stops on release');
+    api.triggerPad('A1', undefined, -7);
+    await flush();
+    assert.equal(triggered.at(-1).options.semitoneOffset, -7, 'chromatic offset is applied to playback');
+    api.updatePad('A1', { playbackMode: 'loop' });
+    api.triggerPad('A1', undefined, -7);
+    await flush();
+    const lowLoop = triggered.at(-1).voice;
+    api.triggerPad('A1', undefined, 8);
+    await flush();
+    const highLoop = triggered.at(-1).voice;
+    assert.notEqual(lowLoop, highLoop);
+    api.triggerPad('A1', undefined, -7);
+    assert.equal(stopped.at(-1), lowLoop, 'retriggering a chromatic loop stops only that pitch');
     api.updatePad('A1', { playbackMode: 'one-shot' });
+    assert.equal(stopped.at(-1), highLoop, 'changing mode releases remaining loops');
     assert.equal(api.slots.A1.buffer, buffer);
     assert.equal(api.slots.A2.buffer, buffer);
     assert.equal(registered.get('A1'), buffer);
@@ -156,6 +170,8 @@ test('restored slices share a single decode and each receives the buffer', async
     await render().copyPad('A1', 'A4');
     assert.equal(render().slots.A4.buffer, buffer);
     await assert.rejects(render().copyPad('A1', 'A4'), /occupied/);
+    await render().copyPad('A1', 'B16');
+    assert.equal(render().slots.B16.buffer, buffer, 'copy supports a destination in another bank');
     assert.equal(render().slots.A1.sampleKey, 'shared');
   } finally {
     delete globalThis.__padTest;

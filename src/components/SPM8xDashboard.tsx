@@ -8,6 +8,7 @@ import { trackerEngine } from '../tracker/trackerEngine';
 import { trackerBridge } from '../tracker/trackerBridge';
 import { projectController } from '../project/projectController';
 import { PhraseTableEditor } from '../tracker/PhraseTableEditor';
+import { chromaticNote } from '../sampler/chromatic';
 
 export type WorkspaceTab = 'phrase' | 'table' | 'song' | 'mixer' | 'sampler';
 
@@ -82,7 +83,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
     })();
   }, [padBank.preparePads, playing, starting]);
 
-  const triggerPad = useCallback((padId: string) => padBank.triggerPad(padId, (time) => {
+  const triggerPad = useCallback((padId: string, _onTriggered?: (time: number) => void, semitoneOffset = 0) => padBank.triggerPad(padId, (time) => {
     if (!recordingRef.current) return;
     const position = trackerEngine.recordPosition(time);
     if (!position) return;
@@ -91,13 +92,13 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
     const step = state.tracker.patterns[patternIndex]?.steps[position.step];
     if (step && (!step.sampleId || step.sampleId === '--') && (!step.note || step.note === '---')) {
       projectController.updateStep(patternIndex, position.step, {
-        note: 'C-4', sampleId: padId, subTickOffset: position.subTickOffset,
+        note: chromaticNote(semitoneOffset), sampleId: padId, subTickOffset: position.subTickOffset,
       });
       setTransportMessage('');
     } else {
       setTransportMessage(`Step ${position.step + 1} occupied — not recorded.`);
     }
-  }), [padBank.triggerPad]);
+  }, semitoneOffset), [padBank.triggerPad]);
 
   return (
     <div className="app-shell flex flex-col w-full bg-[var(--bg-shell-deep)] text-[var(--text-primary)] font-mono overflow-hidden select-none">

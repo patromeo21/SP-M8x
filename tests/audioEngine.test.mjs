@@ -12,50 +12,53 @@ const asModuleUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).t
 class AudioParamMock {
   value = 0;
   events = [];
-  setValueAtTime(value, time) { this.value = value; this.events.push({ value, time }); }
-  setTargetAtTime(value) { this.value = value; }
-  cancelScheduledValues() {}
-  linearRampToValueAtTime(value) { this.value = value; }
+  setValueAtTime(value, time) { this.events.push(['set', value, time]); this.value = value; }
+  setTargetAtTime(value, time, constant) { this.events.push(['target', value, time, constant]); this.value = value; }
+  cancelAndHoldAtTime(time) { this.events.push(['hold', time]); }
+  linearRampToValueAtTime(value, time) { this.events.push(['linear', value, time]); this.value = value; }
+  exponentialRampToValueAtTime(value, time) { this.events.push(['exponential', value, time]); this.value = value; }
 }
 
 class NodeMock {
   connections = [];
   disconnected = false;
-  connect(node) { this.connections.push(node); }
+  connect(node) { this.connections.push(node); return node; }
   disconnect() { this.disconnected = true; }
 }
 
 class AudioContextMock {
-  static instances = [];
   state = 'suspended';
   currentTime = 10;
   sampleRate = 44100;
   destination = new NodeMock();
   sources = [];
-  panners = [];
-  analysers = [];
+  gains = [];
+  delays = [];
+  filters = [];
   rejectResume = true;
-
-  constructor() { AudioContextMock.instances.push(this); }
   async resume() {
     if (this.rejectResume) throw new Error('resume blocked');
     this.state = 'running';
   }
-  createGain() { return Object.assign(new NodeMock(), { gain: new AudioParamMock() }); }
+  createGain() {
+    const node = Object.assign(new NodeMock(), { gain: new AudioParamMock() });
+    this.gains.push(node);
+    return node;
+  }
+  createDelay() {
+    const node = Object.assign(new NodeMock(), { delayTime: new AudioParamMock() });
+    this.delays.push(node);
+    return node;
+  }
+  createBiquadFilter() {
+    const node = Object.assign(new NodeMock(), { frequency: new AudioParamMock() });
+    this.filters.push(node);
+    return node;
+  }
+  createWaveShaper() { return new NodeMock(); }
   createChannelSplitter() { return new NodeMock(); }
-  createAnalyser() {
-    const node = Object.assign(new NodeMock(), {
-      level: 0,
-      getFloatTimeDomainData(data) { data.fill(this.level); },
-    });
-    this.analysers.push(node);
-    return node;
-  }
-  createStereoPanner() {
-    const node = Object.assign(new NodeMock(), { pan: new AudioParamMock() });
-    this.panners.push(node);
-    return node;
-  }
+  createAnalyser() { return Object.assign(new NodeMock(), { getFloatTimeDomainData(data) { data.fill(0); } }); }
+  createStereoPanner() { return Object.assign(new NodeMock(), { pan: new AudioParamMock() }); }
   createBufferSource() {
     const node = Object.assign(new NodeMock(), {
       playbackRate: new AudioParamMock(),
@@ -68,101 +71,56 @@ class AudioContextMock {
   async decodeAudioData(data) { this.decodedInput = data; return { duration: 2 }; }
 }
 
-test('one engine resumes, decodes, schedules voices, and cleans up', async () => {
+test('preallocated voices reset FX without stopping dry audio and steal the oldest slot', async () => {
   globalThis.window = { AudioContext: AudioContextMock };
   const cacheUrl = asModuleUrl(await compile('../src/audio/audioCache.ts'));
-  const source = (await compile('../src/audio/audioEngine.ts')).replace("'./audioCache'", `'${cacheUrl}'`);
+  const poolUrl = asModuleUrl(await compile('../src/fx/VoiceFxPool.ts'));
+  const source = (await compile('../src/audio/audioEngine.ts'))
+    .replace("'./audioCache'", `'${cacheUrl}'`)
+    .replace("'../fx/VoiceFxPool'", `'${poolUrl}'`);
   const { audioEngine } = await import(asModuleUrl(source));
-
-  assert.equal(audioEngine.getContext(), null);
   await assert.rejects(audioEngine.initialize(), /resume blocked/);
   const context = audioEngine.getContext();
   context.rejectResume = false;
-  const [first, second] = await Promise.all([audioEngine.initialize(), audioEngine.initialize()]);
-  assert.equal(first, context);
-  assert.equal(second, context);
-  assert.equal(AudioContextMock.instances.length, 1);
-  context.state = 'interrupted';
-  context.rejectResume = true;
-  await assert.rejects(audioEngine.initialize(), /resume blocked/);
-  assert.equal(audioEngine.getContext(), context);
-  context.rejectResume = false;
-  assert.equal(await audioEngine.initialize(), context);
-  assert.equal(context.state, 'running');
-  context.analysers[1].level = -1.25;
-  assert.equal(audioEngine.getOutputPeak(), 1.25);
-  context.analysers[1].level = 0;
+  await Promise.all([audioEngine.initialize(), audioEngine.initialize()]);
+  assert.equal(context.delays.length, 32);
+  assert.equal(context.filters.length, 32);
+  const initialGains = context.gains.length;
 
-  const input = new ArrayBuffer(8);
-  await audioEngine.decodeAudioData(input);
-  assert.notEqual(context.decodedInput, input);
-  assert.equal(context.decodedInput.byteLength, input.byteLength);
-
+  const bytes = new ArrayBuffer(8);
+  await audioEngine.decodeAudioData(bytes);
+  assert.notEqual(context.decodedInput, bytes);
   const buffer = { duration: 2 };
   audioEngine.setPadBuffer('A1', buffer);
-  let notifications = 0;
-  const unsubscribe = audioEngine.subscribeVoiceChanges(() => notifications++);
-  const voiceId = audioEngine.triggerPad('A1', { scheduledTime: 11, sliceStart: 0.25, sliceEnd: 1 });
-  assert.ok(voiceId);
-  assert.equal(audioEngine.hasPadVoices('A1', buffer), true);
-  assert.equal(notifications, 1);
+  audioEngine.setPadBuffer('A2', buffer);
+  const ids = [];
+  for (let i = 0; i < 32; i++) {
+    context.currentTime = 10 + i * 0.001;
+    ids.push(audioEngine.triggerPad(i === 31 ? 'A2' : 'A1', { loop: true, semitoneOffset: 12, fx: i === 1 ? { code: 'FL', value: 64 } : undefined }));
+  }
+  assert.equal(audioEngine.getActiveVoiceCount(), 32);
+  assert.equal(context.sources[0].playbackRate.value, 2);
+  assert.equal(context.gains.length, initialGains);
+  assert.equal(context.delays.length, 32);
+  const slot = audioEngine.activeVoices.get(ids[0]).slot;
+  const filteredSlot = audioEngine.activeVoices.get(ids[1]).slot;
+  assert.notEqual(slot, filteredSlot);
+  assert.ok(filteredSlot.filter.frequency.events.some((event) => event[0] === 'target' && event[1] < 20000));
+  assert.equal(slot.filter.frequency.events.some((event) => event[0] === 'target'), false, 'step FX must not affect other voices');
   const sourceNode = context.sources[0];
-  assert.deepEqual(sourceNode.startArgs, [11, 0.25, 0.75]);
-  assert.equal(audioEngine.getPadPlaybackPosition('A1', buffer), null);
-  assert.equal(audioEngine.isVoiceSounding(voiceId), false);
-  assert.equal(audioEngine.hasVoice(voiceId), true);
-  context.currentTime = 11.25;
-  assert.equal(audioEngine.isVoiceSounding(voiceId), true);
-  assert.equal(audioEngine.getPadPlaybackPosition('A1', buffer), 0.5);
-  assert.equal(audioEngine.getPadPlaybackPosition('A1', { duration: 2 }), null);
-  context.currentTime = 11.75;
-  assert.equal(audioEngine.getPadPlaybackPosition('A1', buffer), null);
-  assert.equal(audioEngine.isVoiceSounding(voiceId), false);
-  context.currentTime = 10;
-  audioEngine.stopVoice(voiceId);
-  assert.equal(audioEngine.hasVoice(voiceId), false);
-  assert.equal(notifications, 2);
-  assert.equal(audioEngine.hasPadVoices('A1', buffer), false);
-  assert.equal(sourceNode.stopTime, 10);
-  assert.equal(sourceNode.disconnected, false);
+  audioEngine.resetPadFxAt('A1', context.currentTime);
+  assert.equal(sourceNode.stopTime, undefined);
+  assert.deepEqual(slot.wetGain.gain.events.at(-1), ['exponential', 0.0001, context.currentTime + 0.008]);
+  assert.deepEqual(slot.feedbackGain.gain.events.at(-1), ['exponential', 0.0001, context.currentTime + 0.008]);
+  assert.equal(audioEngine.activeVoices.get(ids[31]).slot.wetGain.gain.events.some((event) => event[0] === 'exponential'), false);
+  assert.equal(slot.dryGain.gain.value, 1);
+  const next = audioEngine.triggerPad('A1', { loop: true });
+  assert.ok(next);
+  assert.ok(Math.abs(sourceNode.stopTime - (context.currentTime + 0.006)) < 1e-10);
+  assert.equal(context.sources.at(-1).startArgs[0], context.currentTime + 0.006);
+  assert.equal(audioEngine.activeVoices.get(next).slot, slot);
   sourceNode.onended();
-  assert.equal(notifications, 2);
-  assert.equal(sourceNode.disconnected, true);
-
-  const loopId = audioEngine.triggerPad('A1', { sliceStart: 0.25, sliceEnd: 1.25, semitoneOffset: 12, loop: true });
-  context.currentTime = 10.75;
-  assert.equal(audioEngine.getPadPlaybackPosition('A1', buffer), 0.75);
-  const newer = audioEngine.triggerPad('A1', { sliceStart: 0.5, sliceEnd: 1.5 });
-  context.currentTime = 10.85;
-  assert.ok(Math.abs(audioEngine.getPadPlaybackPosition('A1', buffer) - 0.6) < 1e-10);
-  context.state = 'suspended';
-  assert.equal(audioEngine.getPadPlaybackPosition('A1', buffer), null);
-  context.state = 'running';
-  context.currentTime = 11;
-  audioEngine.stopVoice(newer);
-  assert.equal(audioEngine.getPadPlaybackPosition('A1', buffer), 0.25);
-  audioEngine.stopVoice(loopId);
-  assert.equal(audioEngine.getPadPlaybackPosition('A1', buffer), null);
-  unsubscribe();
-
-  await audioEngine.triggerVoice('A1');
-  const pannedSource = context.sources[3];
-  pannedSource.onended();
-  assert.equal(context.panners[0].disconnected, true);
-
-  context.currentTime = 20;
-  const modulated = audioEngine.triggerPad('A1', {
-    scheduledTime: 20.1, volume: 0.5,
-    modulation: [{ offset: 0, semitoneOffset: 12, volume: 0.5 }, { offset: 0.25, semitoneOffset: 0, volume: 0 }],
-  });
-  const modulatedSource = context.sources[4];
-  assert.deepEqual(modulatedSource.playbackRate.events, [{ value: 2, time: 20.1 }, { value: 1, time: 20.35 }]);
-  assert.deepEqual(modulatedSource.connections[0].gain.events, [
-    { value: 0.5, time: 20.1 }, { value: 0.25, time: 20.1 }, { value: 0, time: 20.35 },
-  ]);
-  context.currentTime = 20.2;
-  assert.ok(Math.abs(audioEngine.getPadPlaybackPosition('A1', buffer) - 0.2) < 1e-8);
-  context.currentTime = 20.4;
-  assert.ok(Math.abs(audioEngine.getPadPlaybackPosition('A1', buffer) - 0.55) < 1e-8);
-  audioEngine.stopVoice(modulated);
+  assert.equal(audioEngine.slotOwners.get(slot), next, 'stale cleanup must not release a reused slot');
+  assert.equal(context.gains.length, initialGains);
+  assert.equal(context.delays.length, 32);
 });

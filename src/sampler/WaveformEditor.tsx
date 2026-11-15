@@ -19,8 +19,12 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
   const playheadRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ pointerId: number; edge: 'start' | 'end'; range: SampleRange; original: SampleRange; x: number; origin: number } | null>(null);
   const pitchDrag = useRef<{ pointerId: number; y: number; initial: number; value: number } | null>(null);
-  const panDrag = useRef<{ pointerId: number; x: number; start: number } | null>(null);
+  const waveformPointers = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<{ ids: [number, number]; distance: number; zoom: number; centerFrame: number } | null>(null);
+  const scrubPointer = useRef<number | null>(null);
+  const scrubVoice = useRef<string | null>(null);
   const [preview, setPreview] = useState<SampleRange | null>(null);
+  const [scrubPosition, setScrubPosition] = useState<number | null>(null);
   const [pitchPreview, setPitchPreview] = useState<number | null>(null);
   const [precision, setPrecision] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -172,6 +176,35 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
     onPreviewRange(pad.id, percentFromFrame(next.start, length), percentFromFrame(next.end, length));
   };
 
+  const scrubAt = (clientX: number) => {
+    const bounds = containerRef.current?.getBoundingClientRect();
+    const context = audioEngine.getContext();
+    if (!bounds || !length) return;
+    const ratio = Math.max(0, Math.min(1, (clientX - bounds.left) / bounds.width));
+    const frame = Math.max(range.start, Math.min(range.end - 1, viewStart + Math.round(ratio * viewLength)));
+    setScrubPosition(frame);
+    if (!context || context.state !== 'running' || !pad.buffer) return;
+    if (scrubVoice.current) audioEngine.stopVoiceAt(scrubVoice.current, context.currentTime, 0.003);
+    scrubVoice.current = audioEngine.triggerPad(pad.id, {
+      sliceStart: frame / pad.buffer.sampleRate,
+      sliceEnd: range.end / pad.buffer.sampleRate,
+      semitoneOffset: pad.pitch,
+      volume: 0.6,
+    });
+  };
+
+  const endWaveformPointer = (pointerId: number) => {
+    waveformPointers.current.delete(pointerId);
+    if (waveformPointers.current.size === 0) setScrubPosition(null);
+    if (scrubPointer.current === pointerId) scrubPointer.current = null;
+    if (pinch.current?.ids.includes(pointerId)) pinch.current = null;
+    if (scrubVoice.current) {
+      const context = audioEngine.getContext();
+      if (context) audioEngine.stopVoiceAt(scrubVoice.current, context.currentTime, 0.01);
+      scrubVoice.current = null;
+    }
+  };
+
   const marker = (edge: 'start' | 'end') => (
     <button
       type="button"
@@ -222,23 +255,63 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
 
   return (
     <div ref={containerRef} className="sampler-waveform relative h-24 bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden mb-2 shrink-0">
-      <canvas ref={canvasRef} width={canvasSize.width} height={canvasSize.height} className="absolute inset-0 w-full h-full"
+      <canvas ref={canvasRef} width={canvasSize.width} height={canvasSize.height} className="absolute inset-0 w-full h-full touch-none"
         onPointerDown={(event) => {
-          if (zoom === 1 || panDrag.current) return;
           event.preventDefault();
           event.currentTarget.setPointerCapture(event.pointerId);
-          panDrag.current = { pointerId: event.pointerId, x: event.clientX, start: position };
+          waveformPointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+          if (waveformPointers.current.size >= 2) {
+            const [first, second] = [...waveformPointers.current.entries()].slice(-2);
+            const bounds = containerRef.current?.getBoundingClientRect();
+            if (!bounds) return;
+            const distance = Math.hypot(first[1].x - second[1].x, first[1].y - second[1].y);
+            const centerX = (first[1].x + second[1].x) / 2;
+            const centerRatio = Math.max(0, Math.min(1, (centerX - bounds.left) / bounds.width));
+            pinch.current = {
+              ids: [first[0], second[0]], distance: Math.max(1, distance), zoom,
+              centerFrame: viewStart + centerRatio * viewLength,
+            };
+            scrubPointer.current = null;
+            setScrubPosition(null);
+            if (scrubVoice.current) {
+              const context = audioEngine.getContext();
+              if (context) audioEngine.stopVoiceAt(scrubVoice.current, context.currentTime, 0.01);
+              scrubVoice.current = null;
+            }
+          } else {
+            scrubPointer.current = event.pointerId;
+            scrubAt(event.clientX);
+          }
         }}
         onPointerMove={(event) => {
-          const drag = panDrag.current;
-          const bounds = containerRef.current?.getBoundingClientRect();
-          if (!drag || drag.pointerId !== event.pointerId || !bounds) return;
-          setPosition(Math.max(0, Math.min(1 - 1 / zoom, drag.start - (event.clientX - drag.x) / bounds.width / zoom)));
+          if (!waveformPointers.current.has(event.pointerId)) return;
+          waveformPointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+          const gesture = pinch.current;
+          if (gesture && gesture.ids.includes(event.pointerId)) {
+            const first = waveformPointers.current.get(gesture.ids[0]);
+            const second = waveformPointers.current.get(gesture.ids[1]);
+            const bounds = containerRef.current?.getBoundingClientRect();
+            if (!first || !second || !bounds) return;
+            const distance = Math.hypot(first.x - second.x, first.y - second.y);
+            const nextZoom = Math.max(1, Math.min(32, gesture.zoom * distance / gesture.distance));
+            const centerX = (first.x + second.x) / 2;
+            const ratio = Math.max(0, Math.min(1, (centerX - bounds.left) / bounds.width));
+            const nextLength = Math.max(1, Math.ceil(length / nextZoom));
+            const nextStart = Math.max(0, Math.min(length - nextLength, Math.round(gesture.centerFrame - ratio * nextLength)));
+            setZoom(nextZoom);
+            setPosition(length ? nextStart / length : 0);
+            return;
+          }
+          if (scrubPointer.current !== event.pointerId) return;
+          scrubAt(event.clientX);
         }}
-        onPointerUp={(event) => { if (panDrag.current?.pointerId === event.pointerId) panDrag.current = null; }}
-        onPointerCancel={(event) => { if (panDrag.current?.pointerId === event.pointerId) panDrag.current = null; }}
-        onLostPointerCapture={(event) => { if (panDrag.current?.pointerId === event.pointerId) panDrag.current = null; }} />
-      <div ref={playheadRef} aria-hidden="true" style={{ display: 'none' }}
+        onPointerUp={(event) => endWaveformPointer(event.pointerId)}
+        onPointerCancel={(event) => endWaveformPointer(event.pointerId)}
+        onLostPointerCapture={(event) => endWaveformPointer(event.pointerId)} />
+      <div ref={playheadRef} aria-hidden="true"
+        style={scrubPosition !== null && scrubPosition >= viewStart && scrubPosition <= viewEnd
+          ? { left: `${(scrubPosition - viewStart) * 100 / viewLength}%` }
+          : { display: 'none' }}
         className="absolute top-0 bottom-0 w-px bg-white pointer-events-none z-[1]" />
       {!pad.buffer && (
         <div className="absolute inset-0 flex flex-col items-center justify-center text-zinc-500 text-[11px] pointer-events-none">
@@ -251,24 +324,11 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
         <div className="absolute top-0 inset-x-1 flex items-center justify-between gap-2 text-[9px] pointer-events-none">
           <span className="min-w-0 truncate text-cyan-300">{pad.name}</span>
           <span className="shrink-0 text-zinc-400" aria-label="Decoded audio format">
-            {pad.buffer.sampleRate} Hz · {pad.buffer.numberOfChannels === 1 ? 'MONO' : pad.buffer.numberOfChannels === 2 ? 'STEREO' : `${pad.buffer.numberOfChannels} CH`} · {pad.buffer.duration.toFixed(2)}s
+            {pad.buffer.sampleRate} Hz · {pad.buffer.numberOfChannels === 1 ? 'MONO' : pad.buffer.numberOfChannels === 2 ? 'STEREO' : `${pad.buffer.numberOfChannels} CH`} · {pad.buffer.duration.toFixed(2)}s · {zoom.toFixed(1)}×
           </span>
         </div>
         {marker('start')}
         {marker('end')}
-        <div className="wave-zoom">
-          {[0.5, 2].map((factor) => (
-            <button key={factor} type="button" aria-label={factor < 1 ? 'Zoom out waveform' : 'Zoom in waveform'}
-              disabled={factor < 1 ? zoom === 1 : zoom === 32}
-              onClick={() => {
-                const next = Math.max(1, Math.min(32, zoom * factor));
-                const center = position + 0.5 / zoom;
-                setPosition(Math.max(0, Math.min(1 - 1 / next, center - 0.5 / next)));
-                setZoom(next);
-              }}>{factor < 1 ? '−' : '+'}</button>
-          ))}
-          <span>{zoom}×</span>
-        </div>
         <button type="button" className="wave-precision" onClick={() => { setPrecision(!precision); setError(null); }}>
           {precision ? 'DONE' : 'FRAMES'}
         </button>

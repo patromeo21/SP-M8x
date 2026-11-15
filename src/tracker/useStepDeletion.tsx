@@ -52,6 +52,7 @@ export function useStepDeletion(clear: (indices: number[]) => void) {
   return {
     selected,
     controls,
+    isSelecting: () => pointer.current !== null,
     onPointerDown: (event: React.PointerEvent, index: number, occupied: boolean) => {
       if (pointer.current === null) {
         suppressedClicks.current.delete(index);

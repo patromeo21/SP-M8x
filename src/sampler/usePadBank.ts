@@ -9,6 +9,7 @@ import type { BankId } from '../project/projectController';
 import { deletePads, readStoredAudio, readStoredPads, savePadSettings, saveSample, saveSlices, type PlaybackMode, type StoredPad } from './padStorage';
 import { percentFromFrame, rangeFromPercent } from './sampleRange';
 import { gridSliceRanges } from './gridSlices';
+import type { PadPlayMode } from './chromatic';
 
 export const BANKS: readonly BankId[] = ['A', 'B', 'C', 'D'];
 export const PADS_PER_BANK = 16;
@@ -32,6 +33,10 @@ export interface PadBankApi {
   activeBank: BankId;
   selectedPadId: string;
   selectedPad: PadSlot;
+  padPlayMode: PadPlayMode;
+  chromaticRootOffset: number;
+  setPadPlayMode: (mode: PadPlayMode) => void;
+  setChromaticRootOffset: (offset: number) => void;
   setActiveBank: (bank: BankId) => void;
   selectPad: (padId: string) => void;
   loadSample: (padId: string, buffer: AudioBuffer, name: string, audio: Blob) => void;
@@ -40,7 +45,7 @@ export interface PadBankApi {
   chopToBank: (padId: string, bank: BankId, count: number) => Promise<string[]>;
   copyPad: (sourceId: string, destinationId: string) => Promise<void>;
   deletePads: (padIds: string[]) => Promise<void>;
-  triggerPad: (padId: string, onTriggered?: (time: number) => void) => () => void;
+  triggerPad: (padId: string, onTriggered?: (time: number) => void, semitoneOffset?: number) => () => void;
   preparePads: (padIds: string[]) => Promise<void>;
   getPadSettings: (padId: string) => PadSlot | undefined;
   stopAll: () => void;
@@ -79,6 +84,8 @@ export function usePadBank(): PadBankApi {
   const [slots, setSlots] = useState<Record<string, PadSlot>>(createSlots);
   const [activeBank, setActiveBank] = useState<BankId>('A');
   const [selectedPadId, setSelectedPadId] = useState<string>('A1');
+  const [padPlayMode, setPadPlayMode] = useState<PadPlayMode>('BANK_64');
+  const [chromaticRootOffset, setChromaticRootOffset] = useState(0);
   const [storageReady, setStorageReady] = useState(false);
   const [storageStatus, setStorageStatus] = useState('RESTORING PADS');
   const [storageError, setStorageError] = useState(false);
@@ -138,12 +145,15 @@ export function usePadBank(): PadBankApi {
     return () => { active = false; };
   }, []);
 
-  const stopLoop = useCallback((padId: string): boolean => {
-    const voiceId = loopVoices.current.get(padId);
-    if (!voiceId) return false;
-    audioEngine.stopVoice(voiceId);
-    loopVoices.current.delete(padId);
-    return true;
+  const stopLoop = useCallback((padId: string, pitch?: number): boolean => {
+    let stopped = false;
+    for (const [key, voiceId] of loopVoices.current) {
+      if (pitch === undefined ? !key.startsWith(`${padId}:`) : key !== `${padId}:${pitch}`) continue;
+      audioEngine.stopVoice(voiceId);
+      loopVoices.current.delete(key);
+      stopped = true;
+    }
+    return stopped;
   }, []);
 
   const updatePad = useCallback((padId: string, patch: PadSlotPatch) => {
@@ -325,7 +335,7 @@ export function usePadBank(): PadBankApi {
       const next = { ...slotsRef.current };
       for (const { id } of expected) {
         audioEngine.stopVoice(id);
-        loopVoices.current.delete(id);
+        stopLoop(id);
         audioEngine.clearPadBuffer(id);
         next[id] = emptySlot(id);
       }
@@ -344,9 +354,9 @@ export function usePadBank(): PadBankApi {
       pendingWrites.current--;
       for (const { id } of expected) reservedPads.current.delete(id);
     }
-  }, [storageReady]);
+  }, [storageReady, stopLoop]);
 
-  const triggerPad = useCallback((padId: string, onTriggered?: (time: number) => void) => {
+  const triggerPad = useCallback((padId: string, onTriggered?: (time: number) => void, semitoneOffset = 0) => {
     setSelectedPadId(padId);
     const noop = () => {};
     if (!storageReady) return noop;
@@ -354,7 +364,7 @@ export function usePadBank(): PadBankApi {
     const sampleKey = slot?.sampleKey;
     if (!sampleKey || reservedPads.current.has(padId)) return noop;
     const mode = slot.playbackMode;
-    if (mode === 'loop' && stopLoop(padId)) return noop;
+    if (mode === 'loop' && stopLoop(padId, semitoneOffset)) return noop;
     const generation = playbackGeneration.current;
     let released = false;
     let gateVoice: string | null = null;
@@ -367,19 +377,19 @@ export function usePadBank(): PadBankApi {
       const current = slotsRef.current[padId];
       if (!buffer || generation !== playbackGeneration.current || reservedPads.current.has(padId) || (mode === 'gate' && released) ||
           current.sampleKey !== sampleKey || current.playbackMode !== mode) return;
-      if (mode === 'loop' && stopLoop(padId)) return;
+      if (mode === 'loop' && stopLoop(padId, semitoneOffset)) return;
       const { start, end } = rangeFromPercent(current.startPct, current.endPct, buffer.length);
       const voiceId = audioEngine.triggerPad(padId, {
         sliceStart: start / buffer.sampleRate,
         sliceEnd: end / buffer.sampleRate,
-        semitoneOffset: current.pitch,
+        semitoneOffset: current.pitch + semitoneOffset,
         loop: mode === 'loop',
       });
       if (voiceId && onTriggered) {
         const context = audioEngine.getContext();
         if (context) onTriggered(context.currentTime);
       }
-      if (mode === 'loop' && voiceId) loopVoices.current.set(padId, voiceId);
+      if (mode === 'loop' && voiceId) loopVoices.current.set(`${padId}:${semitoneOffset}`, voiceId);
       if (mode === 'gate') gateVoice = voiceId;
     }).catch((error: unknown) => {
       if (slotsRef.current[padId]?.sampleKey !== sampleKey) return;
@@ -420,6 +430,10 @@ export function usePadBank(): PadBankApi {
     activeBank,
     selectedPadId,
     selectedPad: slots[selectedPadId],
+    padPlayMode,
+    chromaticRootOffset,
+    setPadPlayMode,
+    setChromaticRootOffset,
     setActiveBank,
     selectPad: setSelectedPadId,
     loadSample,

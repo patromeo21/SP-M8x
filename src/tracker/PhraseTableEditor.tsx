@@ -85,14 +85,21 @@ function PhraseRows({ pattern, patternIndex, slots, activeStep, transportBusy }:
             const occupied = Boolean((item.note && item.note !== '---') || (item.sampleId && item.sampleId !== '--'));
             return <button type="button" key={index} aria-label={`Phrase step ${index + 1}`}
               aria-pressed={deletion.selected.has(index)}
-              onPointerDown={(event) => deletion.onPointerDown(event, index, occupied)}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.currentTarget.setPointerCapture(event.pointerId);
+                deletion.onPointerDown(event, index, occupied);
+                if (!deletion.isSelecting()) setSelected(index);
+              }}
+              onPointerUp={() => {}}
               onPointerCancel={() => deletion.onPointerCancel(index)}
               onClick={() => { if (!deletion.consumeClick(index)) setSelected(index); }}
               data-playing={activeStep === index || undefined}
               style={activeStep === index ? { boxShadow: 'inset 0 0 0 2px #22d3ee' } : undefined}
-              className={`flex flex-col text-left px-1 py-2 min-w-0 border border-zinc-800 ${deletion.selected.has(index) ? 'bg-rose-950 text-rose-200' : selected === index ? 'bg-cyan-950 text-cyan-200' : 'text-zinc-300'} ${activeStep === index ? 'border-cyan-400' : ''}`}>
+              className={`touch-none select-none flex flex-col text-left px-1 py-2 min-w-0 border border-zinc-800 ${deletion.selected.has(index) ? 'bg-rose-950 text-rose-200' : selected === index ? 'bg-cyan-950 text-cyan-200' : 'text-zinc-300'} ${activeStep === index ? 'border-cyan-400' : ''}`}>
               <span>{String(index + 1).padStart(2, '0')}</span><span>{item.note || '---'}</span><span>{item.sampleId || '--'}</span>
               <span>{occupied ? item.velocity ?? 127 : '--'}</span><span>{occupied ? item.subTickOffset ?? 0 : '--'}</span><span>{item.tableId ?? '--'}</span>
+              <span>{item.fx ?? '--'}</span>
             </button>;
           })}
         </div>
@@ -112,9 +119,11 @@ function PhraseRows({ pattern, patternIndex, slots, activeStep, transportBusy }:
           </select>
         </label>
         <label className="flex flex-col gap-1">NOTE
-          <select aria-label="Step note" className={fieldClass} value={step.note === '---' ? 'C-4' : step.note} disabled={!assigned}
+          <select aria-label="Step note" className={fieldClass} value={step.note || '---'} disabled={!assigned}
             onChange={(event) => update({ note: event.target.value })}>
+            <option value="---">---</option>
             {Array.from({ length: 72 }, (_, i) => noteName(i + 24)).map((note) => <option key={note}>{note}</option>)}
+            <option value="OFF">OFF</option>
           </select>
         </label>
         <label className="flex flex-col gap-1">VELOCITY
@@ -135,6 +144,20 @@ function PhraseRows({ pattern, patternIndex, slots, activeStep, transportBusy }:
             {projectController.getTables().map((table) => <option key={table.id} value={table.id}>{table.name}</option>)}
           </select>
         </label>
+        <label className="flex flex-col gap-1">FX
+          <select aria-label="Phrase FX" className={fieldClass} value={step.fx ?? ''} disabled={!step.sampleId || step.sampleId === '--'}
+            onChange={(event) => update({ fx: event.target.value || undefined })}>
+            <option value="">NONE</option>
+            <option value="FL">FL — FILTER</option>
+            <option value="DL">DL — DELAY</option>
+            <option value="DR">DR — DRIVE</option>
+            <option value="OFF">OFF — FX RESET</option>
+          </select>
+        </label>
+        {step.fx && step.fx !== 'OFF' && <label className="flex flex-col gap-1">FX VALUE
+          <input aria-label="Phrase FX value" type="number" min="0" max="127" value={step.fxValue ?? 64}
+            onChange={(event) => update({ fxValue: Math.max(0, Math.min(127, Number(event.target.value))) })} />
+        </label>}
         <button type="button" className={buttonClass} disabled={!assigned} onClick={() => {
           if (window.confirm(`Clear the note on step ${selected + 1}?`)) projectController.clearStepNotes(patternIndex, [selected]);
         }}>CLEAR NOTE</button>
@@ -192,7 +215,9 @@ function PhraseTimingGrid({ pattern, patternIndex, activeStep }: { pattern: Patt
 }
 
 function TableRows({ table, playing }: { table: TrackerTable; playing: boolean }) {
-  const [selected, setSelected] = useState(0);
+  const [page, setPage] = useState(0);
+  const [selectedOnPage, setSelectedOnPage] = useState(0);
+  const selected = page * 128 + selectedOnPage;
   const [playingTicks, setPlayingTicks] = useState<number[]>([]);
   useEffect(() => {
     if (!playing) {
@@ -201,33 +226,55 @@ function TableRows({ table, playing }: { table: TrackerTable; playing: boolean }
     }
     let frame: number;
     const update = () => {
-      const ticks = trackerBridge.getPlayingTableTicks(table.id);
+      const ticks = trackerBridge.getPlayingTableTicks(table.id, page);
       setPlayingTicks((previous) => previous.length === ticks.length && previous.every((tick, index) => tick === ticks[index]) ? previous : ticks);
       frame = requestAnimationFrame(update);
     };
     frame = requestAnimationFrame(update);
     return () => cancelAnimationFrame(frame);
-  }, [playing, table.id]);
+  }, [page, playing, table.id]);
   const deletion = useStepDeletion((indices) => projectController.clearTableSteps(table.id, indices));
   const step = table.steps[selected];
   return (
     <div className="flex-1 min-h-0 flex gap-4">
       <div className="flex flex-col min-h-0 w-3/5">
         <div className="flex justify-between items-center mb-1 text-[10px]">
-          <span>TICK / PITCH / VOLUME {playingTicks.length > 0 && `· PLAY ${playingTicks.map((tick) => String(tick + 1).padStart(2, '0')).join(', ')}`}</span>
+          <span>TICK / PITCH / VOLUME {playingTicks.length > 0 && `· PLAY ${playingTicks.map((tick) => String(tick + 1).padStart(3, '0')).join(', ')}`}</span>
           {deletion.controls}
         </div>
+        <div className="flex gap-1 mb-1">
+          {[0, 1].map((pageIndex) => <button key={pageIndex} type="button"
+            aria-label={`Table page ${pageIndex + 1}, phrase steps ${pageIndex ? '10–1F' : '00–0F'}`}
+            aria-pressed={page === pageIndex}
+            className={`${buttonClass} ${page === pageIndex ? 'border-purple-400 text-purple-300' : ''}`}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.currentTarget.setPointerCapture(event.pointerId);
+              setPage(pageIndex);
+              setSelectedOnPage(0);
+            }}
+            onPointerUp={() => {}}>PAGE {pageIndex + 1} · 128 TICKS</button>)}
+        </div>
         <div className="flex-1 min-h-0 flex flex-col overflow-y-auto">
-          {table.steps.map((item, index) => <button type="button" key={index} aria-label={`Table tick ${index + 1}`}
+          {table.steps.slice(page * 128, page * 128 + 128).map((item, localIndex) => {
+            const index = page * 128 + localIndex;
+            return <button type="button" key={index} aria-label={`Table tick ${index + 1}`}
             aria-pressed={deletion.selected.has(index)}
-            onPointerDown={(event) => deletion.onPointerDown(event, index, item.pitch !== null || item.volume !== null)}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.currentTarget.setPointerCapture(event.pointerId);
+              deletion.onPointerDown(event, index, item.pitch !== null || item.volume !== null || Boolean(item.reset) || Boolean(item.fx));
+              if (!deletion.isSelecting()) setSelectedOnPage(localIndex);
+            }}
+            onPointerUp={() => {}}
             onPointerCancel={() => deletion.onPointerCancel(index)}
-            onClick={() => { if (!deletion.consumeClick(index)) setSelected(index); }}
-            data-playing={playingTicks.includes(index) || undefined}
-            style={playingTicks.includes(index) ? { boxShadow: 'inset 3px 0 #22d3ee' } : undefined}
-            className={`grid grid-cols-3 text-left px-2 flex-1 min-h-[32px] shrink-0 border-b border-zinc-800 ${deletion.selected.has(index) ? 'bg-rose-950 text-rose-200' : selected === index ? 'bg-purple-950 text-purple-200' : 'text-zinc-300'}`}>
-            <span>{String(index + 1).padStart(2, '0')}</span><span>{item.pitch ?? '--'}</span><span>{item.volume ?? '--'}</span>
-          </button>)}
+            onClick={() => { if (!deletion.consumeClick(index)) setSelectedOnPage(localIndex); }}
+            data-playing={playingTicks.includes(localIndex) || undefined}
+            style={playingTicks.includes(localIndex) ? { boxShadow: 'inset 3px 0 #22d3ee' } : undefined}
+            className={`touch-none select-none grid grid-cols-3 text-left px-2 flex-1 min-h-[32px] shrink-0 border-b border-zinc-800 ${deletion.selected.has(index) ? 'bg-rose-950 text-rose-200' : selectedOnPage === localIndex ? 'bg-purple-950 text-purple-200' : 'text-zinc-300'}`}>
+            <span>{String(localIndex + 1).padStart(3, '0')}</span><span>{item.pitch ?? '--'}</span><span>{item.volume ?? '--'} · {item.reset ? 'OFF' : item.fx ?? '--'}</span>
+          </button>;
+          })}
         </div>
       </div>
       {step && <div className="flex flex-col gap-3 text-zinc-400">
@@ -246,7 +293,21 @@ function TableRows({ table, playing }: { table: TrackerTable; playing: boolean }
             {Array.from({ length: 128 }, (_, value) => <option key={value} value={value}>{value}</option>)}
           </select>
         </label>
-        <span className="max-w-64 text-[10px]">One tick per ⅛ phrase step. Values hold until changed; the last value holds after tick 16.</span>
+        <label className="flex flex-col gap-1">FX
+          <select aria-label="Table FX" className={fieldClass} value={step.reset ? 'OFF' : step.fx ?? ''}
+            onChange={(event) => projectController.updateTableStep(table.id, selected, {
+              reset: false,
+              fx: event.target.value ? event.target.value as 'FL' | 'DL' | 'DR' | 'OFF' : undefined,
+            })}>
+            <option value="">NONE</option><option value="FL">FL — FILTER</option><option value="DL">DL — DELAY</option>
+            <option value="DR">DR — DRIVE</option><option value="OFF">OFF — FX RESET</option>
+          </select>
+        </label>
+        {(step.fx === 'FL' || step.fx === 'DL' || step.fx === 'DR') && <label className="flex flex-col gap-1">FX VALUE
+          <input aria-label="Table FX value" type="number" min="0" max="127" value={step.fxValue ?? 64}
+            onChange={(event) => projectController.updateTableStep(table.id, selected, { fxValue: Math.max(0, Math.min(127, Number(event.target.value))) })} />
+        </label>}
+        <span className="max-w-64 text-[10px]">Each page maps 16 phrase steps to 128 ticks (8 ticks per step). Values hold until changed.</span>
       </div>}
     </div>
   );

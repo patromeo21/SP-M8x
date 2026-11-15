@@ -17,6 +17,7 @@ export interface TrackerStepItem {
   note: string;
   sampleId: string;
   fx?: string;
+  fxValue?: number;
   subTickOffset?: number;
   velocity?: number;
   tableId?: number | null;
@@ -25,6 +26,9 @@ export interface TrackerStepItem {
 export interface TableStep {
   pitch: number | null;
   volume: number | null;
+  reset?: boolean;
+  fx?: 'FL' | 'DL' | 'DR' | 'OFF';
+  fxValue?: number;
 }
 
 export interface TrackerTable {
@@ -61,6 +65,27 @@ export type ProjectStateListener = (state: ProjectState) => void;
 const STORAGE_KEY = 'SP_M8X_PROJECT_STATE_V1';
 const MIGRATION_BACKUP_KEY = 'SP_M8X_PROJECT_STATE_BEFORE_32_STEPS';
 const PHRASE_LENGTH = 32;
+const TABLE_PAGE_TICKS = 128;
+
+function normalizeTablePages(state: ProjectState): boolean {
+  const tables = state.tracker.tables ?? [];
+  let changed = false;
+  for (const table of tables) {
+    if (table.steps.length === TABLE_PAGE_TICKS * 2) continue;
+    const previous = table.steps;
+    const steps = Array.from({ length: TABLE_PAGE_TICKS * 2 }, (): TableStep => ({ pitch: null, volume: null }));
+    if (previous.length === 16) {
+      for (const page of [0, 1]) {
+        for (let index = 0; index < previous.length; index++) steps[page * TABLE_PAGE_TICKS + index] = { ...previous[index] };
+      }
+    } else {
+      for (let index = 0; index < Math.min(previous.length, steps.length); index++) steps[index] = { ...previous[index] };
+    }
+    table.steps = steps;
+    changed = true;
+  }
+  return changed;
+}
 
 function splitLongPhrases(state: ProjectState): boolean {
   const patterns = state.tracker.patterns;
@@ -90,7 +115,10 @@ class ProjectController {
   constructor() {
     const loaded = this.loadFromLocalStorage();
     this.state = loaded || this.getDefaultState();
-    if (loaded && splitLongPhrases(this.state)) this.saveToLocalStorage();
+    const phraseMigration = loaded ? splitLongPhrases(this.state) : false;
+    const tableMigration = loaded ? normalizeTablePages(this.state) : false;
+    const migrated = phraseMigration || tableMigration;
+    if (migrated) this.saveToLocalStorage();
     else this.migrationBackup = null;
   }
 
@@ -255,7 +283,7 @@ class ProjectController {
     tables.push({
       id,
       name: `Table ${String(id).padStart(2, '0')}`,
-      steps: Array.from({ length: 16 }, () => ({ pitch: null, volume: null })),
+      steps: Array.from({ length: TABLE_PAGE_TICKS * 2 }, () => ({ pitch: null, volume: null })),
     });
     this.notify();
     return id;
@@ -278,7 +306,7 @@ class ProjectController {
     let changed = false;
     for (const index of new Set(stepIndices)) {
       const step = table.steps[index];
-      if (!step || (step.pitch === null && step.volume === null)) continue;
+      if (!step || (step.pitch === null && step.volume === null && !step.reset && !step.fx)) continue;
       table.steps[index] = { pitch: null, volume: null };
       changed = true;
     }

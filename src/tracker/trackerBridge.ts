@@ -5,6 +5,7 @@
 
 import { audioEngine } from '../audio/audioEngine';
 import { projectController, type Pattern } from '../project/projectController';
+import type { VoiceFxCommand } from '../fx/VoiceFxPool';
 
 export interface TrackerStepEvent {
   stepIndex: number;
@@ -28,8 +29,9 @@ interface PendingVoice {
 
 interface TableVoice extends PendingVoice {
   tableId: number;
+  pageIndex: number;
+  startTick: number;
   tickDuration: number;
-  tickCount: number;
 }
 
 const PAD_ID_PATTERN = /^[A-D](?:[1-9]|1[0-6])$/;
@@ -74,11 +76,18 @@ class TrackerBridge {
     if (scheduledTime < now - 0.01) return;
 
     const hasSample = Boolean(step.sampleId) && step.sampleId !== EMPTY_SAMPLE;
-    const hasNote = Boolean(step.note) && step.note !== EMPTY_NOTE;
-    if (!hasSample && !hasNote) return;
-
+    const hasNote = Boolean(step.note) && step.note !== EMPTY_NOTE && step.note !== 'OFF';
     const padId = hasSample ? step.sampleId : FALLBACK_PAD_ID;
     if (!PAD_ID_PATTERN.test(padId)) return;
+    if (step.note === 'OFF') {
+      audioEngine.stopPadVoicesAt(padId, scheduledTime);
+      return;
+    }
+    if (step.fx === 'OFF' || step.fx === '00') {
+      audioEngine.resetPadFxAt(padId, scheduledTime);
+      if (!hasNote) return;
+    }
+    if (!hasSample && !hasNote) return;
 
     const buffer = audioEngine.getPadBuffer(padId);
     if (!buffer) return;
@@ -87,14 +96,25 @@ class TrackerBridge {
     const startPct = settings?.startPct ?? 0;
     const endPct = settings?.endPct ?? 100;
     const table = projectController.getState().tracker.tables?.find((item) => item.id === step.tableId);
-    const modulation = table?.steps.flatMap((item, index) => {
-      if (item.pitch === null && item.volume === null) return [];
-      return [{
-        offset: index * stepDuration / 8,
-        ...(item.pitch === null ? {} : { semitoneOffset: item.pitch }),
-        ...(item.volume === null ? {} : { volume: item.volume / 127 }),
-      }];
-    });
+    const pageIndex = Math.floor(stepIndex / 16);
+    const startTick = (stepIndex % 16) * 8;
+    const modulation: NonNullable<Parameters<typeof audioEngine.triggerPad>[1]>['modulation'] = [];
+    if (table) {
+      for (let tick = startTick; tick < 128; tick++) {
+        const item = table.steps[pageIndex * 128 + tick];
+        if (!item) break;
+        const offset = (tick - startTick) * stepDuration / 8;
+        const fx = item.reset ? { code: 'OFF' as const } : item.fx ? { code: item.fx, value: item.fxValue } : undefined;
+        if (item.pitch !== null || item.volume !== null || fx) {
+          modulation.push({
+            offset,
+            ...(item.pitch === null ? {} : { semitoneOffset: item.pitch }),
+            ...(item.volume === null ? {} : { volume: item.volume / 127 }),
+            ...(fx ? { fx } : {}),
+          });
+        }
+      }
+    }
     const velocity = typeof step.velocity === 'number' && Number.isFinite(step.velocity)
       ? Math.max(0, Math.min(127, step.velocity)) / 127 : 1;
 
@@ -105,7 +125,9 @@ class TrackerBridge {
       volume: velocity,
       loop: false,
       scheduledTime,
-      modulation,
+      modulation: modulation.length ? modulation : undefined,
+      fx: step.fx === 'FL' || step.fx === 'DL' || step.fx === 'DR'
+        ? { code: step.fx, value: step.fxValue } satisfies VoiceFxCommand : undefined,
     });
 
     this.prunePending();
@@ -114,21 +136,23 @@ class TrackerBridge {
       if (table && table.steps.length) {
         this.tableVoices = this.tableVoices.filter((voice) => audioEngine.hasVoice(voice.voiceId));
         this.tableVoices.push({
-          voiceId, time: Math.max(scheduledTime, now), tableId: table.id,
-          tickDuration: stepDuration / 8, tickCount: table.steps.length,
+          voiceId, time: Math.max(scheduledTime, now), tableId: table.id, pageIndex, startTick,
+          tickDuration: stepDuration / 8,
         });
       }
     }
   }
 
-  public getPlayingTableTicks(tableId: number): number[] {
+  public getPlayingTableTicks(tableId: number, pageIndex: number): number[] {
     const context = audioEngine.getContext();
     if (!context || context.state !== 'running') return [];
     this.tableVoices = this.tableVoices.filter((voice) => audioEngine.hasVoice(voice.voiceId));
     const ticks = new Set<number>();
     for (const voice of this.tableVoices) {
-      if (voice.tableId !== tableId || context.currentTime < voice.time || !audioEngine.isVoiceSounding(voice.voiceId)) continue;
-      ticks.add(Math.min(voice.tickCount - 1, Math.floor((context.currentTime - voice.time) / voice.tickDuration)));
+      if (voice.tableId !== tableId || voice.pageIndex !== pageIndex ||
+          context.currentTime < voice.time || !audioEngine.isVoiceSounding(voice.voiceId)) continue;
+      const tick = voice.startTick + Math.floor((context.currentTime - voice.time) / voice.tickDuration);
+      if (tick < 128) ticks.add(tick);
     }
     return [...ticks].sort((a, b) => a - b);
   }

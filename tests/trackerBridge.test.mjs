@@ -9,8 +9,19 @@ test('bridge schedules pad slices and signed microtiming and cancels future voic
   const context = { currentTime: 1, state: 'running' };
   const triggered = [];
   const stopped = [];
+  const stoppedPads = [];
   const voices = new Set();
   const sounding = new Set();
+  const steps = Array.from({ length: 32 }, () => ({ sampleId: '--', note: '---' }));
+  steps[0] = { sampleId: 'A1', note: 'D-4', velocity: 64, tableId: 1, subTickOffset: -2 };
+  steps[1] = { sampleId: 'A1', note: '---', fx: 'OFF' };
+  steps[17] = { sampleId: 'A1', note: 'C-4', tableId: 1 };
+  steps[18] = { sampleId: 'A1', note: 'C-4', fx: 'DL', fxValue: 80 };
+  const tableSteps = Array.from({ length: 256 }, () => ({ pitch: null, volume: null }));
+  tableSteps[0] = { pitch: 12, volume: 64 };
+  tableSteps[2] = { pitch: -2, volume: null };
+  tableSteps[136] = { pitch: 5, volume: 50 };
+  tableSteps[137] = { pitch: null, volume: null, reset: true };
   globalThis.bridgeTestAudio = {
     getContext: () => context,
     getPadBuffer: (id) => id === 'A1' ? { duration: 2 } : undefined,
@@ -23,14 +34,13 @@ test('bridge schedules pad slices and signed microtiming and cancels future voic
     hasVoice: (id) => voices.has(id),
     isVoiceSounding: (id) => sounding.has(id),
     stopVoice: (id) => stopped.push(id),
+    resetPadFxAt: (...args) => stoppedPads.push(args),
+    stopPadVoicesAt: () => {},
   };
   globalThis.bridgeTestProject = {
     getState: () => ({
       settings: { activePatternIndex: 0 },
-      tracker: { patterns: [{ steps: [
-        { sampleId: 'A1', note: 'D-4', velocity: 64, tableId: 1, subTickOffset: -2 },
-        { sampleId: '--', note: '---' },
-      ] }], tables: [{ id: 1, steps: [{ pitch: 12, volume: 64 }, { pitch: null, volume: null }, { pitch: -2, volume: null }] }] },
+      tracker: { patterns: [{ steps }], tables: [{ id: 1, steps: tableSteps }] },
     }),
   };
   try {
@@ -44,7 +54,10 @@ test('bridge schedules pad slices and signed microtiming and cancels future voic
     trackerBridge.setPadSettingsProvider(() => ({ startPct: 25, endPct: 75, pitch: 3 }));
     trackerBridge.scheduleStep(0, 1.2, 0.125);
     trackerBridge.scheduleStep(1, 1.2, 0.125);
-    assert.equal(triggered.length, 1);
+    trackerBridge.scheduleStep(17, 1.5, 0.125);
+    trackerBridge.scheduleStep(18, 1.6, 0.125);
+    assert.equal(triggered.length, 3);
+    assert.deepEqual(stoppedPads, [['A1', 1.2]], 'phrase FX OFF targets prior voices on its pad');
     assert.equal(triggered[0].options.sliceStart, 0.5);
     assert.equal(triggered[0].options.sliceEnd, 1.5);
     assert.equal(triggered[0].options.semitoneOffset, 5);
@@ -54,26 +67,30 @@ test('bridge schedules pad slices and signed microtiming and cancels future voic
       { offset: 0.03125, semitoneOffset: -2 },
     ]);
     assert.ok(Math.abs(triggered[0].options.scheduledTime - 1.16875) < 1e-8);
-    assert.deepEqual(trackerBridge.getPlayingTableTicks(1), [], 'future voices are not displayed');
+    assert.deepEqual(triggered[1].options.modulation, [
+      { offset: 0, semitoneOffset: 5, volume: 50 / 127 },
+      { offset: 0.015625, fx: { code: 'OFF' } },
+    ]);
+    assert.deepEqual(triggered[2].options.fx, { code: 'DL', value: 80 });
+    assert.deepEqual(trackerBridge.getPlayingTableTicks(1, 0), [], 'future voices are not displayed');
     context.currentTime = triggered[0].options.scheduledTime + 0.02;
     sounding.add('voice1');
-    assert.deepEqual(trackerBridge.getPlayingTableTicks(1), [1]);
-    assert.deepEqual(trackerBridge.getPlayingTableTicks(2), [], 'other tables do not show this voice');
-    trackerBridge.scheduleStep(0, context.currentTime + 0.05125, 0.125);
-    sounding.add('voice2');
-    assert.deepEqual(trackerBridge.getPlayingTableTicks(1), [1], 'a scheduled future voice has not started');
+    assert.deepEqual(trackerBridge.getPlayingTableTicks(1, 0), [1]);
+    assert.deepEqual(trackerBridge.getPlayingTableTicks(1, 1), [], 'the other phrase page is isolated');
+    assert.deepEqual(trackerBridge.getPlayingTableTicks(2, 0), [], 'other tables do not show this voice');
     context.currentTime = triggered[1].options.scheduledTime + 0.0001;
-    assert.deepEqual(trackerBridge.getPlayingTableTicks(1), [0, 2], 'overlapping voices show their own ticks');
-    sounding.delete('voice2');
+    sounding.add('voice2');
+    assert.deepEqual(trackerBridge.getPlayingTableTicks(1, 1), [8], 'page two starts at its phrase-step tick');
     context.currentTime += 1;
-    assert.deepEqual(trackerBridge.getPlayingTableTicks(1), [2], 'last tick holds while voice sounds');
+    assert.deepEqual(trackerBridge.getPlayingTableTicks(1, 1), [72], 'page two ticks advance on the audio clock');
+    sounding.delete('voice2');
     sounding.delete('voice1');
-    assert.deepEqual(trackerBridge.getPlayingTableTicks(1), [], 'ended voice does not show a tick');
+    assert.deepEqual(trackerBridge.getPlayingTableTicks(1, 0), [], 'ended voice does not show a tick');
     context.currentTime = 1;
     trackerBridge.cancelPending();
-    assert.deepEqual(stopped, ['voice2']);
+    assert.deepEqual(stopped, ['voice1', 'voice2', 'voice3']);
     trackerBridge.scheduleStep(0, 0.5, 0.125);
-    assert.equal(triggered.length, 2, 'overdue notes must not fire late');
+    assert.equal(triggered.length, 3, 'overdue notes must not fire late');
   } finally {
     delete globalThis.bridgeTestAudio;
     delete globalThis.bridgeTestProject;

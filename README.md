@@ -16,8 +16,10 @@ Imported samples, recordings, and pad settings are saved in this browser using
 IndexedDB. Tap a restored pad to decode and play it; its first tap may be slower.
 Browser storage can be cleared or reclaimed, so it is not a permanent backup.
 Watch the footer for save errors and avoid closing the page while it says SAVING.
-Drag the S and E waveform markers to trim; hold P and slide vertically to adjust
-pitch in semitones. FRAMES opens precise sample-frame fields (END is exclusive).
+Drag the full-height S and E waveform markers to trim; hold P and slide
+vertically to adjust pitch in semitones. Drag across the waveform to audition
+from the selected sample position; pinch to zoom. FRAMES opens precise
+sample-frame fields (END is exclusive).
 The waveform displays the decoded buffer's sample rate, channel count, and
 duration. The browser may resample imported audio, so the displayed rate is not
 necessarily the original file's sample rate. Trigger the pad to audition while
@@ -40,8 +42,14 @@ long samples are analyzed in small batches to keep pad controls responsive.
 Choose DEL above the grid, tap one or more occupied pads (bank changes
 are allowed), and confirm deletion. Shared source audio remains available to
 other pads until its last reference is removed.
-Turn on COPY above the pads and drag a loaded pad onto an empty pad in the
-same bank. The new pad shares audio but has independent editing parameters.
+Turn on COPY above the pads, tap a loaded source, switch banks if needed, and
+tap an empty destination. The new pad shares audio but has independent editing
+parameters.
+Choose BANK or CHROMATIC above the grid. In chromatic mode the last selected
+pad is the source for all 16 keys, spanning -7 to +8 semitones plus ROOT.
+Pitch shifting changes sample duration. Recorded notes retain their pitch and
+source pad. Mode and ROOT reset when the page is reloaded; select another
+source in BANK mode.
 Tap the playback mode button to cycle ONE-SHOT (plays the selected region),
 GATE (plays while held, up to the end of the region), and LOOP (tap to start
 or stop the region). Modes are saved per pad. Switching to GATE leaves an
@@ -69,16 +77,18 @@ you are editing.
 Existing 64-step phrases are split into two named phrases on first load, with a
 local-storage backup of the old project. Each new phrase plays separately;
 song arrangement for joining them is not implemented yet.
-TABLE shows a 64-position timeline for each 16-step phrase page. Markers at
-half-cell positions represent eighth-step offsets. Tap a marker to change its
-offset; FX latch, swing and stutter automation are not implemented yet.
-In TABLE create reusable 16-tick pitch and volume macros, then assign a
-table to a phrase step. Each note starts its table at tick 1; ticks are spaced
-at one eighth of a phrase step and values hold until changed. Pitch is relative
-to the pad and phrase note, and table volume multiplies step velocity. After
-tick 16 the final values hold until the voice ends. The DEL/OP gesture clears
-selected table ticks after confirmation. Table changes affect newly scheduled
-voices, not voices already playing.
+TABLE shows a 128-tick page for each 16-step phrase page. Tick pages map to
+phrase steps 00–0F and 10–1F; each step contains eight table ticks. Reusable
+tables contain both 128-tick pages. Tables retain their IDs and old 16-tick
+tables are expanded into both pages when loaded. Select a tick to edit pitch,
+volume, or an FX command. FL (filter), DL (delay), and DR (drive) affect the
+triggered voice; FX OFF fades its wet level and feedback without stopping the
+dry sample. Phrase FX OFF targets sounding voices on that pad; NOTE OFF stops
+the pad's voices. The fixed delay node's internal buffer cannot be erased, so
+rapid reactivation or slot reuse can bring back an old echo. Pitch and volume
+events are scheduled on the audio clock; values hold until changed. The DEL/OP gesture clears selected populated table ticks after
+confirmation. Table changes affect newly scheduled voices, not voices already
+playing.
 While the transport runs, the selected table highlights the ticks of sounding
 voices that use it; overlapping voices can highlight several ticks. The final
 tick remains highlighted while its value holds. Scroll the tick list to reach
@@ -87,13 +97,16 @@ Other table commands, looping, adjustable table rates and phrase optcodes are
 not yet implemented.
 Changes inside the scheduler's lookahead may not play until the next loop.
 Phrase playback currently triggers each sample as a one-shot; gate lengths, loop
-recording, effects, and song arrangement are not yet implemented. Restored pads
+recording, performance punch-in effects, and song arrangement are not yet implemented. Restored pads
 used by the phrase are decoded before playback starts. Phrase data is saved in
 browser local storage, separately from pad audio; check for save errors.
 
 The MASTER slider changes output gain. PEAK is a sampled stereo output level,
 not a continuous clip detector or a limiter: it can miss brief peaks and does
 not measure true peaks. Multiple pads can overload the output; keep levels low.
+The engine preallocates 32 effect slots; a 33rd voice fades the oldest and
+starts after 6 ms. FX automation scheduled far ahead can be cancelled by a
+later reset on the same slot; timing and performance need iPad Safari testing.
 
 Run `npm test` for the audio-engine checks and `npm run build` for the production
 TypeScript and Vite build.

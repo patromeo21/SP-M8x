@@ -36,6 +36,20 @@ test('phrases and reusable tables persist, and table deletion preserves other ti
     ]);
     restored.setActivePattern(0);
     assert.equal(restored.getState().settings.activePatternIndex, 0);
+    assert.equal(restored.getTables()[0].steps.length, 256);
+
+    const legacy = restored.getState();
+    legacy.tracker.tables = [{
+      id: 9, name: 'Legacy', steps: Array.from({ length: 16 }, (_, index) => ({ pitch: index - 8, volume: 64 })),
+    }];
+    saved.set('SP_M8X_PROJECT_STATE_V1', JSON.stringify(legacy));
+    const migratedModule = `${source}\n// migrated`;
+    const { projectController: migrated } = await import(`data:text/javascript;base64,${Buffer.from(migratedModule).toString('base64')}`);
+    const migratedTicks = migrated.getTables()[0].steps;
+    assert.equal(migratedTicks.length, 256);
+    assert.deepEqual(migratedTicks.slice(0, 16), migratedTicks.slice(128, 144));
+    assert.equal(migratedTicks[127].pitch, null);
+    assert.equal(migratedTicks[255].volume, null);
   } finally {
     delete globalThis.window;
     delete globalThis.localStorage;
