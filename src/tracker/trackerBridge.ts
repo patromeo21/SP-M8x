@@ -4,8 +4,9 @@
  */
 
 import { audioEngine } from '../audio/audioEngine';
-import { projectController, type Pattern } from '../project/projectController';
+import { projectController, type Pattern, type TrackerStepItem } from '../project/projectController';
 import type { VoiceFxCommand } from '../fx/VoiceFxPool';
+import { instrumentIdToPadId } from '../sampler/padIds';
 
 export interface TrackerStepEvent {
   stepIndex: number;
@@ -34,10 +35,7 @@ interface TableVoice extends PendingVoice {
   tickDuration: number;
 }
 
-const PAD_ID_PATTERN = /^[A-D](?:[1-9]|1[0-6])$/;
 const EMPTY_NOTE = '---';
-const EMPTY_SAMPLE = '--';
-const FALLBACK_PAD_ID = 'A1';
 const DEFAULT_STEP_COUNT = 32;
 
 function noteOffset(note: string): number {
@@ -59,7 +57,7 @@ class TrackerBridge {
 
   public getStepCount(): number {
     const pattern = this.getActivePattern();
-    return pattern && pattern.steps.length > 0 ? pattern.steps.length : DEFAULT_STEP_COUNT;
+    return pattern && pattern.tracks[0].steps.length > 0 ? pattern.tracks[0].steps.length : DEFAULT_STEP_COUNT;
   }
 
   /**
@@ -67,18 +65,24 @@ class TrackerBridge {
    * Empty steps, invalid pad IDs, and pads without a loaded buffer are skipped.
    */
   public scheduleStep(stepIndex: number, stepTime: number, stepDuration: number): void {
-    const step = this.getActivePattern()?.steps[stepIndex];
-    if (!step) return;
+    const pattern = this.getActivePattern();
+    if (!pattern) return;
+    for (const track of pattern.tracks) {
+      const step = track.steps[stepIndex];
+      if (step) this.scheduleTrackStep(step, track.id, stepIndex, stepTime, stepDuration);
+    }
+  }
+
+  private scheduleTrackStep(step: TrackerStepItem, trackIndex: number, stepIndex: number, stepTime: number, stepDuration: number): void {
     const rawOffset = step.subTickOffset;
     const offset = typeof rawOffset === 'number' && Number.isFinite(rawOffset) ? Math.max(-4, Math.min(4, rawOffset)) : 0;
     const scheduledTime = stepTime + offset * stepDuration / 8;
     const now = audioEngine.getContext()?.currentTime ?? 0;
     if (scheduledTime < now - 0.01) return;
 
-    const hasSample = Boolean(step.sampleId) && step.sampleId !== EMPTY_SAMPLE;
     const hasNote = Boolean(step.note) && step.note !== EMPTY_NOTE && step.note !== 'OFF';
-    const padId = hasSample ? step.sampleId : FALLBACK_PAD_ID;
-    if (!PAD_ID_PATTERN.test(padId)) return;
+    const padId = instrumentIdToPadId(step.instrumentId);
+    if (!padId) return;
     if (step.note === 'OFF') {
       audioEngine.stopPadVoicesAt(padId, scheduledTime);
       return;
@@ -87,7 +91,7 @@ class TrackerBridge {
       audioEngine.resetPadFxAt(padId, scheduledTime);
       if (!hasNote) return;
     }
-    if (!hasSample && !hasNote) return;
+    if (!hasNote) return;
 
     const buffer = audioEngine.getPadBuffer(padId);
     if (!buffer) return;
@@ -125,6 +129,7 @@ class TrackerBridge {
       volume: velocity,
       loop: false,
       scheduledTime,
+      trackIndex,
       modulation: modulation.length ? modulation : undefined,
       fx: step.fx === 'FL' || step.fx === 'DL' || step.fx === 'DR'
         ? { code: step.fx, value: step.fxValue } satisfies VoiceFxCommand : undefined,

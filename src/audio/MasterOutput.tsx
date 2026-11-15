@@ -16,7 +16,7 @@ export function MasterOutput() {
   }, []);
 
   return (
-    <div className="flex items-center gap-2" title="Sampled stereo peak; brief peaks between readings can be missed. This is not a limiter.">
+    <div className="flex items-center gap-2" title="Sampled post-limiter stereo peak; brief peaks and intersample peaks can be missed.">
       <label className="flex items-center gap-1">
         MASTER
         <input aria-label="Master volume" type="range" min="0" max="1" step="0.01" value={volume}

@@ -11,11 +11,12 @@ export interface PadProjectData {
   name: string;
   isPolyphonic: boolean;
   fileName: string | null;
+  targetTrack: number;
 }
 
 export interface TrackerStepItem {
   note: string;
-  sampleId: string;
+  instrumentId: number | null;
   fx?: string;
   fxValue?: number;
   subTickOffset?: number;
@@ -40,6 +41,11 @@ export interface TrackerTable {
 export interface Pattern {
   id: number;
   name: string;
+  tracks: PhraseTrack[];
+}
+
+export interface PhraseTrack {
+  id: number;
   steps: TrackerStepItem[];
 }
 
@@ -47,6 +53,7 @@ export interface ProjectSettings {
   bpm: number;
   masterVolume: number;
   activePatternIndex: number;
+  trackVolumes?: number[];
 }
 
 export interface ProjectState {
@@ -63,14 +70,128 @@ export interface ProjectState {
 export type ProjectStateListener = (state: ProjectState) => void;
 
 const STORAGE_KEY = 'SP_M8X_PROJECT_STATE_V1';
-const MIGRATION_BACKUP_KEY = 'SP_M8X_PROJECT_STATE_BEFORE_32_STEPS';
+const MIGRATION_BACKUP_KEY = 'SP_M8X_PROJECT_STATE_BEFORE_8_TRACKS';
 const PHRASE_LENGTH = 32;
+const TRACK_COUNT = 8;
 const TABLE_PAGE_TICKS = 128;
+
+function emptyStep(): TrackerStepItem {
+  return { note: '---', instrumentId: null };
+}
+
+function createTracks(): PhraseTrack[] {
+  return Array.from({ length: TRACK_COUNT }, (_, id) => ({
+    id, steps: Array.from({ length: PHRASE_LENGTH }, emptyStep),
+  }));
+}
+
+function validTrack(index: number): boolean {
+  return Number.isInteger(index) && index >= 0 && index < TRACK_COUNT;
+}
+
+function validateVolume(volume: number): void {
+  if (!Number.isFinite(volume) || volume < 0 || volume > 1) throw new Error('Track volume must be between 0 and 1.');
+}
+
+function migrateStep(value: unknown): TrackerStepItem {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid phrase step.');
+  const step = value as Record<string, unknown>;
+  if (typeof step.note !== 'string') throw new Error('Invalid phrase note.');
+  let instrumentId = step.instrumentId;
+  if ('sampleId' in step) {
+    if (typeof step.sampleId !== 'string') throw new Error('Invalid legacy sample ID.');
+    const match = /^([A-D])([1-9]|1[0-6])$/.exec(step.sampleId);
+    const converted = step.sampleId === '--' || step.sampleId === '' ? null :
+      match ? (match[1].charCodeAt(0) - 65) * 16 + Number(match[2]) - 1 : undefined;
+    if (converted === undefined || (instrumentId !== undefined && instrumentId !== converted)) {
+      throw new Error('Invalid or conflicting legacy sample ID.');
+    }
+    instrumentId = converted;
+  }
+  if (instrumentId !== null && (typeof instrumentId !== 'number' || !Number.isInteger(instrumentId) || instrumentId < 0 || instrumentId > 63)) {
+    throw new Error('Invalid instrument ID.');
+  }
+  const { sampleId: _sampleId, ...rest } = step;
+  return { ...rest, note: step.note, instrumentId: instrumentId as number | null };
+}
+
+function migrateProject(state: ProjectState): boolean {
+  if (!state || typeof state !== 'object' || !state.settings || !state.sampler ||
+      !state.sampler.pads || typeof state.sampler.pads !== 'object' || Array.isArray(state.sampler.pads) ||
+      !state.tracker || !Array.isArray(state.tracker.patterns)) throw new Error('Invalid project state.');
+  let changed = false;
+  if (state.settings.trackVolumes === undefined) {
+    state.settings.trackVolumes = Array(TRACK_COUNT).fill(1);
+    changed = true;
+  } else {
+    if (!Array.isArray(state.settings.trackVolumes) || state.settings.trackVolumes.length !== TRACK_COUNT) throw new Error('Invalid track volumes.');
+    state.settings.trackVolumes.forEach(validateVolume);
+  }
+  for (const bank of ['A', 'B', 'C', 'D'] as BankId[]) {
+    for (let i = 1; i <= 16; i++) {
+      const id = `${bank}${i}`;
+      const pad = state.sampler.pads[id];
+      if (pad === undefined) {
+        state.sampler.pads[id] = { id, bank, name: `EMPTY ${id}`, isPolyphonic: true, fileName: null, targetTrack: 0 };
+        changed = true;
+      } else {
+        if (!pad || typeof pad !== 'object' || Array.isArray(pad)) throw new Error(`Invalid pad ${id}.`);
+        if (pad.targetTrack === undefined) {
+          pad.targetTrack = 0;
+          changed = true;
+        } else if (!validTrack(pad.targetTrack)) throw new Error(`Invalid target track for ${id}.`);
+      }
+    }
+  }
+  const patterns = state.tracker.patterns;
+  if (!Number.isInteger(state.settings.activePatternIndex) || !patterns[state.settings.activePatternIndex]) {
+    throw new Error('Invalid active pattern index.');
+  }
+  let nextId = patterns.reduce((max, pattern) => {
+    if (!pattern || typeof pattern !== 'object' || !Number.isInteger(pattern.id) || typeof pattern.name !== 'string') throw new Error('Invalid pattern.');
+    return Math.max(max, pattern.id);
+  }, 0) + 1;
+  const continuations: Pattern[] = [];
+  for (const pattern of patterns) {
+    const legacy = pattern as Pattern & { steps?: unknown };
+    if (legacy.steps !== undefined) {
+      if (legacy.tracks !== undefined || !Array.isArray(legacy.steps) || legacy.steps.length === 0) throw new Error('Invalid legacy phrase.');
+      const steps = legacy.steps.map(migrateStep);
+      const chunks = Math.ceil(steps.length / PHRASE_LENGTH);
+      for (let chunk = 0; chunk < chunks; chunk++) {
+        const tracks = createTracks();
+        const part = steps.slice(chunk * PHRASE_LENGTH, (chunk + 1) * PHRASE_LENGTH);
+        part.forEach((step, index) => { tracks[0].steps[index] = step; });
+        if (chunk === 0) {
+          pattern.tracks = tracks;
+          delete legacy.steps;
+        } else {
+          continuations.push({ id: nextId++, name: `${pattern.name} (part ${chunk + 1})`, tracks });
+        }
+      }
+      changed = true;
+    } else {
+      if (!Array.isArray(pattern.tracks) || pattern.tracks.length !== TRACK_COUNT) throw new Error('Invalid phrase tracks.');
+      pattern.tracks.forEach((track, index) => {
+        if (!track || track.id !== index || !Array.isArray(track.steps) || track.steps.length !== PHRASE_LENGTH) throw new Error('Invalid phrase track.');
+        track.steps.forEach((step) => {
+          if ('sampleId' in (step ?? {})) throw new Error('Legacy sample ID in phrase track.');
+          migrateStep(step);
+        });
+      });
+    }
+  }
+  patterns.push(...continuations);
+  return normalizeTablePages(state) || changed;
+}
 
 function normalizeTablePages(state: ProjectState): boolean {
   const tables = state.tracker.tables ?? [];
+  if (!Array.isArray(tables)) throw new Error('Invalid tables.');
   let changed = false;
   for (const table of tables) {
+    if (!table || !Array.isArray(table.steps) || table.steps.length > TABLE_PAGE_TICKS * 2 ||
+        table.steps.some((step) => !step || typeof step !== 'object' || Array.isArray(step))) throw new Error('Invalid table steps.');
     if (table.steps.length === TABLE_PAGE_TICKS * 2) continue;
     const previous = table.steps;
     const steps = Array.from({ length: TABLE_PAGE_TICKS * 2 }, (): TableStep => ({ pitch: null, volume: null }));
@@ -87,39 +208,44 @@ function normalizeTablePages(state: ProjectState): boolean {
   return changed;
 }
 
-function splitLongPhrases(state: ProjectState): boolean {
-  const patterns = state.tracker.patterns;
-  if (!patterns.some((pattern) => pattern.steps.length > PHRASE_LENGTH)) return false;
-  let nextId = patterns.reduce((max, pattern) => Math.max(max, pattern.id), 0) + 1;
-  const continuations: Pattern[] = [];
-  for (const pattern of patterns) {
-    if (pattern.steps.length <= PHRASE_LENGTH) continue;
-    const originalSteps = pattern.steps;
-    pattern.steps = originalSteps.slice(0, PHRASE_LENGTH);
-    for (let start = PHRASE_LENGTH; start < originalSteps.length; start += PHRASE_LENGTH) {
-      const steps = originalSteps.slice(start, start + PHRASE_LENGTH);
-      while (steps.length < PHRASE_LENGTH) steps.push({ note: '---', sampleId: '--' });
-      continuations.push({ id: nextId++, name: `${pattern.name} (part ${start / PHRASE_LENGTH + 1})`, steps });
-    }
-  }
-  patterns.push(...continuations);
-  return true;
-}
-
 class ProjectController {
   private state: ProjectState;
   private listeners: Set<ProjectStateListener> = new Set();
   private saveFailed = false;
+  private readOnly = false;
   private migrationBackup: string | null = null;
 
   constructor() {
-    const loaded = this.loadFromLocalStorage();
-    this.state = loaded || this.getDefaultState();
-    const phraseMigration = loaded ? splitLongPhrases(this.state) : false;
-    const tableMigration = loaded ? normalizeTablePages(this.state) : false;
-    const migrated = phraseMigration || tableMigration;
-    if (migrated) this.saveToLocalStorage();
-    else this.migrationBackup = null;
+    this.state = this.getDefaultState();
+    try {
+      if (typeof window === 'undefined') return;
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved === null) return;
+      const loaded = JSON.parse(saved) as ProjectState;
+      const migrated = migrateProject(loaded);
+      this.state = loaded;
+      if (migrated) {
+        this.migrationBackup = saved;
+        this.saveToLocalStorage();
+      }
+      console.log('[ProjectController] Loaded project state from localStorage.');
+    } catch (e) {
+      this.readOnly = true;
+      this.saveFailed = true;
+      this.freezeState(this.state);
+      console.error('[ProjectController] Failed to load project; using read-only defaults:', e);
+    }
+  }
+
+  private freezeState(value: object): void {
+    for (const child of Object.values(value)) {
+      if (child && typeof child === 'object') this.freezeState(child);
+    }
+    Object.freeze(value);
+  }
+
+  private assertWritable(): void {
+    if (this.readOnly) throw new Error('Project is read-only after a load failure.');
   }
 
   private getDefaultState(): ProjectState {
@@ -135,6 +261,7 @@ class ProjectController {
           name: `EMPTY ${padId}`,
           isPolyphonic: true,
           fileName: null,
+          targetTrack: 0,
         };
       }
     });
@@ -144,6 +271,7 @@ class ProjectController {
         bpm: 120,
         masterVolume: 0.8,
         activePatternIndex: 0,
+        trackVolumes: Array(TRACK_COUNT).fill(1),
       },
       sampler: {
         pads: initialPads,
@@ -153,36 +281,29 @@ class ProjectController {
           {
             id: 1,
             name: 'Pattern 01',
-            steps: Array.from({ length: PHRASE_LENGTH }, () => ({
-              note: '---',
-              sampleId: '--',
-            })),
+            tracks: createTracks(),
           },
         ],
       },
     };
   }
 
-  private loadFromLocalStorage(): ProjectState | null {
-    try {
-      if (typeof window === 'undefined') return null;
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        console.log('[ProjectController] Loaded project state from localStorage.');
-        this.migrationBackup = saved;
-        return JSON.parse(saved);
-      }
-    } catch (e) {
-      console.error('[ProjectController] Failed to load from localStorage:', e);
-    }
-    return null;
-  }
-
   private saveToLocalStorage(): void {
+    if (this.readOnly) return;
     try {
       if (typeof window === 'undefined') return;
       if (this.migrationBackup !== null) {
-        localStorage.setItem(MIGRATION_BACKUP_KEY, this.migrationBackup);
+        let suffix = 0;
+        while (true) {
+          const key = suffix === 0 ? MIGRATION_BACKUP_KEY : `${MIGRATION_BACKUP_KEY}_${suffix}`;
+          const existing = localStorage.getItem(key);
+          if (existing === null) {
+            localStorage.setItem(key, this.migrationBackup);
+            break;
+          }
+          if (existing === this.migrationBackup) break;
+          suffix++;
+        }
         this.migrationBackup = null;
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
@@ -195,6 +316,10 @@ class ProjectController {
 
   public hasSaveError(): boolean {
     return this.saveFailed;
+  }
+
+  public isReadOnly(): boolean {
+    return this.readOnly;
   }
 
   public getState(): ProjectState {
@@ -212,36 +337,42 @@ class ProjectController {
   }
 
   public setBpm(bpm: number): void {
+    this.assertWritable();
     const clampedBpm = Math.max(40, Math.min(300, bpm));
     this.state.settings.bpm = clampedBpm;
     this.notify();
   }
 
   public setMasterVolume(volume: number): void {
+    this.assertWritable();
     const clampedVol = Math.max(0, Math.min(1, volume));
     this.state.settings.masterVolume = clampedVol;
     this.notify();
   }
 
   public createPattern(): void {
+    this.assertWritable();
     const patterns = this.state.tracker.patterns;
     const id = patterns.reduce((max, pattern) => Math.max(max, pattern.id), 0) + 1;
     patterns.push({
       id, name: `Pattern ${String(id).padStart(2, '0')}`,
-      steps: Array.from({ length: PHRASE_LENGTH }, () => ({ note: '---', sampleId: '--' })),
+      tracks: createTracks(),
     });
     this.state.settings.activePatternIndex = patterns.length - 1;
     this.notify();
   }
 
   public setActivePattern(index: number): void {
+    this.assertWritable();
     if (!Number.isInteger(index) || !this.state.tracker.patterns[index]) return;
     this.state.settings.activePatternIndex = index;
     this.notify();
   }
 
   public updatePadMetadata(padId: string, metadata: Partial<PadProjectData>): void {
+    this.assertWritable();
     if (!this.state.sampler.pads[padId]) return;
+    if ('targetTrack' in metadata && !validTrack(metadata.targetTrack as number)) throw new Error('Invalid target track.');
     this.state.sampler.pads[padId] = {
       ...this.state.sampler.pads[padId],
       ...metadata,
@@ -249,28 +380,88 @@ class ProjectController {
     this.notify();
   }
 
-  public updateStep(patternIndex: number, stepIndex: number, stepData: Partial<TrackerStepItem>): void {
-    const pattern = this.state.tracker.patterns[patternIndex];
-    if (!pattern || !pattern.steps[stepIndex]) return;
-
-    pattern.steps[stepIndex] = {
-      ...pattern.steps[stepIndex],
-      ...stepData,
-    };
+  public setPadTargetTrack(padId: string, track: number): void {
+    this.assertWritable();
+    if (!this.state.sampler.pads[padId]) throw new Error('Invalid pad ID.');
+    if (!validTrack(track)) throw new Error('Invalid target track.');
+    this.state.sampler.pads[padId].targetTrack = track;
     this.notify();
   }
 
-  public clearStepNotes(patternIndex: number, stepIndices: readonly number[]): void {
-    const pattern = this.state.tracker.patterns[patternIndex];
-    if (!pattern) return;
+  public setTrackVolume(trackIndex: number, volume: number): void {
+    this.assertWritable();
+    if (!validTrack(trackIndex)) throw new Error('Invalid track index.');
+    validateVolume(volume);
+    const volumes = this.state.settings.trackVolumes ?? (this.state.settings.trackVolumes = Array(TRACK_COUNT).fill(1));
+    volumes[trackIndex] = volume;
+    this.notify();
+  }
+
+  private getTrack(patternIndex: number, trackIndex: number): PhraseTrack {
+    if (!Number.isInteger(patternIndex) || !this.state.tracker.patterns[patternIndex]) throw new Error('Invalid pattern index.');
+    if (!validTrack(trackIndex)) throw new Error('Invalid track index.');
+    return this.state.tracker.patterns[patternIndex].tracks[trackIndex];
+  }
+
+  private validateStepIndex(stepIndex: number): void {
+    if (!Number.isInteger(stepIndex) || stepIndex < 0 || stepIndex >= PHRASE_LENGTH) throw new Error('Invalid step index.');
+  }
+
+  public updateStep(patternIndex: number, stepIndex: number, stepData: Partial<TrackerStepItem>, trackIndex = 0): void {
+    this.assertWritable();
+    const track = this.getTrack(patternIndex, trackIndex);
+    this.validateStepIndex(stepIndex);
+    const updated = { ...track.steps[stepIndex], ...stepData };
+    if ('sampleId' in updated) throw new Error('Legacy sample ID in phrase track.');
+    migrateStep(updated);
+    track.steps[stepIndex] = updated;
+    this.notify();
+  }
+
+  public clearStepNotes(patternIndex: number, stepIndices: readonly number[], trackIndex = 0): void {
+    this.assertWritable();
+    const track = this.getTrack(patternIndex, trackIndex);
+    stepIndices.forEach((index) => this.validateStepIndex(index));
     let changed = false;
     for (const index of new Set(stepIndices)) {
-      const step = pattern.steps[index];
-      if (!step || ((!step.note || step.note === '---') && (!step.sampleId || step.sampleId === '--'))) continue;
-      pattern.steps[index] = { ...step, note: '---', sampleId: '--', subTickOffset: 0, velocity: undefined, tableId: null };
+      const step = track.steps[index];
+      if ((!step.note || step.note === '---') && step.instrumentId === null) continue;
+      track.steps[index] = { ...step, note: '---', instrumentId: null, subTickOffset: 0, velocity: undefined, tableId: null };
       changed = true;
     }
     if (changed) this.notify();
+  }
+
+  public recordHit(patternIndex: number, stepIndex: number, preferredTrack: number, event: TrackerStepItem): number | null {
+    this.assertWritable();
+    this.getTrack(patternIndex, preferredTrack);
+    this.validateStepIndex(stepIndex);
+    migrateStep(event);
+    if ('sampleId' in event) throw new Error('Legacy sample ID in phrase track.');
+    if (!event.note || event.note === '---' || event.instrumentId === null) throw new Error('Invalid recorded note.');
+    const velocity = event.velocity ?? 127;
+    if (!Number.isInteger(velocity) || velocity < 0 || velocity > 127) throw new Error('Invalid velocity.');
+    const pattern = this.state.tracker.patterns[patternIndex];
+    for (const track of pattern.tracks) {
+      const step = track.steps[stepIndex];
+      if (step.instrumentId === event.instrumentId && step.note === event.note && (step.subTickOffset ?? 0) === (event.subTickOffset ?? 0)) {
+        track.steps[stepIndex] = { ...step, velocity };
+        this.notify();
+        return track.id;
+      }
+    }
+    for (let offset = 0; offset < TRACK_COUNT; offset++) {
+      const index = (preferredTrack + offset) % TRACK_COUNT;
+      const step = pattern.tracks[index].steps[stepIndex];
+      const empty = step.note === '---' && step.instrumentId === null &&
+        Object.entries(step).every(([key, value]) => key === 'note' || key === 'instrumentId' ||
+          value == null || (key === 'subTickOffset' && value === 0) || (key === 'fx' && value === ''));
+      if (!empty) continue;
+      pattern.tracks[index].steps[stepIndex] = { ...event, velocity };
+      this.notify();
+      return index;
+    }
+    return null;
   }
 
   public getTables(): TrackerTable[] {
@@ -278,6 +469,7 @@ class ProjectController {
   }
 
   public createTable(): number {
+    this.assertWritable();
     const tables = this.state.tracker.tables ?? (this.state.tracker.tables = []);
     const id = tables.reduce((max, table) => Math.max(max, table.id), 0) + 1;
     tables.push({
@@ -290,6 +482,7 @@ class ProjectController {
   }
 
   public updateTableStep(tableId: number, stepIndex: number, changes: Partial<TableStep>): void {
+    this.assertWritable();
     const step = this.getTables().find((table) => table.id === tableId)?.steps[stepIndex];
     if (!step) return;
     if (changes.pitch !== undefined && changes.pitch !== null &&
@@ -301,6 +494,7 @@ class ProjectController {
   }
 
   public clearTableSteps(tableId: number, stepIndices: readonly number[]): void {
+    this.assertWritable();
     const table = this.getTables().find((item) => item.id === tableId);
     if (!table) return;
     let changed = false;
@@ -330,12 +524,19 @@ class ProjectController {
    * Import project state from a JSON string or parsed object
    */
   public importProjectJson(jsonData: ProjectState): void {
+    this.assertWritable();
     if (!jsonData || !jsonData.settings || !jsonData.sampler || !jsonData.tracker) {
       console.error('[ProjectController] Invalid project file format.');
       return;
     }
-    this.state = jsonData;
-    splitLongPhrases(this.state);
+    const original = JSON.stringify(jsonData);
+    const imported = JSON.parse(original) as ProjectState;
+    const migrated = migrateProject(imported);
+    if (migrated && this.migrationBackup !== null && this.migrationBackup !== original) {
+      throw new Error('Pending migration backup must be saved before importing another legacy project.');
+    }
+    if (migrated && this.migrationBackup === null) this.migrationBackup = original;
+    this.state = imported;
     this.notify();
     console.log('[ProjectController] Project successfully imported and state updated.');
   }

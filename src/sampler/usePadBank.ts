@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { audioEngine } from '../audio/audioEngine';
-import type { BankId } from '../project/projectController';
+import { projectController, type BankId } from '../project/projectController';
 import { deletePads, readStoredAudio, readStoredPads, savePadSettings, saveSample, saveSlices, type PlaybackMode, type StoredPad } from './padStorage';
 import { percentFromFrame, rangeFromPercent } from './sampleRange';
 import { gridSliceRanges } from './gridSlices';
@@ -45,7 +45,7 @@ export interface PadBankApi {
   chopToBank: (padId: string, bank: BankId, count: number) => Promise<string[]>;
   copyPad: (sourceId: string, destinationId: string) => Promise<void>;
   deletePads: (padIds: string[]) => Promise<void>;
-  triggerPad: (padId: string, onTriggered?: (time: number) => void, semitoneOffset?: number) => () => void;
+  triggerPad: (padId: string, onTriggered?: (time: number) => number | void, semitoneOffset?: number, pointerTime?: number) => () => void;
   preparePads: (padIds: string[]) => Promise<void>;
   getPadSettings: (padId: string) => PadSlot | undefined;
   stopAll: () => void;
@@ -356,7 +356,7 @@ export function usePadBank(): PadBankApi {
     }
   }, [storageReady, stopLoop]);
 
-  const triggerPad = useCallback((padId: string, onTriggered?: (time: number) => void, semitoneOffset = 0) => {
+  const triggerPad = useCallback((padId: string, onTriggered?: (time: number) => number | void, semitoneOffset = 0) => {
     setSelectedPadId(padId);
     const noop = () => {};
     if (!storageReady) return noop;
@@ -384,10 +384,14 @@ export function usePadBank(): PadBankApi {
         sliceEnd: end / buffer.sampleRate,
         semitoneOffset: current.pitch + semitoneOffset,
         loop: mode === 'loop',
+        trackIndex: projectController.getState().sampler.pads[padId]?.targetTrack ?? 0,
       });
       if (voiceId && onTriggered) {
         const context = audioEngine.getContext();
-        if (context) onTriggered(context.currentTime);
+        if (context) {
+          const track = onTriggered(context.currentTime);
+          if (track !== undefined) audioEngine.setVoiceTrack(voiceId, track);
+        }
       }
       if (mode === 'loop' && voiceId) loopVoices.current.set(`${padId}:${semitoneOffset}`, voiceId);
       if (mode === 'gate') gateVoice = voiceId;

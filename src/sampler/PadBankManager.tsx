@@ -95,7 +95,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
     }
     const source = padPlayMode === 'CHROMATIC_16' ? selectedPadId : padId;
     const pitch = padPlayMode === 'CHROMATIC_16' ? chromaticOffset(index, chromaticRootOffset) : 0;
-    activePointers.current.set(event.pointerId, { padId, release: triggerPad(source, undefined, pitch) });
+    activePointers.current.set(event.pointerId, { padId, release: triggerPad(source, undefined, pitch, event.timeStamp) });
     syncPressed();
   };
 

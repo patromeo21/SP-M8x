@@ -9,6 +9,7 @@ import { trackerBridge } from '../tracker/trackerBridge';
 import { projectController } from '../project/projectController';
 import { PhraseTableEditor } from '../tracker/PhraseTableEditor';
 import { chromaticNote } from '../sampler/chromatic';
+import { instrumentIdToPadId, padIdToInstrumentId } from '../sampler/padIds';
 
 export type WorkspaceTab = 'phrase' | 'table' | 'song' | 'mixer' | 'sampler';
 
@@ -34,6 +35,8 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
   recordingRef.current = armed && playing;
 
   useEffect(() => {
+    (projectController.getState().settings.trackVolumes ?? Array.from({ length: 8 }, () => 1))
+      .forEach((volume, index) => audioEngine.setTrackVolume(index, volume));
     trackerBridge.setPadSettingsProvider(padBank.getPadSettings);
     trackerEngine.setCallbacks(setPlayhead, (reason) => {
       setPlaying(false);
@@ -41,11 +44,13 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
       if (reason) setTransportMessage(reason);
     });
     const unsubscribe = projectController.subscribe(() => refreshProject((value) => value + 1));
+    const unsubscribeOverload = audioEngine.subscribeOverload(setTransportMessage);
     return () => {
       startGeneration.current++;
       trackerEngine.stop();
       trackerBridge.setPadSettingsProvider(null);
       unsubscribe();
+      unsubscribeOverload();
     };
   }, [padBank.getPadSettings]);
 
@@ -67,7 +72,8 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
         const state = projectController.getState();
         const pattern = state.tracker.patterns[state.settings.activePatternIndex];
         if (!pattern) throw new Error('Active phrase is unavailable.');
-        const ids = pattern.steps.map((step) => step.sampleId).filter((id) => id && id !== '--');
+        const ids = pattern.tracks.flatMap((track) => track.steps.map((step) => instrumentIdToPadId(step.instrumentId)))
+          .filter((id): id is string => id !== null);
         await padBank.preparePads(ids);
         if (generation !== startGeneration.current) return;
         await trackerEngine.start(state.settings.bpm);
@@ -83,22 +89,36 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
     })();
   }, [padBank.preparePads, playing, starting]);
 
-  const triggerPad = useCallback((padId: string, _onTriggered?: (time: number) => void, semitoneOffset = 0) => padBank.triggerPad(padId, (time) => {
-    if (!recordingRef.current) return;
-    const position = trackerEngine.recordPosition(time);
-    if (!position) return;
-    const state = projectController.getState();
-    const patternIndex = state.settings.activePatternIndex;
-    const step = state.tracker.patterns[patternIndex]?.steps[position.step];
-    if (step && (!step.sampleId || step.sampleId === '--') && (!step.note || step.note === '---')) {
-      projectController.updateStep(patternIndex, position.step, {
-        note: chromaticNote(semitoneOffset), sampleId: padId, subTickOffset: position.subTickOffset,
-      });
+  const triggerPad = useCallback((padId: string, _onTriggered?: (time: number) => number | void, semitoneOffset = 0, pointerTime?: number) => {
+    const context = audioEngine.getContext();
+    const captureTime = context && pointerTime !== undefined && Number.isFinite(pointerTime)
+      ? context.currentTime + (pointerTime - performance.now()) / 1000 : undefined;
+    return padBank.triggerPad(padId, (time) => {
+      if (!recordingRef.current) return;
+      const position = trackerEngine.recordPosition(captureTime ?? time);
+      if (!position) return;
+      const state = projectController.getState();
+      const instrumentId = padIdToInstrumentId(padId);
+      if (instrumentId === null) return;
+      const track = projectController.recordHit(state.settings.activePatternIndex, position.step,
+        state.sampler.pads[padId]?.targetTrack ?? 0, {
+          note: chromaticNote(semitoneOffset), instrumentId, subTickOffset: position.subTickOffset, velocity: 127,
+        });
+      if (track === null) {
+        setTransportMessage(`Step ${position.step + 1} full — hit not recorded.`);
+        return;
+      }
       setTransportMessage('');
-    } else {
-      setTransportMessage(`Step ${position.step + 1} occupied — not recorded.`);
-    }
-  }, semitoneOffset), [padBank.triggerPad]);
+      return track;
+    }, semitoneOffset);
+  }, [padBank.triggerPad]);
+
+  if (projectController.isReadOnly()) {
+    return <main className="app-shell bg-black text-rose-300 p-6 font-mono" role="alert">
+      PROJECT COULD NOT BE LOADED — EDITING DISABLED. EXISTING DATA WAS NOT OVERWRITTEN.
+      CHECK BROWSER STORAGE AND RELOAD.
+    </main>;
+  }
 
   return (
     <div className="app-shell flex flex-col w-full bg-[var(--bg-shell-deep)] text-[var(--text-primary)] font-mono overflow-hidden select-none">
@@ -121,7 +141,19 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
             ? <SamplerWorkspace padBank={padBank} recorder={recorder} triggerPad={triggerPad} />
             : <section className="flex-1 p-4 bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl">
                 <h2 className="text-sm text-cyan-300 uppercase">{currentTab}</h2>
-                <p className="text-xs text-zinc-400 mt-2">{currentTab === 'song' ? 'Song arrangement is not yet implemented.' : 'Mixer routing and performance effects are not yet implemented. Master gain is available below.'}</p>
+                {currentTab === 'song' ? <p className="text-xs text-zinc-400 mt-2">Song arrangement is not yet implemented.</p> :
+                  <div className="flex gap-4 mt-4">
+                    {(projectController.getState().settings.trackVolumes ?? Array.from({ length: 8 }, () => 1)).map((volume, index) =>
+                      <label key={index} className="flex flex-col gap-2 text-xs">TRACK {index + 1}
+                        <input aria-label={`Track ${index + 1} volume`} type="range" min="0" max="1" step="0.01" value={volume}
+                          onChange={(event) => {
+                            const value = Number(event.target.value);
+                            projectController.setTrackVolume(index, value);
+                            audioEngine.setTrackVolume(index, value);
+                          }} />
+                        <span>{Math.round(volume * 100)}%</span>
+                      </label>)}
+                  </div>}
               </section>}
       </main>
       <footer className="flex items-center justify-between px-4 py-2 bg-[var(--bg-canvas)] border-t border-[var(--border-grid)] text-[10px] text-zinc-400 shrink-0">

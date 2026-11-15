@@ -27,6 +27,7 @@ export interface ActiveVoice {
   stopTime?: number;
   slot: VoiceFxSlot;
   generationId: number;
+  trackIndex: number;
 }
 
 export interface VoiceModulation {
@@ -48,8 +49,10 @@ class AudioEngine {
   private masterVolume = 0.8;
   private activeVoices = new Map<string, ActiveVoice>();
   private voiceListeners = new Set<() => void>();
+  private overloadListeners = new Set<(message: string) => void>();
   private fxPool: VoiceFxPool | null = null;
   private slotOwners = new Map<VoiceFxSlot, string>();
+  private trackVolumes = Array.from({ length: 8 }, () => 1);
 
   /** Lazily create the one app AudioContext and request resume after user interaction. */
   public async initialize(): Promise<AudioContext> {
@@ -62,12 +65,27 @@ class AudioEngine {
       this.ctx = new AudioContextClass({ latencyHint: 'interactive' });
       this.masterGain = this.ctx.createGain();
       this.masterGain.gain.setValueAtTime(this.masterVolume, this.ctx.currentTime);
-      this.masterGain.connect(this.ctx.destination);
+      const compressor = this.ctx.createDynamicsCompressor();
+      compressor.threshold.value = -6;
+      compressor.knee.value = 6;
+      compressor.ratio.value = 20;
+      compressor.attack.value = 0.003;
+      compressor.release.value = 0.15;
+      const ceiling = this.ctx.createWaveShaper();
+      const curve = new Float32Array(4097);
+      for (let i = 0; i < curve.length; i++) {
+        const x = 2 * i / (curve.length - 1) - 1;
+        const magnitude = Math.abs(x);
+        curve[i] = Math.sign(x) * (magnitude <= 0.8 ? magnitude : 0.8 + 0.18 * Math.tanh((magnitude - 0.8) / 0.18));
+      }
+      ceiling.curve = curve;
+      this.masterGain.connect(compressor).connect(ceiling);
+      ceiling.connect(this.ctx.destination);
       const splitter = this.ctx.createChannelSplitter(2);
       const left = this.ctx.createAnalyser();
       const right = this.ctx.createAnalyser();
       left.fftSize = right.fftSize = this.meterSamples.length;
-      this.masterGain.connect(splitter);
+      ceiling.connect(splitter);
       splitter.connect(left, 0);
       splitter.connect(right, 1);
       this.outputMeters = [left, right];
@@ -101,6 +119,11 @@ class AudioEngine {
   public subscribeVoiceChanges(listener: () => void): () => void {
     this.voiceListeners.add(listener);
     return () => { this.voiceListeners.delete(listener); };
+  }
+
+  public subscribeOverload(listener: (message: string) => void): () => void {
+    this.overloadListeners.add(listener);
+    return () => { this.overloadListeners.delete(listener); };
   }
 
   public hasPadVoices(padId: string, buffer: AudioBuffer): boolean {
@@ -180,6 +203,7 @@ class AudioEngine {
       scheduledTime?: number; // Added to support lookahead sample-accurate scheduling
       modulation?: VoiceModulation[];
       fx?: VoiceFxCommand;
+      trackIndex?: number;
     } = {},
   ): string | null {
     const context = this.ctx;
@@ -189,20 +213,34 @@ class AudioEngine {
     const sliceStart = clamp(options.sliceStart ?? 0, 0, buffer.duration);
     const sliceEnd = clamp(options.sliceEnd ?? buffer.duration, 0, buffer.duration);
     if (sliceEnd <= sliceStart) return null;
+    const trackIndex = options.trackIndex ?? 0;
+    if (!Number.isInteger(trackIndex) || trackIndex < 0 || trackIndex >= 8) {
+      throw new Error('Track must be between 1 and 8.');
+    }
 
     let targetGainTime = Math.max(options.scheduledTime ?? context.currentTime, context.currentTime);
     let slot = this.fxPool.slots.find((item) => !this.slotOwners.has(item));
     if (!slot) {
+      if (options.scheduledTime !== undefined) {
+        this.reportOverload('Voice pool full — scheduled note dropped.');
+        return null;
+      }
       const oldest = [...this.slotOwners.entries()]
         .map(([candidate, id]) => ({ candidate, id, voice: this.activeVoices.get(id) }))
         .filter((entry): entry is { candidate: VoiceFxSlot; id: string; voice: ActiveVoice } => Boolean(entry.voice))
+        .filter((entry) => entry.voice.startTime <= context.currentTime)
         .sort((a, b) => a.voice.startTime - b.voice.startTime)[0];
-      if (!oldest) return null;
+      if (!oldest) {
+        this.reportOverload('Voice pool reserved — live note dropped.');
+        return null;
+      }
       targetGainTime = Math.max(targetGainTime, context.currentTime + 0.006);
       this.stopVoiceAt(oldest.id, targetGainTime - 0.006, 0.006);
       slot = oldest.candidate;
     }
     this.fxPool.prepare(slot, targetGainTime, normalizePadKey(padId));
+    holdAudioParam(slot.trackGain.gain, targetGainTime);
+    slot.trackGain.gain.setValueAtTime(this.trackVolumes[trackIndex], targetGainTime);
     const source = context.createBufferSource();
     source.buffer = buffer;
     source.loop = options.loop ?? false;
@@ -253,6 +291,7 @@ class AudioEngine {
       baseRate,
       gainChanges,
       slot,
+      trackIndex,
     );
     return voiceId;
   }
@@ -275,7 +314,8 @@ class AudioEngine {
   public resetPadFxAt(padId: string, time: number): void {
     if (!this.fxPool) return;
     for (const voice of this.activeVoices.values()) {
-      if (voice.padId === padId && voice.startTime <= time && (voice.stopTime === undefined || voice.stopTime > time)) {
+      if (voice.padId === padId && voice.slot.generationId === voice.generationId &&
+          voice.startTime <= time && (voice.stopTime === undefined || voice.stopTime > time)) {
         this.fxPool.reset(voice.slot, time);
       }
     }
@@ -301,6 +341,7 @@ class AudioEngine {
     if (!voice || !context) return;
     const stopTime = Math.max(context.currentTime, time);
     if (voice.stopTime !== undefined && voice.stopTime <= stopTime) return;
+    if (voice.slot.generationId !== voice.generationId) return;
     const fade = clamp(fadeSeconds, 0.001, 0.05);
     holdAudioParam(voice.gainNode.gain, stopTime);
     voice.gainNode.gain.linearRampToValueAtTime(0.0001, stopTime + fade);
@@ -332,6 +373,33 @@ class AudioEngine {
     }
   }
 
+  public setTrackVolume(trackIndex: number, volume: number): void {
+    if (!Number.isInteger(trackIndex) || trackIndex < 0 || trackIndex >= 8 || !Number.isFinite(volume)) {
+      throw new Error('Invalid track volume.');
+    }
+
+    const value = clamp(volume, 0, 1);
+    this.trackVolumes[trackIndex] = value;
+    const now = this.ctx?.currentTime;
+    if (now === undefined) return;
+    for (const voice of this.activeVoices.values()) {
+      if (voice.trackIndex !== trackIndex || voice.slot.generationId !== voice.generationId) continue;
+      const time = Math.max(now, voice.startTime);
+      holdAudioParam(voice.slot.trackGain.gain, time);
+      voice.slot.trackGain.gain.setTargetAtTime(value, time, 0.005);
+    }
+  }
+
+  public setVoiceTrack(voiceId: string, trackIndex: number): void {
+    if (!Number.isInteger(trackIndex) || trackIndex < 0 || trackIndex >= 8) throw new Error('Invalid voice track.');
+    const voice = this.activeVoices.get(voiceId);
+    if (!voice || !this.ctx || voice.slot.generationId !== voice.generationId) return;
+    voice.trackIndex = trackIndex;
+    const time = Math.max(this.ctx.currentTime, voice.startTime);
+    holdAudioParam(voice.slot.trackGain.gain, time);
+    voice.slot.trackGain.gain.setValueAtTime(this.trackVolumes[trackIndex], time);
+  }
+
   /** Latest analyser window only; short peaks between reads can be missed. */
   public getOutputPeak(): number {
     if (!this.outputMeters || this.ctx?.state !== 'running') return 0;
@@ -358,6 +426,7 @@ class AudioEngine {
     baseRate?: number,
     gainChanges?: { time: number; gain: number }[],
     slot?: VoiceFxSlot,
+    trackIndex = 0,
   ): string | null {
     const context = this.ctx;
     if (!context || !slot) return null;
@@ -367,7 +436,7 @@ class AudioEngine {
     const voice: ActiveVoice = {
       source, gainNode, panner, padId, startTime, offset,
       end: duration === undefined ? source.buffer?.duration ?? offset : offset + duration,
-      loop, playbackRate: baseRate ?? source.playbackRate.value, rateChanges, gainChanges, slot, generationId: slot.generationId,
+      loop, playbackRate: baseRate ?? source.playbackRate.value, rateChanges, gainChanges, slot, generationId: slot.generationId, trackIndex,
     };
     this.activeVoices.set(voiceId, voice);
     this.slotOwners.set(slot, voiceId);
@@ -437,6 +506,10 @@ class AudioEngine {
     }
   }
 
+  private reportOverload(message: string): void {
+    console.warn(`[SP-M8x AudioEngine] ${message}`);
+    for (const listener of this.overloadListeners) listener(message);
+  }
 }
 
 export const audioEngine = new AudioEngine();

@@ -56,6 +56,12 @@ class AudioContextMock {
     return node;
   }
   createWaveShaper() { return new NodeMock(); }
+  createDynamicsCompressor() {
+    return Object.assign(new NodeMock(), {
+      threshold: new AudioParamMock(), knee: new AudioParamMock(), ratio: new AudioParamMock(),
+      attack: new AudioParamMock(), release: new AudioParamMock(),
+    });
+  }
   createChannelSplitter() { return new NodeMock(); }
   createAnalyser() { return Object.assign(new NodeMock(), { getFloatTimeDomainData(data) { data.fill(0); } }); }
   createStereoPanner() { return Object.assign(new NodeMock(), { pan: new AudioParamMock() }); }
@@ -96,7 +102,10 @@ test('preallocated voices reset FX without stopping dry audio and steal the olde
   const ids = [];
   for (let i = 0; i < 32; i++) {
     context.currentTime = 10 + i * 0.001;
-    ids.push(audioEngine.triggerPad(i === 31 ? 'A2' : 'A1', { loop: true, semitoneOffset: 12, fx: i === 1 ? { code: 'FL', value: 64 } : undefined }));
+    ids.push(audioEngine.triggerPad(i === 31 ? 'A2' : 'A1', {
+      loop: true, semitoneOffset: 12, trackIndex: i === 1 ? 1 : 0,
+      fx: i === 1 ? { code: 'FL', value: 64 } : undefined,
+    }));
   }
   assert.equal(audioEngine.getActiveVoiceCount(), 32);
   assert.equal(context.sources[0].playbackRate.value, 2);
@@ -105,9 +114,23 @@ test('preallocated voices reset FX without stopping dry audio and steal the olde
   const slot = audioEngine.activeVoices.get(ids[0]).slot;
   const filteredSlot = audioEngine.activeVoices.get(ids[1]).slot;
   assert.notEqual(slot, filteredSlot);
+  audioEngine.setTrackVolume(1, 0.25);
+  assert.equal(filteredSlot.trackGain.gain.value, 0.25);
+  assert.equal(slot.trackGain.gain.value, 1, 'track gain must not change another track');
+  audioEngine.setVoiceTrack(ids[0], 1);
+  assert.equal(slot.trackGain.gain.value, 0.25, 'a spilled live hit uses its destination channel');
   assert.ok(filteredSlot.filter.frequency.events.some((event) => event[0] === 'target' && event[1] < 20000));
   assert.equal(slot.filter.frequency.events.some((event) => event[0] === 'target'), false, 'step FX must not affect other voices');
   const sourceNode = context.sources[0];
+  const overloads = [];
+  const unsubscribe = audioEngine.subscribeOverload((message) => overloads.push(message));
+  const pendingCount = context.sources.length;
+  assert.equal(audioEngine.triggerPad('A1', { scheduledTime: context.currentTime + 0.1 }), null);
+  assert.equal(audioEngine.triggerPad('A1', { scheduledTime: context.currentTime - 0.001 }), null,
+    'a slightly overdue scheduled note must not steal a live slot');
+  assert.equal(context.sources.length, pendingCount, 'full pool must not allocate or steal for a scheduled note');
+  assert.match(overloads.at(-1), /scheduled note dropped/);
+  assert.equal(sourceNode.stopTime, undefined);
   audioEngine.resetPadFxAt('A1', context.currentTime);
   assert.equal(sourceNode.stopTime, undefined);
   assert.deepEqual(slot.wetGain.gain.events.at(-1), ['exponential', 0.0001, context.currentTime + 0.008]);
@@ -123,4 +146,15 @@ test('preallocated voices reset FX without stopping dry audio and steal the olde
   assert.equal(audioEngine.slotOwners.get(slot), next, 'stale cleanup must not release a reused slot');
   assert.equal(context.gains.length, initialGains);
   assert.equal(context.delays.length, 32);
+  audioEngine.stopAllVoices();
+  for (const source of context.sources) source.onended();
+  context.currentTime = 50;
+  for (let i = 0; i < 32; i++) {
+    assert.ok(audioEngine.triggerPad('A1', { scheduledTime: 51, loop: true }));
+  }
+  const futureSources = context.sources.slice(-32);
+  assert.equal(audioEngine.triggerPad('A1'), null, 'a live hit must not steal an unstarted reservation');
+  assert.match(overloads.at(-1), /live note dropped/);
+  assert.ok(futureSources.every((source) => source.stopTime === undefined));
+  unsubscribe();
 });

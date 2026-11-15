@@ -8,6 +8,7 @@ import { BANKS, type PadBankApi } from './usePadBank';
 import { PadBankManager } from './PadBankManager';
 import { SamplerWorkbench } from './SamplerWorkbench';
 import { useInputRecorder } from './useInputRecorder';
+import { projectController } from '../project/projectController';
 
 export interface SamplerWorkspaceProps {
   padBank: PadBankApi;
@@ -21,6 +22,13 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({ padBank, rec
     <div className="sampler-full-pads bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col gap-2 min-h-0">
       <div className="flex items-center justify-between border-b border-[var(--border-grid)] pb-2">
         <span className="text-[10px] font-bold text-[var(--accent-phrase)] tracking-wider">PAD BANKS</span>
+        <label className="text-[9px] text-zinc-300">TRACK
+          <select aria-label="Selected pad target track" className="bg-zinc-950 text-zinc-300"
+            value={projectController.getState().sampler.pads[padBank.selectedPadId]?.targetTrack ?? 0}
+            onChange={(event) => projectController.setPadTargetTrack(padBank.selectedPadId, Number(event.target.value))}>
+            {Array.from({ length: 8 }, (_, index) => <option key={index} value={index}>{index + 1}</option>)}
+          </select>
+        </label>
         <div className="flex space-x-1">
           {BANKS.map((bank) => (
             <button

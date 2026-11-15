@@ -9,6 +9,7 @@ export interface VoiceFxSlot {
   voiceGain: GainNode;
   dryGain: GainNode;
   wetGain: GainNode;
+  trackGain: GainNode;
   panner: StereoPannerNode;
   filter: BiquadFilterNode;
   drive: GainNode;
@@ -32,6 +33,7 @@ export class VoiceFxPool {
       const panner = context.createStereoPanner();
       const dryGain = context.createGain();
       const wetGain = context.createGain();
+      const trackGain = context.createGain();
       const filter = context.createBiquadFilter();
       const drive = context.createGain();
       const shaper = context.createWaveShaper();
@@ -51,10 +53,11 @@ export class VoiceFxPool {
       dryGain.gain.value = 1;
       wetGain.gain.value = 0;
       voiceGain.connect(panner);
-      panner.connect(dryGain).connect(destination);
-      panner.connect(filter).connect(drive).connect(shaper).connect(delay).connect(wetGain).connect(destination);
+      panner.connect(dryGain).connect(trackGain);
+      panner.connect(filter).connect(drive).connect(shaper).connect(delay).connect(wetGain).connect(trackGain);
+      trackGain.connect(destination);
       delay.connect(feedbackGain).connect(delay);
-      return { voiceGain, panner, dryGain, wetGain, filter, drive, delay, feedbackGain, generationId: 0, padId: null };
+      return { voiceGain, panner, dryGain, wetGain, trackGain, filter, drive, delay, feedbackGain, generationId: 0, padId: null };
     });
   }
 

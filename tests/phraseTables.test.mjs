@@ -25,12 +25,12 @@ test('phrases and reusable tables persist, and table deletion preserves other ti
     assert.throws(() => controller.updateTableStep(id, 0, { pitch: 25 }), /pitch/);
     assert.throws(() => controller.updateTableStep(id, 0, { volume: -1 }), /volume/);
     controller.createPattern();
-    controller.updateStep(1, 0, { note: 'D-4', sampleId: 'B2', velocity: 80, tableId: id });
+    controller.updateStep(1, 0, { note: 'D-4', instrumentId: 17, velocity: 80, tableId: id });
     controller.clearTableSteps(id, [0, 1, 1, 999]);
     const { projectController: restored } = await import(moduleUrl('restored'));
     const state = restored.getState();
     assert.equal(state.settings.activePatternIndex, 1);
-    assert.deepEqual(state.tracker.patterns[1].steps[0], { note: 'D-4', sampleId: 'B2', velocity: 80, tableId: id });
+    assert.deepEqual(state.tracker.patterns[1].tracks[0].steps[0], { note: 'D-4', instrumentId: 17, velocity: 80, tableId: id });
     assert.deepEqual(restored.getTables()[0].steps.slice(0, 3), [
       { pitch: null, volume: null }, { pitch: null, volume: null }, { pitch: null, volume: 0 },
     ]);

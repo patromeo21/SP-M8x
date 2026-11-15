@@ -59,9 +59,19 @@ On the first tap after a reload, a saved sample may need to decode; a gate
 released before loading completes will not play.
 
 The footer PLAY starts the active 32-step phrase at the saved tempo and STOP
-cancels notes that have not yet started. PHRASE REC arms pad capture while the
-transport runs. Each sounding pad is placed on the nearest step with signed
-eighth-step timing; a step holds one pad, and occupied steps are not overwritten.
+cancels notes that have not yet started. Each phrase has eight tracks; use
+TRACK in PHRASE or TABLE to choose which track to edit. The selected pad's
+TRACK selector sets its preferred recording track. MIXER adjusts the eight
+track levels.
+
+PHRASE REC arms pad capture while the transport runs. Each sounding pad is
+placed on the nearest step with signed eighth-step timing. A track has one
+event per step: an identical instrument, note and offset updates its velocity;
+otherwise recording scans from the preferred track, wrapping through the eight
+tracks for a free cell. The recorded hit uses the destination track's level.
+If every cell is occupied, the hit still sounds live but is not recorded and a
+warning is shown. Phrase changes inside the scheduling lookahead may not play
+until the next loop.
 In PHRASE select a step and choose CLEAR NOTE to clear its note after confirmation,
 or choose EMPTY in its pad selector.
 To clear several notes, hold DEL/OP with one finger and tap occupied steps
@@ -74,8 +84,9 @@ transport before changing pad assignments or the active phrase. NEW PHRASE
 creates another 32-step phrase; song arrangement is not implemented yet.
 The playhead highlights the playing step and page without switching the page
 you are editing.
-Existing 64-step phrases are split into two named phrases on first load, with a
-local-storage backup of the old project. Each new phrase plays separately;
+Existing single-track phrases are migrated to track 1 with a local-storage
+backup of the old project. Existing 64-step phrases are split into two named
+phrases. Each new phrase plays separately;
 song arrangement for joining them is not implemented yet.
 TABLE shows a 128-tick page for each 16-step phrase page. Tick pages map to
 phrase steps 00–0F and 10–1F; each step contains eight table ticks. Reusable
@@ -101,11 +112,13 @@ recording, performance punch-in effects, and song arrangement are not yet implem
 used by the phrase are decoded before playback starts. Phrase data is saved in
 browser local storage, separately from pad audio; check for save errors.
 
-The MASTER slider changes output gain. PEAK is a sampled stereo output level,
-not a continuous clip detector or a limiter: it can miss brief peaks and does
-not measure true peaks. Multiple pads can overload the output; keep levels low.
+The MASTER slider changes output gain before a compressor and soft output
+ceiling. PEAK is a sampled post-limiter stereo level, not a continuous clip
+detector: it can miss brief peaks and does not measure intersample true peaks.
+Heavy overload can still cause audible distortion; keep levels conservative.
 The engine preallocates 32 effect slots; a 33rd voice fades the oldest and
-starts after 6 ms. FX automation scheduled far ahead can be cancelled by a
+starts after 6 ms. When all slots are reserved, future scheduled notes are
+dropped with an overload warning instead of stealing a reserved slot. FX automation scheduled far ahead can be cancelled by a
 later reset on the same slot; timing and performance need iPad Safari testing.
 
 Run `npm test` for the audio-engine checks and `npm run build` for the production

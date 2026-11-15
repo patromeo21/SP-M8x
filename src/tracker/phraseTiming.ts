@@ -4,7 +4,7 @@ export function phraseTimingMarkers(steps: TrackerStepItem[], page: number): { i
   const lengthInTicks = steps.length * 8;
   if (!lengthInTicks || (page !== 0 && page !== 1)) return [];
   return steps.flatMap((step, index) => {
-    if (!step.sampleId || step.sampleId === '--') return [];
+    if (step.instrumentId === null || !step.note || step.note === '---' || step.note === 'OFF') return [];
     const raw = step.subTickOffset;
     const offset = typeof raw === 'number' && Number.isFinite(raw) ? Math.max(-4, Math.min(4, raw)) : 0;
     const tick = ((index * 8 + offset) % lengthInTicks + lengthInTicks) % lengthInTicks;

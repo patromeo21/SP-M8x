@@ -4,6 +4,7 @@ import type { PadSlot } from '../sampler/usePadBank';
 import { useStepDeletion } from './useStepDeletion';
 import { phraseTimingMarkers } from './phraseTiming';
 import { trackerBridge } from './trackerBridge';
+import { instrumentIdToPadId, padIdToInstrumentId } from '../sampler/padIds';
 
 const fieldClass = 'bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-zinc-100';
 const buttonClass = 'border border-zinc-700 rounded px-2 py-1 text-zinc-300';
@@ -19,6 +20,7 @@ interface EditorProps {
 
 export function PhraseTableEditor({ slots, activeStep, transportBusy, mode }: EditorProps) {
   const [tableId, setTableId] = useState<number | null>(null);
+  const [trackIndex, setTrackIndex] = useState(0);
   const state = projectController.getState();
   const patternIndex = state.settings.activePatternIndex;
   const pattern = state.tracker.patterns[patternIndex];
@@ -29,6 +31,10 @@ export function PhraseTableEditor({ slots, activeStep, transportBusy, mode }: Ed
   return (
     <section className="flex-1 min-h-0 flex flex-col gap-2 p-3 bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl font-mono text-xs">
       <div className="flex items-center gap-2">
+        <label>TRACK <select aria-label="Phrase track" className={fieldClass} value={trackIndex}
+          onChange={(event) => setTrackIndex(Number(event.target.value))}>
+          {Array.from({ length: 8 }, (_, index) => <option key={index} value={index}>{index + 1}</option>)}
+        </select></label>
         {mode === 'phrase' ? (
           <>
             <label>PHRASE <select aria-label="Active phrase" className={fieldClass} value={patternIndex} disabled={transportBusy}
@@ -49,24 +55,26 @@ export function PhraseTableEditor({ slots, activeStep, transportBusy, mode }: Ed
         )}
       </div>
       {mode === 'phrase'
-        ? <PhraseRows key={pattern.id} pattern={pattern} patternIndex={patternIndex} slots={slots} activeStep={activeStep} transportBusy={transportBusy} />
+        ? <PhraseRows key={`${pattern.id}-${trackIndex}`} pattern={pattern} patternIndex={patternIndex} trackIndex={trackIndex} slots={slots} activeStep={activeStep} transportBusy={transportBusy} />
         : <div className="flex-1 min-h-0 flex flex-col gap-2">
-            <PhraseTimingGrid pattern={pattern} patternIndex={patternIndex} activeStep={activeStep} />
+            <PhraseTimingGrid key={`${pattern.id}-${trackIndex}`} pattern={pattern} patternIndex={patternIndex} trackIndex={trackIndex} activeStep={activeStep} />
             {table ? <TableRows key={table.id} table={table} playing={activeStep >= 0} /> : <p className="text-zinc-400">Create a reusable table, then assign it to a phrase step.</p>}
           </div>}
     </section>
   );
 }
 
-function PhraseRows({ pattern, patternIndex, slots, activeStep, transportBusy }: {
-  pattern: Pattern; patternIndex: number; slots: Record<string, PadSlot>; activeStep: number; transportBusy: boolean;
+function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, transportBusy }: {
+  pattern: Pattern; patternIndex: number; trackIndex: number; slots: Record<string, PadSlot>; activeStep: number; transportBusy: boolean;
 }) {
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState(0);
-  const deletion = useStepDeletion((indices) => projectController.clearStepNotes(patternIndex, indices));
-  const step = pattern.steps[selected];
-  const assigned = Boolean(step?.sampleId && step.sampleId !== '--');
-  const update = (changes: Parameters<typeof projectController.updateStep>[2]) => projectController.updateStep(patternIndex, selected, changes);
+  const steps = pattern.tracks[trackIndex].steps;
+  const deletion = useStepDeletion((indices) => projectController.clearStepNotes(patternIndex, indices, trackIndex));
+  const step = steps[selected];
+  const padId = step ? instrumentIdToPadId(step.instrumentId) : null;
+  const assigned = padId !== null;
+  const update = (changes: Parameters<typeof projectController.updateStep>[2]) => projectController.updateStep(patternIndex, selected, changes, trackIndex);
   const pads = Object.values(slots).filter((slot) => slot.sampleKey);
 
   return (
@@ -80,9 +88,9 @@ function PhraseRows({ pattern, patternIndex, slots, activeStep, transportBusy }:
           <span className="ml-auto">{deletion.controls}</span>
         </div>
         <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(16, minmax(0, 1fr))' }}>
-          {pattern.steps.slice(page * 16, page * 16 + 16).map((item, offset) => {
+          {steps.slice(page * 16, page * 16 + 16).map((item, offset) => {
             const index = page * 16 + offset;
-            const occupied = Boolean((item.note && item.note !== '---') || (item.sampleId && item.sampleId !== '--'));
+            const occupied = Boolean((item.note && item.note !== '---') || item.instrumentId !== null);
             return <button type="button" key={index} aria-label={`Phrase step ${index + 1}`}
               aria-pressed={deletion.selected.has(index)}
               onPointerDown={(event) => {
@@ -97,7 +105,7 @@ function PhraseRows({ pattern, patternIndex, slots, activeStep, transportBusy }:
               data-playing={activeStep === index || undefined}
               style={activeStep === index ? { boxShadow: 'inset 0 0 0 2px #22d3ee' } : undefined}
               className={`touch-none select-none flex flex-col text-left px-1 py-2 min-w-0 border border-zinc-800 ${deletion.selected.has(index) ? 'bg-rose-950 text-rose-200' : selected === index ? 'bg-cyan-950 text-cyan-200' : 'text-zinc-300'} ${activeStep === index ? 'border-cyan-400' : ''}`}>
-              <span>{String(index + 1).padStart(2, '0')}</span><span>{item.note || '---'}</span><span>{item.sampleId || '--'}</span>
+              <span>{String(index + 1).padStart(2, '0')}</span><span>{item.note || '---'}</span><span>{instrumentIdToPadId(item.instrumentId) ?? '--'}</span>
               <span>{occupied ? item.velocity ?? 127 : '--'}</span><span>{occupied ? item.subTickOffset ?? 0 : '--'}</span><span>{item.tableId ?? '--'}</span>
               <span>{item.fx ?? '--'}</span>
             </button>;
@@ -107,14 +115,14 @@ function PhraseRows({ pattern, patternIndex, slots, activeStep, transportBusy }:
       {step && <div className="flex flex-wrap items-start gap-3 text-zinc-400">
         <strong className="text-cyan-300">EDIT STEP {String(selected + 1).padStart(2, '0')}</strong>
         <label className="flex flex-col gap-1">PAD
-          <select aria-label="Step pad" className={fieldClass} value={step.sampleId || '--'} disabled={transportBusy}
+          <select aria-label="Step pad" className={fieldClass} value={padId ?? '--'} disabled={transportBusy}
             onChange={(event) => {
               const sampleId = event.target.value;
-              if (sampleId === '--') projectController.clearStepNotes(patternIndex, [selected]);
-              else update({ sampleId, note: step.note && step.note !== '---' ? step.note : 'C-4' });
+              if (sampleId === '--') projectController.clearStepNotes(patternIndex, [selected], trackIndex);
+              else update({ instrumentId: padIdToInstrumentId(sampleId), note: step.note && step.note !== '---' ? step.note : 'C-4' });
             }}>
             <option value="--">EMPTY</option>
-            {step.sampleId && step.sampleId !== '--' && !slots[step.sampleId]?.sampleKey && <option value={step.sampleId}>{step.sampleId} (missing)</option>}
+            {padId && !slots[padId]?.sampleKey && <option value={padId}>{padId} (missing)</option>}
             {pads.map((pad) => <option key={pad.id} value={pad.id}>{pad.id} — {pad.name}</option>)}
           </select>
         </label>
@@ -145,7 +153,7 @@ function PhraseRows({ pattern, patternIndex, slots, activeStep, transportBusy }:
           </select>
         </label>
         <label className="flex flex-col gap-1">FX
-          <select aria-label="Phrase FX" className={fieldClass} value={step.fx ?? ''} disabled={!step.sampleId || step.sampleId === '--'}
+          <select aria-label="Phrase FX" className={fieldClass} value={step.fx ?? ''} disabled={!assigned}
             onChange={(event) => update({ fx: event.target.value || undefined })}>
             <option value="">NONE</option>
             <option value="FL">FL — FILTER</option>
@@ -159,7 +167,7 @@ function PhraseRows({ pattern, patternIndex, slots, activeStep, transportBusy }:
             onChange={(event) => update({ fxValue: Math.max(0, Math.min(127, Number(event.target.value))) })} />
         </label>}
         <button type="button" className={buttonClass} disabled={!assigned} onClick={() => {
-          if (window.confirm(`Clear the note on step ${selected + 1}?`)) projectController.clearStepNotes(patternIndex, [selected]);
+          if (window.confirm(`Clear the note on step ${selected + 1}?`)) projectController.clearStepNotes(patternIndex, [selected], trackIndex);
         }}>CLEAR NOTE</button>
         {transportBusy && <span className="text-amber-300">Stop to change pad assignments.</span>}
       </div>}
@@ -167,11 +175,12 @@ function PhraseRows({ pattern, patternIndex, slots, activeStep, transportBusy }:
   );
 }
 
-function PhraseTimingGrid({ pattern, patternIndex, activeStep }: { pattern: Pattern; patternIndex: number; activeStep: number }) {
+function PhraseTimingGrid({ pattern, patternIndex, trackIndex, activeStep }: { pattern: Pattern; patternIndex: number; trackIndex: number; activeStep: number }) {
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
-  const events = phraseTimingMarkers(pattern.steps, page);
-  const step = selected === null ? null : pattern.steps[selected];
+  const steps = pattern.tracks[trackIndex].steps;
+  const events = phraseTimingMarkers(steps, page);
+  const step = selected === null ? null : steps[selected];
   return (
     <div className="border border-zinc-800 rounded p-2">
       <div className="flex items-center gap-2 text-[10px] mb-1">
@@ -194,17 +203,17 @@ function PhraseTimingGrid({ pattern, patternIndex, activeStep }: { pattern: Patt
           className="absolute top-0 bottom-0 w-0.5 bg-cyan-400 pointer-events-none"
           style={{ left: `${(activeStep - page * 16) / 16 * 100}%` }} />}
         {events.map(({ index, tick }) => <button key={index} type="button"
-          aria-label={`Timing note step ${index + 1}, offset ${pattern.steps[index].subTickOffset ?? 0}`}
-          title={`${pattern.steps[index].sampleId} step ${index + 1}, offset ${pattern.steps[index].subTickOffset ?? 0}/8`}
+          aria-label={`Timing note step ${index + 1}, offset ${steps[index].subTickOffset ?? 0}`}
+          title={`${instrumentIdToPadId(steps[index].instrumentId) ?? '--'} step ${index + 1}, offset ${steps[index].subTickOffset ?? 0}/8`}
           onClick={() => setSelected(index)}
           className={`absolute h-7 min-w-[22px] rounded px-1 text-[9px] ${selected === index ? 'bg-cyan-400 text-black' : 'bg-purple-800 text-white'}`}
-          style={{ top: index % 2 ? '32px' : '2px', left: `${tick / 128 * 100}%`, transform: tick === 0 ? undefined : 'translateX(-50%)' }}>{pattern.steps[index].sampleId}</button>)}
+          style={{ top: index % 2 ? '32px' : '2px', left: `${tick / 128 * 100}%`, transform: tick === 0 ? undefined : 'translateX(-50%)' }}>{instrumentIdToPadId(steps[index].instrumentId) ?? '--'}</button>)}
       </div>
       <div className="flex gap-2 items-center mt-1 text-[10px] text-zinc-400">
         {step && selected !== null && <>
-          <span>STEP {selected + 1} {step.sampleId} · {step.note} · VEL {step.velocity ?? 127}</span>
+          <span>STEP {selected + 1} {instrumentIdToPadId(step.instrumentId) ?? '--'} · {step.note} · VEL {step.velocity ?? 127}</span>
           <label>OFFSET <select aria-label="Timing note offset" className={fieldClass} value={step.subTickOffset ?? 0}
-            onChange={(event) => projectController.updateStep(patternIndex, selected, { subTickOffset: Number(event.target.value) })}>
+            onChange={(event) => projectController.updateStep(patternIndex, selected, { subTickOffset: Number(event.target.value) }, trackIndex)}>
             {Array.from({ length: 9 }, (_, i) => i - 4).map((value) => <option key={value} value={value}>{value > 0 ? `+${value}` : value}</option>)}
           </select></label>
         </>}
