@@ -42,7 +42,7 @@ export const AudioSampleDropzone: React.FC<AudioSampleDropzoneProps> = ({ padId,
 
   return (
     <div className="sample-dropzone flex flex-1 min-w-0 flex-col items-center justify-center p-3 bg-zinc-950 border border-zinc-800 rounded-xl gap-2 font-mono select-none">
-      <label className={`sample-file-label relative w-full py-2 px-3 bg-zinc-900 border border-zinc-700 rounded-lg text-xs font-bold text-zinc-300 flex items-center justify-center gap-2 ${disabled || isLoading ? 'opacity-40' : ''}`}>
+      <label className={`sample-file-label chop-action relative w-full text-[9px] font-bold text-cyan-300 flex items-center justify-center gap-2 ${disabled || isLoading ? 'opacity-40' : ''}`}>
         <input
           type="file"
           accept="audio/*,.wav,.mp3,.flac,.aiff,.aif,.m4a"

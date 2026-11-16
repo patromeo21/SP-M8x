@@ -81,16 +81,18 @@ test('preallocated voices reset FX without stopping dry audio and steal the olde
   globalThis.window = { AudioContext: AudioContextMock };
   const cacheUrl = asModuleUrl(await compile('../src/audio/audioCache.ts'));
   const poolUrl = asModuleUrl(await compile('../src/fx/VoiceFxPool.ts'));
+  const deckUrl = asModuleUrl((await compile('../src/fx/PerformanceDeck.ts')).replace("'./VoiceFxPool'", `'${poolUrl}'`));
   const source = (await compile('../src/audio/audioEngine.ts'))
     .replace("'./audioCache'", `'${cacheUrl}'`)
-    .replace("'../fx/VoiceFxPool'", `'${poolUrl}'`);
+    .replace("'../fx/VoiceFxPool'", `'${poolUrl}'`)
+    .replace("'../fx/PerformanceDeck'", `'${deckUrl}'`);
   const { audioEngine } = await import(asModuleUrl(source));
   await assert.rejects(audioEngine.initialize(), /resume blocked/);
   const context = audioEngine.getContext();
   context.rejectResume = false;
   await Promise.all([audioEngine.initialize(), audioEngine.initialize()]);
-  assert.equal(context.delays.length, 32);
-  assert.equal(context.filters.length, 32);
+  assert.equal(context.delays.length, 34);
+  assert.equal(context.filters.length, 34);
   const initialGains = context.gains.length;
 
   const bytes = new ArrayBuffer(8);
@@ -103,14 +105,16 @@ test('preallocated voices reset FX without stopping dry audio and steal the olde
   for (let i = 0; i < 32; i++) {
     context.currentTime = 10 + i * 0.001;
     ids.push(audioEngine.triggerPad(i === 31 ? 'A2' : 'A1', {
-      loop: true, semitoneOffset: 12, trackIndex: i === 1 ? 1 : 0,
+      loop: true, semitoneOffset: 12, trackIndex: i === 31 ? 4 : i === 1 ? 1 : 0,
       fx: i === 1 ? { code: 'FL', value: 64 } : undefined,
     }));
   }
   assert.equal(audioEngine.getActiveVoiceCount(), 32);
+  assert.deepEqual(audioEngine.activeVoices.get(ids[0]).slot.deckGains.map((gain) => gain.gain.value), [1, 0]);
+  assert.deepEqual(audioEngine.activeVoices.get(ids[31]).slot.deckGains.map((gain) => gain.gain.value), [0, 1]);
   assert.equal(context.sources[0].playbackRate.value, 2);
   assert.equal(context.gains.length, initialGains);
-  assert.equal(context.delays.length, 32);
+  assert.equal(context.delays.length, 34);
   const slot = audioEngine.activeVoices.get(ids[0]).slot;
   const filteredSlot = audioEngine.activeVoices.get(ids[1]).slot;
   assert.notEqual(slot, filteredSlot);
@@ -137,6 +141,12 @@ test('preallocated voices reset FX without stopping dry audio and steal the olde
   assert.deepEqual(slot.feedbackGain.gain.events.at(-1), ['exponential', 0.0001, context.currentTime + 0.008]);
   assert.equal(audioEngine.activeVoices.get(ids[31]).slot.wetGain.gain.events.some((event) => event[0] === 'exponential'), false);
   assert.equal(slot.dryGain.gain.value, 1);
+  audioEngine.setPadVolume('A1', 0.4);
+  assert.equal(slot.padGain.gain.value, 0.4);
+  audioEngine.setPerformanceFx(0, 'filter');
+  assert.ok(audioEngine.performanceDecks[0].filter.frequency.events.some((event) => event[0] === 'target' && event[1] === 350));
+  audioEngine.setPerformanceFx(1, 'delay');
+  assert.ok(audioEngine.performanceDecks[1].delayWet.gain.events.some((event) => event[0] === 'target' && event[1] === 0.4));
   const next = audioEngine.triggerPad('A1', { loop: true });
   assert.ok(next);
   assert.ok(Math.abs(sourceNode.stopTime - (context.currentTime + 0.006)) < 1e-10);
@@ -145,7 +155,7 @@ test('preallocated voices reset FX without stopping dry audio and steal the olde
   sourceNode.onended();
   assert.equal(audioEngine.slotOwners.get(slot), next, 'stale cleanup must not release a reused slot');
   assert.equal(context.gains.length, initialGains);
-  assert.equal(context.delays.length, 32);
+  assert.equal(context.delays.length, 34);
   audioEngine.stopAllVoices();
   for (const source of context.sources) source.onended();
   context.currentTime = 50;
@@ -156,5 +166,34 @@ test('preallocated voices reset FX without stopping dry audio and steal the olde
   assert.equal(audioEngine.triggerPad('A1'), null, 'a live hit must not steal an unstarted reservation');
   assert.match(overloads.at(-1), /live note dropped/);
   assert.ok(futureSources.every((source) => source.stopTime === undefined));
+  audioEngine.stopAllVoices();
+  for (const source of futureSources) source.onended();
+  context.currentTime = 100;
+  const gate = audioEngine.triggerPad('A1', { gated: true, trackIndex: 0 });
+  const otherTrack = audioEngine.triggerPad('A1', { gated: true, trackIndex: 1 });
+  const oneShot = audioEngine.triggerPad('A1', { trackIndex: 0 });
+  const future = audioEngine.triggerPad('A1', { gated: true, trackIndex: 0, scheduledTime: 101 });
+  const gateVoice = audioEngine.activeVoices.get(gate);
+  audioEngine.releaseTrackGatedVoicesAt('A1', 0, 100.2);
+  assert.deepEqual(gateVoice.gainNode.gain.events.slice(-2), [
+    ['hold', 100.2], ['exponential', 0.0001, 100.2 + 0.004],
+  ]);
+  assert.equal(gateVoice.source.stopTime, 100.2 + 0.004);
+  assert.equal(audioEngine.activeVoices.get(otherTrack).source.stopTime, undefined);
+  assert.equal(audioEngine.activeVoices.get(oneShot).source.stopTime, undefined);
+  assert.equal(audioEngine.activeVoices.get(future).source.stopTime, undefined);
+  audioEngine.releaseTrackGatedVoicesAt('A1', 0, 100.3);
+  assert.equal(gateVoice.source.stopTime, 100.2 + 0.004, 'later release does not postpone an existing stop');
+  audioEngine.stopGatedVoices();
+  assert.equal(audioEngine.activeVoices.get(otherTrack).source.stopTime, 100.004);
+  assert.equal(audioEngine.activeVoices.get(oneShot).source.stopTime, undefined);
+  assert.equal(audioEngine.activeVoices.get(future).source.stopTime, 100, 'STOP cancels queued gated notes immediately');
+
+  const chokeOld = audioEngine.triggerPad('A1', { chokeGroup: 3 });
+  const chokeFuture = audioEngine.triggerPad('A2', { chokeGroup: 3, scheduledTime: 101 });
+  const chokeNew = audioEngine.triggerPad('A1', { chokeGroup: 3, scheduledTime: 100.5 });
+  assert.equal(audioEngine.activeVoices.get(chokeOld).source.stopTime, 100.504);
+  assert.equal(audioEngine.activeVoices.get(chokeFuture).source.stopTime, undefined, 'future lookahead voice is not choked early');
+  assert.equal(audioEngine.activeVoices.get(chokeNew).source.stopTime, undefined);
   unsubscribe();
 });

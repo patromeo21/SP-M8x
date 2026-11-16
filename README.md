@@ -37,6 +37,14 @@ unchanged; existing pads are never overwritten, and the operation fails if
 there are not enough empty pads or frames. Slices share their source audio but
 have independently editable markers, pitch, and playback mode. Uneven frame
 counts are distributed between adjacent slices without gaps.
+Alternatively, choose a CHOP count to immediately save evenly spaced frame
+markers on the selected sample without occupying pads. Enable SLI above
+the grid: the first ten physical pads play slices 1–10 of that sample, while
+the remaining six retain their normal bank behavior. Pads beyond the number
+of slices play the last slice. SLI is saved per instrument and requires saved
+markers; choose another source in BANK mode. Replacing a sample clears its
+markers. Recorded SLI hits retain their slice index; changing the markers later
+changes what those hits play.
 The waveform combines the signed peaks of all channels at screen resolution;
 long samples are analyzed in small batches to keep pad controls responsive.
 Choose DEL above the grid, tap one or more occupied pads (bank changes
@@ -58,27 +66,31 @@ Switching away from LOOP stops its active loop.
 On the first tap after a reload, a saved sample may need to decode; a gate
 released before loading completes will not play.
 
-The footer PLAY starts the active 32-step phrase at the saved tempo and STOP
+The footer PLAY starts the active phrase at the saved tempo and STOP
 cancels notes that have not yet started. Each phrase has eight tracks; use
 TRACK in PHRASE or TABLE to choose which track to edit. The selected pad's
 TRACK selector sets its preferred recording track. MIXER adjusts the eight
-track levels.
+track levels. Set LENGTH to 16, 32, or 64 while stopped. Shortening a phrase
+hides its later steps without deleting them; lengthening it restores them.
 
 PHRASE REC arms pad capture while the transport runs. Each sounding pad is
 placed on the nearest step with signed eighth-step timing. A track has one
-event per step: an identical instrument, note and offset updates its velocity;
+event per step: an identical instrument, slice, note and offset updates its velocity;
 otherwise recording scans from the preferred track, wrapping through the eight
 tracks for a free cell. The recorded hit uses the destination track's level.
 If every cell is occupied, the hit still sounds live but is not recorded and a
 warning is shown. Phrase changes inside the scheduling lookahead may not play
 until the next loop.
+GATE releases are recorded as NOTE OFF on the same track and instrument. If
+the release's cell is occupied, it is left intact and a warning is shown;
+the release must be entered elsewhere manually.
 In PHRASE select a step and choose CLEAR NOTE to clear its note after confirmation,
 or choose EMPTY in its pad selector.
 To clear several notes, hold DEL/OP with one finger and tap occupied steps
 with another. Release DEL/OP, then choose DELETE or CANCEL. The operation
 clears notes, pad assignments and timing, but preserves effect commands.
 In PHRASE the waveform editor and performance pads sit beside the phrase grid.
-There are two pages of 16 steps. Select a step to
+There are one, two, or four pages of 16 steps. Select a step to
 assign a loaded pad, note, velocity, microtiming and an optional table. Stop
 transport before changing pad assignments or the active phrase. NEW PHRASE
 creates another 32-step phrase; song arrangement is not implemented yet.
@@ -88,14 +100,16 @@ Existing single-track phrases are migrated to track 1 with a local-storage
 backup of the old project. Existing 64-step phrases are split into two named
 phrases. Each new phrase plays separately;
 song arrangement for joining them is not implemented yet.
-TABLE shows a 128-tick page for each 16-step phrase page. Tick pages map to
-phrase steps 00–0F and 10–1F; each step contains eight table ticks. Reusable
-tables contain both 128-tick pages. Tables retain their IDs and old 16-tick
+TABLE shows a 128-tick page for each 16-step phrase page. Each step contains
+eight table ticks, including in longer phrases. Reusable tables contain four
+128-tick pages. Tables retain their IDs and old 16-tick
 tables are expanded into both pages when loaded. Select a tick to edit pitch,
 volume, or an FX command. FL (filter), DL (delay), and DR (drive) affect the
 triggered voice; FX OFF fades its wet level and feedback without stopping the
-dry sample. Phrase FX OFF targets sounding voices on that pad; NOTE OFF stops
-the pad's voices. The fixed delay node's internal buffer cannot be erased, so
+dry sample. Phrase FX OFF targets sounding voices on that pad; NOTE OFF releases
+matching GATE voices on that track with a 4 ms fade, without stopping one-shots.
+Phrase playback treats LOOP pads as one-shots; the LOOP toggle remains live-only.
+The fixed delay node's internal buffer cannot be erased, so
 rapid reactivation or slot reuse can bring back an old echo. Pitch and volume
 events are scheduled on the audio clock; values hold until changed. The DEL/OP gesture clears selected populated table ticks after
 confirmation. Table changes affect newly scheduled voices, not voices already
@@ -107,8 +121,7 @@ rows that do not fit; the current ticks also appear above the list.
 Other table commands, looping, adjustable table rates and phrase optcodes are
 not yet implemented.
 Changes inside the scheduler's lookahead may not play until the next loop.
-Phrase playback currently triggers each sample as a one-shot; gate lengths, loop
-recording, performance punch-in effects, and song arrangement are not yet implemented. Restored pads
+Loop recording, performance punch-in effects, and song arrangement are not yet implemented. Restored pads
 used by the phrase are decoded before playback starts. Phrase data is saved in
 browser local storage, separately from pad audio; check for save errors.
 

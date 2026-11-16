@@ -37,17 +37,20 @@ test('restored slices share a single decode and each receives the buffer', async
   const stopped = [];
   let nextVoice = 0;
   const triggered = [];
+  const savedSettings = [];
   const engine = {
     initialize: async () => {},
     decodeAudioData: () => { decodeCount++; return new Promise((resolve) => { releaseDecode = () => resolve(buffer); }); },
     setPadBuffer: (id, value) => registered.set(id, value), clearPadBuffer: (id) => registered.delete(id),
     triggerPad: (id, options) => { const voice = `voice${++nextVoice}`; triggered.push({ id, options, voice }); return voice; },
+    getContext: () => ({ currentTime: 10 }),
+    releaseGatedVoice: (id) => stopped.push(id),
     stopVoice: (id) => stopped.push(id), stopAllVoices: () => {},
   };
   const storage = {
     readStoredPads: async () => [pad('A1'), pad('A2'), pad('A3')],
     readStoredAudio: async () => new Blob(['audio']),
-    savePadSettings: async () => {}, saveSample: async () => {},
+    savePadSettings: async (pad) => { savedSettings.push(pad); }, saveSample: async () => {},
     deletePads: async () => {
       if (failDeletion) throw new Error('Deletion failed');
       if (holdDeletion) await new Promise((resolve) => { finishDeletion = resolve; });
@@ -115,6 +118,15 @@ test('restored slices share a single decode and each receives the buffer', async
     assert.equal(api.slots.A1.buffer, buffer);
     assert.equal(api.slots.A2.buffer, buffer);
     assert.equal(registered.get('A1'), buffer);
+    await render().generateSliceMarkers('A1', 4);
+    assert.deepEqual(render().slots.A1.sliceMarkers, [0, 25, 50, 75, 100]);
+    assert.deepEqual(savedSettings.at(-1).sliceMarkers, [0, 25, 50, 75, 100]);
+    api = render();
+    api.triggerPad('A1', undefined, 0, undefined, 10);
+    await flush();
+    assert.equal(triggered.at(-1).options.sliceStart, 0.75);
+    assert.equal(triggered.at(-1).options.sliceEnd, 1);
+    assert.equal(render().slots.A4.sampleKey, null, 'SLI markers do not occupy another pad');
     holdAssignment = false;
     const many = await render().chopToBank('A1', 'C', 32);
     assert.deepEqual(many.slice(0, 3), ['C1', 'C2', 'C3']);

@@ -10,6 +10,7 @@ export interface StoredPad {
   loop: boolean;
   playbackMode?: PlaybackMode;
   audioKey?: string;
+  sliceMarkers?: number[];
 }
 
 const DATABASE = 'sp-m8x-samples';
@@ -64,6 +65,9 @@ function validPad(value: unknown): value is StoredPad {
     typeof record.endPct === 'number' && Number.isFinite(record.endPct) &&
     typeof record.pitch === 'number' && Number.isFinite(record.pitch) &&
     typeof record.loop === 'boolean' &&
+    (record.sliceMarkers === undefined || (Array.isArray(record.sliceMarkers) &&
+      (record.sliceMarkers.length === 0 || (record.sliceMarkers.length >= 3 && record.sliceMarkers.length <= 33)) &&
+      record.sliceMarkers.every((frame, index, markers) => Number.isSafeInteger(frame) && frame >= 0 && (index === 0 || frame > markers[index - 1])))) &&
     (record.playbackMode === undefined || record.playbackMode === 'one-shot' ||
       record.playbackMode === 'gate' || record.playbackMode === 'loop');
 }

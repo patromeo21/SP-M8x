@@ -7,6 +7,7 @@ import { audioEngine } from '../audio/audioEngine';
 import { projectController, type Pattern, type TrackerStepItem } from '../project/projectController';
 import type { VoiceFxCommand } from '../fx/VoiceFxPool';
 import { instrumentIdToPadId } from '../sampler/padIds';
+import { sliceRange } from '../sampler/gridSlices';
 
 export interface TrackerStepEvent {
   stepIndex: number;
@@ -19,6 +20,8 @@ export interface PadPlaybackSettings {
   startPct: number; // 0-100
   endPct: number; // 0-100
   pitch: number; // semitones
+  playbackMode: 'one-shot' | 'gate' | 'loop';
+  sliceMarkers?: number[];
 }
 
 export type PadSettingsProvider = (padId: string) => PadPlaybackSettings | undefined;
@@ -45,6 +48,10 @@ function noteOffset(note: string): number {
   return (Number(match[3]) + 1) * 12 + semitones[match[1]] + (match[2] === '#' ? 1 : 0) - 60;
 }
 
+export function getNormalizedTableStepIndex(currentStep: number): number {
+  return currentStep * 8;
+}
+
 class TrackerBridge {
   private padSettingsProvider: PadSettingsProvider | null = null;
   private pendingVoices: PendingVoice[] = [];
@@ -57,7 +64,7 @@ class TrackerBridge {
 
   public getStepCount(): number {
     const pattern = this.getActivePattern();
-    return pattern && pattern.tracks[0].steps.length > 0 ? pattern.tracks[0].steps.length : DEFAULT_STEP_COUNT;
+    return pattern?.length ?? DEFAULT_STEP_COUNT;
   }
 
   /**
@@ -84,7 +91,7 @@ class TrackerBridge {
     const padId = instrumentIdToPadId(step.instrumentId);
     if (!padId) return;
     if (step.note === 'OFF') {
-      audioEngine.stopPadVoicesAt(padId, scheduledTime);
+      audioEngine.releaseTrackGatedVoicesAt(padId, trackIndex, scheduledTime);
       return;
     }
     if (step.fx === 'OFF' || step.fx === '00') {
@@ -97,11 +104,18 @@ class TrackerBridge {
     if (!buffer) return;
 
     const settings = this.padSettingsProvider?.(padId);
+    const padMetadata = projectController.getState().sampler.pads[padId];
     const startPct = settings?.startPct ?? 0;
     const endPct = settings?.endPct ?? 100;
+    const slice = step.sliceIndex === undefined ? undefined : sliceRange(settings?.sliceMarkers ?? [], step.sliceIndex, buffer.length);
+    if (step.sliceIndex !== undefined && !slice) {
+      console.error(`[TrackerBridge] Missing or invalid slice ${step.sliceIndex} for ${padId}.`);
+      return;
+    }
     const table = projectController.getState().tracker.tables?.find((item) => item.id === step.tableId);
-    const pageIndex = Math.floor(stepIndex / 16);
-    const startTick = (stepIndex % 16) * 8;
+    const tableTick = getNormalizedTableStepIndex(stepIndex);
+    const pageIndex = Math.floor(tableTick / 128);
+    const startTick = tableTick % 128;
     const modulation: NonNullable<Parameters<typeof audioEngine.triggerPad>[1]>['modulation'] = [];
     if (table) {
       for (let tick = startTick; tick < 128; tick++) {
@@ -123,11 +137,14 @@ class TrackerBridge {
       ? Math.max(0, Math.min(127, step.velocity)) / 127 : 1;
 
     const voiceId = audioEngine.triggerPad(padId, {
-      sliceStart: (startPct / 100) * buffer.duration,
-      sliceEnd: (endPct / 100) * buffer.duration,
+      sliceStart: slice ? slice.start / buffer.sampleRate : (startPct / 100) * buffer.duration,
+      sliceEnd: slice ? slice.end / buffer.sampleRate : (endPct / 100) * buffer.duration,
       semitoneOffset: (settings?.pitch ?? 0) + noteOffset(step.note),
       volume: velocity,
       loop: false,
+      gated: settings?.playbackMode === 'gate',
+      padVolume: padMetadata?.volume ?? 1,
+      chokeGroup: padMetadata?.chokeGroup ?? null,
       scheduledTime,
       trackIndex,
       modulation: modulation.length ? modulation : undefined,

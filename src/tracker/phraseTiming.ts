@@ -2,7 +2,7 @@ import type { TrackerStepItem } from '../project/projectController';
 
 export function phraseTimingMarkers(steps: TrackerStepItem[], page: number): { index: number; tick: number }[] {
   const lengthInTicks = steps.length * 8;
-  if (!lengthInTicks || (page !== 0 && page !== 1)) return [];
+  if (!lengthInTicks || !Number.isInteger(page) || page < 0 || page * 128 >= lengthInTicks) return [];
   return steps.flatMap((step, index) => {
     if (step.instrumentId === null || !step.note || step.note === '---' || step.note === 'OFF') return [];
     const raw = step.subTickOffset;

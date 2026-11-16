@@ -22,7 +22,6 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
   const waveformPointers = useRef(new Map<number, { x: number; y: number }>());
   const pinch = useRef<{ ids: [number, number]; distance: number; zoom: number; centerFrame: number } | null>(null);
   const scrubPointer = useRef<number | null>(null);
-  const scrubVoice = useRef<string | null>(null);
   const [preview, setPreview] = useState<SampleRange | null>(null);
   const [scrubPosition, setScrubPosition] = useState<number | null>(null);
   const [pitchPreview, setPitchPreview] = useState<number | null>(null);
@@ -119,11 +118,13 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
       ctx.fillRect(col * colWidth, top, Math.max(1, colWidth), Math.max(1, bottom - top));
     }
     ctx.fillStyle = 'rgba(255,255,255,0.28)';
-    for (let index = 1; index < sliceCount; index++) {
-      const frame = range.start + Math.floor(index * (range.end - range.start) / sliceCount);
+    const markers = sliceCount > 0
+      ? Array.from({ length: sliceCount - 1 }, (_, index) => range.start + Math.floor((index + 1) * (range.end - range.start) / sliceCount))
+      : pad.sliceMarkers.slice(1, -1);
+    for (const frame of markers) {
       if (frame >= viewStart && frame <= viewEnd) ctx.fillRect(Math.round((frame - viewStart) * width / viewLength), 0, 1, height);
     }
-  }, [peaks, length, range.start, range.end, sliceCount, canvasSize, viewStart, viewEnd, viewLength]);
+  }, [peaks, length, range.start, range.end, sliceCount, pad.sliceMarkers, canvasSize, viewStart, viewEnd, viewLength]);
 
   useEffect(() => {
     const playhead = playheadRef.current;
@@ -163,6 +164,16 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
     });
   };
 
+  const snapTrimToView = () => {
+    if (!length || viewEnd <= viewStart) return;
+    const next = { start: viewStart, end: viewEnd };
+    setPreview(null);
+    onUpdatePad(pad.id, {
+      startPct: percentFromFrame(next.start, length),
+      endPct: percentFromFrame(next.end, length),
+    });
+  };
+
   const moveMarker = (event: React.PointerEvent<HTMLButtonElement>) => {
     const active = drag.current;
     const bounds = containerRef.current?.getBoundingClientRect();
@@ -178,19 +189,10 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
 
   const scrubAt = (clientX: number) => {
     const bounds = containerRef.current?.getBoundingClientRect();
-    const context = audioEngine.getContext();
     if (!bounds || !length) return;
     const ratio = Math.max(0, Math.min(1, (clientX - bounds.left) / bounds.width));
     const frame = Math.max(range.start, Math.min(range.end - 1, viewStart + Math.round(ratio * viewLength)));
     setScrubPosition(frame);
-    if (!context || context.state !== 'running' || !pad.buffer) return;
-    if (scrubVoice.current) audioEngine.stopVoiceAt(scrubVoice.current, context.currentTime, 0.003);
-    scrubVoice.current = audioEngine.triggerPad(pad.id, {
-      sliceStart: frame / pad.buffer.sampleRate,
-      sliceEnd: range.end / pad.buffer.sampleRate,
-      semitoneOffset: pad.pitch,
-      volume: 0.6,
-    });
   };
 
   const endWaveformPointer = (pointerId: number) => {
@@ -198,11 +200,6 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
     if (waveformPointers.current.size === 0) setScrubPosition(null);
     if (scrubPointer.current === pointerId) scrubPointer.current = null;
     if (pinch.current?.ids.includes(pointerId)) pinch.current = null;
-    if (scrubVoice.current) {
-      const context = audioEngine.getContext();
-      if (context) audioEngine.stopVoiceAt(scrubVoice.current, context.currentTime, 0.01);
-      scrubVoice.current = null;
-    }
   };
 
   const marker = (edge: 'start' | 'end') => (
@@ -211,12 +208,15 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
       aria-label={`${edge === 'start' ? 'Start' : 'End'} marker`}
       disabled={!pad.buffer}
       className={`slice-handle slice-handle-${edge}`}
-      style={{ display: range[edge] < viewStart || range[edge] > viewEnd ? 'none' : undefined, left: `clamp(22px, ${length ? (range[edge] - viewStart) * 100 / viewLength : 0}%, calc(100% - 22px))` }}
+      style={{ left: `clamp(22px, ${length ? (range[edge] - viewStart) * 100 / viewLength : 0}%, calc(100% - 22px))` }}
       onPointerDown={(event) => {
         if (drag.current) return;
         event.preventDefault();
         event.currentTarget.setPointerCapture(event.pointerId);
-        drag.current = { pointerId: event.pointerId, edge, range, original: range, x: event.clientX, origin: range[edge] };
+        const visible = Math.max(viewStart, Math.min(viewEnd, range[edge]));
+        const origin = edge === 'start' ? Math.min(visible, range.end - 1) : Math.max(visible, range.start + 1);
+        const next = { ...range, [edge]: origin };
+        drag.current = { pointerId: event.pointerId, edge, range: next, original: range, x: event.clientX, origin };
       }}
       onPointerMove={moveMarker}
       onPointerUp={(event) => {
@@ -254,7 +254,7 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
   );
 
   return (
-    <div ref={containerRef} className="sampler-waveform relative h-24 bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden mb-2 shrink-0">
+    <div ref={containerRef} className="sampler-waveform relative h-24 bg-zinc-950 border border-zinc-700 overflow-hidden shrink-0">
       <canvas ref={canvasRef} width={canvasSize.width} height={canvasSize.height} className="absolute inset-0 w-full h-full touch-none"
         onPointerDown={(event) => {
           event.preventDefault();
@@ -273,11 +273,6 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
             };
             scrubPointer.current = null;
             setScrubPosition(null);
-            if (scrubVoice.current) {
-              const context = audioEngine.getContext();
-              if (context) audioEngine.stopVoiceAt(scrubVoice.current, context.currentTime, 0.01);
-              scrubVoice.current = null;
-            }
           } else {
             scrubPointer.current = event.pointerId;
             scrubAt(event.clientX);
@@ -329,6 +324,9 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
         </div>
         {marker('start')}
         {marker('end')}
+        {zoom > 1.01 && <button type="button" className="wave-snap-view" aria-label="Snap trim to view" onClick={snapTrimToView}>
+          SNAP VIEW
+        </button>}
         <button type="button" className="wave-precision" onClick={() => { setPrecision(!precision); setError(null); }}>
           {precision ? 'DONE' : 'FRAMES'}
         </button>

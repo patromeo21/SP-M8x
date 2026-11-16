@@ -32,11 +32,11 @@ test('phrases and reusable tables persist, and table deletion preserves other ti
     assert.equal(state.settings.activePatternIndex, 1);
     assert.deepEqual(state.tracker.patterns[1].tracks[0].steps[0], { note: 'D-4', instrumentId: 17, velocity: 80, tableId: id });
     assert.deepEqual(restored.getTables()[0].steps.slice(0, 3), [
-      { pitch: null, volume: null }, { pitch: null, volume: null }, { pitch: null, volume: 0 },
+      { pitch: null, volume: 64 }, { pitch: null, volume: null }, { pitch: null, volume: 0 },
     ]);
     restored.setActivePattern(0);
     assert.equal(restored.getState().settings.activePatternIndex, 0);
-    assert.equal(restored.getTables()[0].steps.length, 256);
+    assert.equal(restored.getTables()[0].steps.length, 512);
 
     const legacy = restored.getState();
     legacy.tracker.tables = [{
@@ -46,7 +46,7 @@ test('phrases and reusable tables persist, and table deletion preserves other ti
     const migratedModule = `${source}\n// migrated`;
     const { projectController: migrated } = await import(`data:text/javascript;base64,${Buffer.from(migratedModule).toString('base64')}`);
     const migratedTicks = migrated.getTables()[0].steps;
-    assert.equal(migratedTicks.length, 256);
+    assert.equal(migratedTicks.length, 512);
     assert.deepEqual(migratedTicks.slice(0, 16), migratedTicks.slice(128, 144));
     assert.equal(migratedTicks[127].pitch, null);
     assert.equal(migratedTicks[255].volume, null);

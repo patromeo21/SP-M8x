@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { audioEngine } from './audioEngine';
 import { projectController } from '../project/projectController';
 
-export function MasterOutput() {
+export function MasterOutput({ savedLocally }: { savedLocally: boolean }) {
   const [volume, setVolume] = useState(projectController.getState().settings.masterVolume);
   const [peak, setPeak] = useState(0);
 
@@ -29,6 +29,7 @@ export function MasterOutput() {
       <span className={peak >= 1 ? 'text-rose-400 font-bold' : 'text-zinc-300'}>
         PEAK {peak > 0 ? `${(20 * Math.log10(peak)).toFixed(1)} dBFS` : '−∞'}
       </span>
+      {savedLocally && <span aria-label="Saved locally" className="text-emerald-400 text-[9px]">SAVED LOCALLY</span>}
     </div>
   );
 }

@@ -7,9 +7,11 @@ export interface VoiceFxCommand {
 
 export interface VoiceFxSlot {
   voiceGain: GainNode;
+  padGain: GainNode;
   dryGain: GainNode;
   wetGain: GainNode;
   trackGain: GainNode;
+  deckGains: [GainNode, GainNode];
   panner: StereoPannerNode;
   filter: BiquadFilterNode;
   drive: GainNode;
@@ -27,13 +29,15 @@ export function holdAudioParam(param: AudioParam, time: number): void {
 export class VoiceFxPool {
   public readonly slots: VoiceFxSlot[];
 
-  constructor(context: AudioContext, destination: AudioNode) {
+  constructor(context: AudioContext, destinations: [AudioNode, AudioNode]) {
     this.slots = Array.from({ length: 32 }, () => {
       const voiceGain = context.createGain();
+      const padGain = context.createGain();
       const panner = context.createStereoPanner();
       const dryGain = context.createGain();
       const wetGain = context.createGain();
       const trackGain = context.createGain();
+      const deckGains: [GainNode, GainNode] = [context.createGain(), context.createGain()];
       const filter = context.createBiquadFilter();
       const drive = context.createGain();
       const shaper = context.createWaveShaper();
@@ -52,23 +56,26 @@ export class VoiceFxPool {
       feedbackGain.gain.value = 0;
       dryGain.gain.value = 1;
       wetGain.gain.value = 0;
-      voiceGain.connect(panner);
+      voiceGain.connect(padGain);
+      padGain.connect(panner);
       panner.connect(dryGain).connect(trackGain);
       panner.connect(filter).connect(drive).connect(shaper).connect(delay).connect(wetGain).connect(trackGain);
-      trackGain.connect(destination);
+      trackGain.connect(deckGains[0]).connect(destinations[0]);
+      trackGain.connect(deckGains[1]).connect(destinations[1]);
       delay.connect(feedbackGain).connect(delay);
-      return { voiceGain, panner, dryGain, wetGain, trackGain, filter, drive, delay, feedbackGain, generationId: 0, padId: null };
+      return { voiceGain, padGain, panner, dryGain, wetGain, trackGain, deckGains, filter, drive, delay, feedbackGain, generationId: 0, padId: null };
     });
   }
 
   public prepare(slot: VoiceFxSlot, time: number, padId: string): void {
     slot.generationId++;
     slot.padId = padId;
-    for (const param of [slot.voiceGain.gain, slot.panner.pan, slot.dryGain.gain,
+    for (const param of [slot.voiceGain.gain, slot.padGain.gain, slot.panner.pan, slot.dryGain.gain,
       slot.wetGain.gain, slot.filter.frequency, slot.drive.gain, slot.delay.delayTime, slot.feedbackGain.gain]) {
       holdAudioParam(param, time);
     }
     slot.voiceGain.gain.setValueAtTime(1, time);
+    slot.padGain.gain.setValueAtTime(1, time);
     slot.panner.pan.setValueAtTime(0, time);
     slot.dryGain.gain.setValueAtTime(1, time);
     slot.wetGain.gain.setValueAtTime(0, time);

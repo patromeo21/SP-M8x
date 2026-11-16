@@ -10,7 +10,7 @@ import { chromaticNote, chromaticOffset } from './chromatic';
 export type PadBankManagerProps = Pick<
   PadBankApi,
   'slots' | 'activeBank' | 'selectedPadId' | 'padPlayMode' | 'chromaticRootOffset' | 'setPadPlayMode' | 'setChromaticRootOffset' | 'triggerPad' | 'deletePads' | 'copyPad' | 'storageReady'
->;
+> & { sliActive: boolean; setSliActive: (active: boolean) => void };
 
 export const PadBankManager: React.FC<PadBankManagerProps> = ({
   slots,
@@ -24,9 +24,11 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
   deletePads,
   copyPad,
   storageReady,
+  sliActive,
+  setSliActive,
 }) => {
   // Each finger is tracked by pointerId so simultaneous touches light and release independently.
-  const activePointers = useRef(new Map<number, { padId: string; release: () => void }>());
+  const activePointers = useRef(new Map<number, { padId: string; release: (pointerTime?: number) => void }>());
   const gridRef = useRef<HTMLDivElement>(null);
   const [pressedPads, setPressedPads] = useState<ReadonlySet<string>>(new Set());
   const [selecting, setSelecting] = useState(false);
@@ -93,16 +95,18 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
       toggleSelection(padId);
       return;
     }
-    const source = padPlayMode === 'CHROMATIC_16' ? selectedPadId : padId;
+    const slice = sliActive && padPlayMode === 'BANK_64' && index < 10
+      ? Math.min(index + 1, slots[selectedPadId].sliceMarkers.length - 1) : undefined;
+    const source = slice !== undefined ? selectedPadId : padPlayMode === 'CHROMATIC_16' ? selectedPadId : padId;
     const pitch = padPlayMode === 'CHROMATIC_16' ? chromaticOffset(index, chromaticRootOffset) : 0;
-    activePointers.current.set(event.pointerId, { padId, release: triggerPad(source, undefined, pitch, event.timeStamp) });
+    activePointers.current.set(event.pointerId, { padId, release: triggerPad(source, undefined, pitch, event.timeStamp, slice) });
     syncPressed();
   };
 
   const handlePointerEnd = (event: React.PointerEvent<HTMLButtonElement>) => {
     const active = activePointers.current.get(event.pointerId);
     if (!active) return;
-    active.release();
+    active.release(event.timeStamp);
     activePointers.current.delete(event.pointerId);
     syncPressed();
   };
@@ -119,6 +123,12 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
             setPadPlayMode(padPlayMode === 'BANK_64' ? 'CHROMATIC_16' : 'BANK_64');
           }}>
           {padPlayMode === 'CHROMATIC_16' ? 'CHROMATIC' : 'BANK'}
+        </button>
+        <button type="button" aria-label="Toggle slice mode" aria-pressed={sliActive}
+          disabled={padPlayMode !== 'BANK_64' || slots[selectedPadId].sliceMarkers.length < 2}
+          className={`touch-none rounded border px-2 py-1 disabled:opacity-40 ${sliActive ? 'sli-active' : 'border-zinc-700 text-zinc-300'}`}
+          onClick={() => { setSelecting(false); setConfirming(false); setCopying(false); setCopySource(null); setSliActive(!sliActive); }}>
+          SLI
         </button>
         {padPlayMode === 'CHROMATIC_16' && <label>ROOT
           <select aria-label="Chromatic root offset" value={chromaticRootOffset}
@@ -175,7 +185,8 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
       <div ref={gridRef} className="pad-grid grid grid-cols-4 gap-1.5 flex-1 min-h-0">
       {Array.from({ length: PADS_PER_BANK }, (_, i) => {
         const padId = `${activeBank}${i + 1}`;
-        const slot = slots[padPlayMode === 'CHROMATIC_16' ? selectedPadId : padId];
+        const isSlice = sliActive && padPlayMode === 'BANK_64' && i < 10 && !copying && !selecting;
+        const slot = slots[padPlayMode === 'CHROMATIC_16' || isSlice ? selectedPadId : padId];
         const hasSample = slot.sampleKey !== null;
         const isSelected = selecting ? selected.has(padId) : padPlayMode === 'BANK_64' && padId === selectedPadId;
         const isPressed = pressedPads.has(padId);
@@ -205,7 +216,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
             }`}
           >
             <span className="flex w-full items-center justify-between font-bold">
-              <span className={isPressed ? 'text-zinc-900' : 'text-zinc-500'}>{padPlayMode === 'CHROMATIC_16' ? chromaticNote(chromaticOffset(i, chromaticRootOffset)) : formatPadLabel(padId)}</span>
+              <span className={isPressed ? 'text-zinc-900' : 'text-zinc-500'}>{isSlice ? `SLI ${String(Math.min(i + 1, slot.sliceMarkers.length - 1)).padStart(2, '0')}` : padPlayMode === 'CHROMATIC_16' ? chromaticNote(chromaticOffset(i, chromaticRootOffset)) : formatPadLabel(padId)}</span>
               {hasSample && (
                 <span className={`text-[8px] ${isPressed ? 'text-zinc-900' : 'text-[var(--accent-phrase)]'}`}>
                   {selecting && isSelected ? 'SELECTED' : slot.playbackMode === 'one-shot' ? 'ONE' : slot.playbackMode.toUpperCase()}

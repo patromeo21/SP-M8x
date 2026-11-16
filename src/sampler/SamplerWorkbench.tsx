@@ -15,32 +15,50 @@ export interface SamplerWorkbenchProps {
   storageReady: boolean;
   activeBank: BankId;
   onChop: PadBankApi['chopToBank'];
+  onGenerateSliceMarkers: PadBankApi['generateSliceMarkers'];
 }
 
 export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
-  pad, onUpdatePad, onPreviewRange, onLoadSample, recordingStatus, onRecord, storageReady, activeBank, onChop,
+  pad, onUpdatePad, onPreviewRange, onLoadSample, recordingStatus, onRecord, storageReady, activeBank, onChop, onGenerateSliceMarkers,
 }) => {
   const [count, setCount] = useState<number | null>(null);
   const [chopping, setChopping] = useState(false);
   const [chopMessage, setChopMessage] = useState('');
   const [chopError, setChopError] = useState(false);
   return (
-  <div className="sampler-workbench bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col shrink-0 font-mono select-none">
+  <div className="sampler-workbench bg-[var(--bg-canvas)] flex flex-col shrink-0 font-mono select-none">
+    <WaveformEditor pad={pad} onUpdatePad={onUpdatePad} onPreviewRange={onPreviewRange} sliceCount={count ?? 0} />
     <div className="sampler-toolbar">
       <button type="button" disabled={!pad.buffer} onClick={() => onUpdatePad(pad.id, {
         playbackMode: pad.playbackMode === 'one-shot' ? 'gate' : pad.playbackMode === 'gate' ? 'loop' : 'one-shot',
       })}
-        className={`sampler-mode rounded border text-[9px] font-bold disabled:opacity-40 ${
-          pad.playbackMode !== 'one-shot' ? 'bg-purple-950 border-purple-800 text-purple-300' : 'bg-zinc-900 border-zinc-700 text-zinc-400'
+        aria-label={`Playback mode ${pad.playbackMode}`}
+        className={`sampler-mode chop-action text-[9px] font-bold disabled:opacity-40 ${
+          pad.playbackMode !== 'one-shot' ? 'text-purple-300' : 'text-zinc-400'
         }`}>
         {pad.playbackMode.toUpperCase()}
       </button>
       <AudioSampleDropzone padId={pad.id} onSampleLoaded={onLoadSample} disabled={!storageReady} />
       <button type="button" disabled={!storageReady || recordingStatus.phase === 'processing'} onClick={() => onRecord(pad.id)}
-        className="sampler-record rounded border border-rose-800 bg-rose-950 px-1 text-[9px] font-bold text-rose-300 disabled:opacity-40">
+        className="sampler-record chop-action px-1 text-[9px] font-bold text-rose-300 disabled:opacity-40">
         {recordingStatus.phase === 'recording' ? 'STOP' : recordingStatus.phase === 'requesting' ? 'CANCEL' : recordingStatus.phase === 'processing' ? 'WAIT' : 'REC'}
       </button>
-      <select id={`slice-count-${pad.id}`} aria-label="Number of slices" value={count ?? ''} onChange={(event) => setCount(event.target.value ? Number(event.target.value) : null)}
+      <select id={`slice-count-${pad.id}`} aria-label="Number of slices" value={count ?? ''}
+        disabled={!storageReady || !pad.sampleKey || chopping}
+        onChange={(event) => {
+          const nextCount = event.target.value ? Number(event.target.value) : null;
+          setCount(nextCount);
+          setChopMessage('');
+          if (nextCount === null) return;
+          setChopping(true);
+          void onGenerateSliceMarkers(pad.id, nextCount).then(() => {
+            setChopError(false);
+            setChopMessage(`SAVED ${nextCount} SLI MARKERS`);
+          }).catch((error: unknown) => {
+            setChopError(true);
+            setChopMessage(error instanceof Error ? error.message : 'Could not save markers.');
+          }).finally(() => setChopping(false));
+        }}
         className="sampler-count bg-zinc-900 border border-zinc-700 rounded text-[9px] text-zinc-200">
         <option value="">CHOP</option>
         {Array.from({ length: 31 }, (_, index) => index + 2).map((number) => <option key={number} value={number}>{number}</option>)}
@@ -59,7 +77,6 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
         {chopping ? 'SAVING…' : `TO EMPTY ${activeBank}`}
       </button>}
     </div>
-    <WaveformEditor pad={pad} onUpdatePad={onUpdatePad} onPreviewRange={onPreviewRange} sliceCount={count ?? 0} />
     {chopMessage && <div role={chopError ? 'alert' : 'status'} className={`sampler-chop-status mb-2 text-[9px] break-words ${chopError ? 'text-rose-300' : 'text-cyan-300'}`}>{chopMessage}</div>}
     {recordingStatus.phase !== 'idle' || recordingStatus.message ? (
       <div role={recordingStatus.phase === 'error' ? 'alert' : 'status'} className="sampler-record-status text-[9px] text-rose-300">

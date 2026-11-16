@@ -5,6 +5,7 @@
 
 import { audioCache } from './audioCache';
 import { holdAudioParam, VoiceFxPool, type VoiceFxCommand, type VoiceFxSlot } from '../fx/VoiceFxPool';
+import { PerformanceDeck, type PerformanceFx } from '../fx/PerformanceDeck';
 
 declare global {
   interface Window {
@@ -28,6 +29,8 @@ export interface ActiveVoice {
   slot: VoiceFxSlot;
   generationId: number;
   trackIndex: number;
+  gated: boolean;
+  chokeGroup: number | null;
 }
 
 export interface VoiceModulation {
@@ -51,6 +54,7 @@ class AudioEngine {
   private voiceListeners = new Set<() => void>();
   private overloadListeners = new Set<(message: string) => void>();
   private fxPool: VoiceFxPool | null = null;
+  private performanceDecks: [PerformanceDeck, PerformanceDeck] | null = null;
   private slotOwners = new Map<VoiceFxSlot, string>();
   private trackVolumes = Array.from({ length: 8 }, () => 1);
 
@@ -93,7 +97,8 @@ class AudioEngine {
 
     if (!this.fxPool) {
       if (!this.masterGain) throw new Error('Audio output is unavailable.');
-      this.fxPool = new VoiceFxPool(this.ctx, this.masterGain);
+      this.performanceDecks = [new PerformanceDeck(this.ctx, this.masterGain), new PerformanceDeck(this.ctx, this.masterGain)];
+      this.fxPool = new VoiceFxPool(this.ctx, [this.performanceDecks[0].input, this.performanceDecks[1].input]);
     }
 
     const state: string = this.ctx.state;
@@ -204,6 +209,9 @@ class AudioEngine {
       modulation?: VoiceModulation[];
       fx?: VoiceFxCommand;
       trackIndex?: number;
+      gated?: boolean;
+      padVolume?: number;
+      chokeGroup?: number | null;
     } = {},
   ): string | null {
     const context = this.ctx;
@@ -219,6 +227,16 @@ class AudioEngine {
     }
 
     let targetGainTime = Math.max(options.scheduledTime ?? context.currentTime, context.currentTime);
+    const chokeGroup = options.chokeGroup ?? null;
+    if (chokeGroup !== null) {
+      for (const [voiceId, voice] of this.activeVoices) {
+        if (voice.chokeGroup === chokeGroup && voice.startTime <= targetGainTime &&
+            voice.slot.generationId === voice.generationId &&
+            (voice.stopTime === undefined || voice.stopTime > targetGainTime)) {
+          this.stopVoiceAt(voiceId, targetGainTime, 0.004, true);
+        }
+      }
+    }
     let slot = this.fxPool.slots.find((item) => !this.slotOwners.has(item));
     if (!slot) {
       if (options.scheduledTime !== undefined) {
@@ -241,6 +259,8 @@ class AudioEngine {
     this.fxPool.prepare(slot, targetGainTime, normalizePadKey(padId));
     holdAudioParam(slot.trackGain.gain, targetGainTime);
     slot.trackGain.gain.setValueAtTime(this.trackVolumes[trackIndex], targetGainTime);
+    slot.padGain.gain.setValueAtTime(clamp(options.padVolume ?? 1, 0, 1), targetGainTime);
+    this.setSlotDeck(slot, trackIndex, targetGainTime);
     const source = context.createBufferSource();
     source.buffer = buffer;
     source.loop = options.loop ?? false;
@@ -292,6 +312,8 @@ class AudioEngine {
       gainChanges,
       slot,
       trackIndex,
+      options.gated ?? false,
+      chokeGroup,
     );
     return voiceId;
   }
@@ -335,7 +357,7 @@ class AudioEngine {
     }
   }
 
-  public stopVoiceAt(voiceId: string, time: number, fadeSeconds = 0.01): void {
+  public stopVoiceAt(voiceId: string, time: number, fadeSeconds = 0.01, exponential = false): void {
     const voice = this.activeVoices.get(voiceId);
     const context = this.ctx;
     if (!voice || !context) return;
@@ -344,7 +366,12 @@ class AudioEngine {
     if (voice.slot.generationId !== voice.generationId) return;
     const fade = clamp(fadeSeconds, 0.001, 0.05);
     holdAudioParam(voice.gainNode.gain, stopTime);
-    voice.gainNode.gain.linearRampToValueAtTime(0.0001, stopTime + fade);
+    if (exponential) {
+      if (voice.gainNode.gain.value <= 0) voice.gainNode.gain.setValueAtTime(0.0001, stopTime);
+      voice.gainNode.gain.exponentialRampToValueAtTime(0.0001, stopTime + fade);
+    } else {
+      voice.gainNode.gain.linearRampToValueAtTime(0.0001, stopTime + fade);
+    }
     voice.stopTime = stopTime;
     try {
       voice.source.stop(stopTime + fade);
@@ -357,6 +384,33 @@ class AudioEngine {
   public stopPadVoicesAt(padId: string, time: number, fadeSeconds = 0.01): void {
     for (const [voiceId, voice] of this.activeVoices) {
       if (voice.padId === padId) this.stopVoiceAt(voiceId, time, fadeSeconds);
+    }
+  }
+
+  public releaseGatedVoice(voiceId: string, time: number): void {
+    const voice = this.activeVoices.get(voiceId);
+    if (!voice || !voice.gated) return;
+    if (time < voice.startTime) {
+      this.stopVoice(voiceId);
+      return;
+    }
+    this.stopVoiceAt(voiceId, time, 0.004, true);
+  }
+
+  public releaseTrackGatedVoicesAt(padId: string, trackIndex: number, time: number): void {
+    for (const [voiceId, voice] of this.activeVoices) {
+      if (voice.padId === padId && voice.trackIndex === trackIndex && voice.gated && voice.startTime <= time) {
+        this.releaseGatedVoice(voiceId, time);
+      }
+    }
+  }
+
+  public stopGatedVoices(): void {
+    const now = this.ctx?.currentTime ?? 0;
+    for (const [voiceId, voice] of this.activeVoices) {
+      if (voice.gated && voice.slot.generationId === voice.generationId) {
+        this.releaseGatedVoice(voiceId, now);
+      }
     }
   }
 
@@ -377,7 +431,6 @@ class AudioEngine {
     if (!Number.isInteger(trackIndex) || trackIndex < 0 || trackIndex >= 8 || !Number.isFinite(volume)) {
       throw new Error('Invalid track volume.');
     }
-
     const value = clamp(volume, 0, 1);
     this.trackVolumes[trackIndex] = value;
     const now = this.ctx?.currentTime;
@@ -390,6 +443,19 @@ class AudioEngine {
     }
   }
 
+  public setPadVolume(padId: string, volume: number): void {
+    if (!Number.isFinite(volume)) throw new Error('Invalid pad volume.');
+    const value = clamp(volume, 0, 1);
+    const now = this.ctx?.currentTime;
+    if (now === undefined) return;
+    for (const voice of this.activeVoices.values()) {
+      if (voice.padId !== padId || voice.slot.generationId !== voice.generationId) continue;
+      const time = Math.max(now, voice.startTime);
+      holdAudioParam(voice.slot.padGain.gain, time);
+      voice.slot.padGain.gain.setTargetAtTime(value, time, 0.005);
+    }
+  }
+
   public setVoiceTrack(voiceId: string, trackIndex: number): void {
     if (!Number.isInteger(trackIndex) || trackIndex < 0 || trackIndex >= 8) throw new Error('Invalid voice track.');
     const voice = this.activeVoices.get(voiceId);
@@ -398,6 +464,19 @@ class AudioEngine {
     const time = Math.max(this.ctx.currentTime, voice.startTime);
     holdAudioParam(voice.slot.trackGain.gain, time);
     voice.slot.trackGain.gain.setValueAtTime(this.trackVolumes[trackIndex], time);
+    this.setSlotDeck(voice.slot, trackIndex, time);
+  }
+
+  private setSlotDeck(slot: VoiceFxSlot, trackIndex: number, time: number): void {
+    slot.deckGains.forEach((gain, index) => {
+      holdAudioParam(gain.gain, time);
+      gain.gain.setValueAtTime(index === (trackIndex < 4 ? 0 : 1) ? 1 : 0, time);
+    });
+  }
+
+  public setPerformanceFx(deck: 0 | 1, effect: PerformanceFx): void {
+    if (!this.performanceDecks) throw new Error('Audio engine is not initialized.');
+    this.performanceDecks[deck].setEffect(effect);
   }
 
   /** Latest analyser window only; short peaks between reads can be missed. */
@@ -427,6 +506,8 @@ class AudioEngine {
     gainChanges?: { time: number; gain: number }[],
     slot?: VoiceFxSlot,
     trackIndex = 0,
+    gated = false,
+    chokeGroup: number | null = null,
   ): string | null {
     const context = this.ctx;
     if (!context || !slot) return null;
@@ -436,7 +517,7 @@ class AudioEngine {
     const voice: ActiveVoice = {
       source, gainNode, panner, padId, startTime, offset,
       end: duration === undefined ? source.buffer?.duration ?? offset : offset + duration,
-      loop, playbackRate: baseRate ?? source.playbackRate.value, rateChanges, gainChanges, slot, generationId: slot.generationId, trackIndex,
+      loop, playbackRate: baseRate ?? source.playbackRate.value, rateChanges, gainChanges, slot, generationId: slot.generationId, trackIndex, gated, chokeGroup,
     };
     this.activeVoices.set(voiceId, voice);
     this.slotOwners.set(slot, voiceId);

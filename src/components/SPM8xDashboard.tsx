@@ -33,6 +33,14 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
   const startGeneration = useRef(0);
   const recordingRef = useRef(false);
   recordingRef.current = armed && playing;
+  const stopTransport = useCallback(() => {
+    startGeneration.current++;
+    trackerEngine.stop();
+    padBank.stopGatedVoices();
+    setStarting(false);
+    setPlaying(false);
+    setPlayhead(-1);
+  }, [padBank.stopGatedVoices]);
 
   useEffect(() => {
     (projectController.getState().settings.trackVolumes ?? Array.from({ length: 8 }, () => 1))
@@ -56,11 +64,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
 
   const toggleTransport = useCallback(() => {
     if (playing || starting) {
-      startGeneration.current++;
-      trackerEngine.stop();
-      setStarting(false);
-      setPlaying(false);
-      setPlayhead(-1);
+      stopTransport();
       return;
     }
     const generation = ++startGeneration.current;
@@ -72,7 +76,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
         const state = projectController.getState();
         const pattern = state.tracker.patterns[state.settings.activePatternIndex];
         if (!pattern) throw new Error('Active phrase is unavailable.');
-        const ids = pattern.tracks.flatMap((track) => track.steps.map((step) => instrumentIdToPadId(step.instrumentId)))
+        const ids = pattern.tracks.flatMap((track) => track.steps.slice(0, pattern.length).map((step) => instrumentIdToPadId(step.instrumentId)))
           .filter((id): id is string => id !== null);
         await padBank.preparePads(ids);
         if (generation !== startGeneration.current) return;
@@ -87,13 +91,15 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
         if (generation === startGeneration.current) setStarting(false);
       }
     })();
-  }, [padBank.preparePads, playing, starting]);
+  }, [padBank.preparePads, playing, starting, stopTransport]);
 
-  const triggerPad = useCallback((padId: string, _onTriggered?: (time: number) => number | void, semitoneOffset = 0, pointerTime?: number) => {
+  const triggerPad = useCallback((padId: string, _onTriggered?: (time: number) => number | void, semitoneOffset = 0, pointerTime?: number, sliceIndex?: number) => {
     const context = audioEngine.getContext();
     const captureTime = context && pointerTime !== undefined && Number.isFinite(pointerTime)
       ? context.currentTime + (pointerTime - performance.now()) / 1000 : undefined;
-    return padBank.triggerPad(padId, (time) => {
+    let captured: { patternIndex: number; track: number; instrumentId: number; generation: number } | null = null;
+    const gated = padBank.getPadSettings(padId)?.playbackMode === 'gate';
+    const release = padBank.triggerPad(padId, (time) => {
       if (!recordingRef.current) return;
       const position = trackerEngine.recordPosition(captureTime ?? time);
       if (!position) return;
@@ -103,15 +109,30 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
       const track = projectController.recordHit(state.settings.activePatternIndex, position.step,
         state.sampler.pads[padId]?.targetTrack ?? 0, {
           note: chromaticNote(semitoneOffset), instrumentId, subTickOffset: position.subTickOffset, velocity: 127,
+          ...(sliceIndex === undefined ? {} : { sliceIndex }),
         });
       if (track === null) {
         setTransportMessage(`Step ${position.step + 1} full — hit not recorded.`);
         return;
       }
       setTransportMessage('');
+      if (gated) captured = { patternIndex: state.settings.activePatternIndex, track, instrumentId, generation: startGeneration.current };
       return track;
-    }, semitoneOffset);
-  }, [padBank.triggerPad]);
+    }, semitoneOffset, pointerTime, sliceIndex);
+    return (releasePointerTime?: number) => {
+      release(releasePointerTime);
+      if (!captured || !recordingRef.current || captured.generation !== startGeneration.current) return;
+      const currentContext = audioEngine.getContext();
+      const time = currentContext && releasePointerTime !== undefined && Number.isFinite(releasePointerTime)
+        ? currentContext.currentTime + (releasePointerTime - performance.now()) / 1000 : currentContext?.currentTime;
+      if (time === undefined) return;
+      const position = trackerEngine.recordPosition(time);
+      if (!position) return;
+      if (!projectController.recordRelease(captured.patternIndex, position.step, captured.track, captured.instrumentId, position.subTickOffset)) {
+        setTransportMessage(`Step ${position.step + 1} occupied — gate release not recorded.`);
+      }
+    };
+  }, [padBank.triggerPad, padBank.getPadSettings]);
 
   if (projectController.isReadOnly()) {
     return <main className="app-shell bg-black text-rose-300 p-6 font-mono" role="alert">
@@ -172,10 +193,11 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
           </span>
           <span>VOICES: <strong className="text-zinc-200">{engineStatus.voices}</strong></span>
           <button type="button" onClick={toggleTransport} className="text-cyan-300 font-bold">{starting ? 'CANCEL' : playing ? 'STOP' : 'PLAY'}</button>
+          <button type="button" onClick={stopTransport} className="text-rose-300 font-bold">STOP</button>
           <button type="button" aria-pressed={armed} onClick={() => setArmed(!armed)} className={armed ? 'text-rose-400 font-bold' : 'text-zinc-400'}>{armed ? 'PHRASE REC ARMED' : 'PHRASE REC'}</button>
           <span>BPM: <strong className="text-zinc-200">{projectController.getState().settings.bpm.toFixed(1)}</strong></span>
-          <MasterOutput />
-          <span role={padBank.storageError ? 'alert' : 'status'} className={padBank.storageError ? 'text-rose-400' : 'text-zinc-400'}>{padBank.storageStatus}</span>
+          <MasterOutput savedLocally={padBank.storageReady && !padBank.storageError && !projectController.hasSaveError() && !['SAVING', 'DELETING'].includes(padBank.storageStatus)} />
+          {padBank.storageError && <span role="alert" className="text-rose-400">{padBank.storageStatus}</span>}
           {projectController.hasSaveError() && <span role="alert" className="text-rose-400">PHRASE SAVE FAILED</span>}
           {transportMessage && <span role="alert" className="text-rose-400">{transportMessage}</span>}
         </div>
