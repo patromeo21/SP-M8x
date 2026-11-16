@@ -6,6 +6,7 @@
 import { audioCache } from './audioCache';
 import { holdAudioParam, VoiceFxPool, type VoiceFxCommand, type VoiceFxSlot } from '../fx/VoiceFxPool';
 import { PerformanceDeck, type PerformanceFx } from '../fx/PerformanceDeck';
+import { MacroFxBus, type FxBus, type MacroFx } from '../fx/fxEngine';
 
 declare global {
   interface Window {
@@ -55,6 +56,7 @@ class AudioEngine {
   private overloadListeners = new Set<(message: string) => void>();
   private fxPool: VoiceFxPool | null = null;
   private performanceDecks: [PerformanceDeck, PerformanceDeck] | null = null;
+  private macroBuses: Record<FxBus, MacroFxBus> | null = null;
   private slotOwners = new Map<VoiceFxSlot, string>();
   private trackVolumes = Array.from({ length: 8 }, () => 1);
 
@@ -97,7 +99,9 @@ class AudioEngine {
 
     if (!this.fxPool) {
       if (!this.masterGain) throw new Error('Audio output is unavailable.');
-      this.performanceDecks = [new PerformanceDeck(this.ctx, this.masterGain), new PerformanceDeck(this.ctx, this.masterGain)];
+      const master = new MacroFxBus(this.ctx, this.masterGain);
+      this.macroBuses = { A: new MacroFxBus(this.ctx, master.input), B: new MacroFxBus(this.ctx, master.input), MST: master };
+      this.performanceDecks = [new PerformanceDeck(this.ctx, this.macroBuses.A.input), new PerformanceDeck(this.ctx, this.macroBuses.B.input)];
       this.fxPool = new VoiceFxPool(this.ctx, [this.performanceDecks[0].input, this.performanceDecks[1].input]);
     }
 
@@ -212,6 +216,7 @@ class AudioEngine {
       gated?: boolean;
       padVolume?: number;
       chokeGroup?: number | null;
+      chokeTrackRange?: { firstTrack: number; lastTrack: number };
     } = {},
   ): string | null {
     const context = this.ctx;
@@ -230,7 +235,9 @@ class AudioEngine {
     const chokeGroup = options.chokeGroup ?? null;
     if (chokeGroup !== null) {
       for (const [voiceId, voice] of this.activeVoices) {
-        if (voice.chokeGroup === chokeGroup && voice.startTime <= targetGainTime &&
+        if (voice.chokeGroup === chokeGroup && (!options.chokeTrackRange ||
+            (voice.trackIndex >= options.chokeTrackRange.firstTrack && voice.trackIndex <= options.chokeTrackRange.lastTrack)) &&
+            voice.startTime <= targetGainTime &&
             voice.slot.generationId === voice.generationId &&
             (voice.stopTime === undefined || voice.stopTime > targetGainTime)) {
           this.stopVoiceAt(voiceId, targetGainTime, 0.004, true);
@@ -333,10 +340,11 @@ class AudioEngine {
     if (voice) voice.slot.panner.pan.setValueAtTime(clamp(pan, -1, 1), voice.startTime);
   }
 
-  public resetPadFxAt(padId: string, time: number): void {
+  public resetPadFxAt(padId: string, time: number, trackRange?: { firstTrack: number; lastTrack: number }): void {
     if (!this.fxPool) return;
     for (const voice of this.activeVoices.values()) {
-      if (voice.padId === padId && voice.slot.generationId === voice.generationId &&
+      if (voice.padId === padId && (!trackRange || (voice.trackIndex >= trackRange.firstTrack && voice.trackIndex <= trackRange.lastTrack)) &&
+          voice.slot.generationId === voice.generationId &&
           voice.startTime <= time && (voice.stopTime === undefined || voice.stopTime > time)) {
         this.fxPool.reset(voice.slot, time);
       }
@@ -477,6 +485,11 @@ class AudioEngine {
   public setPerformanceFx(deck: 0 | 1, effect: PerformanceFx): void {
     if (!this.performanceDecks) throw new Error('Audio engine is not initialized.');
     this.performanceDecks[deck].setEffect(effect);
+  }
+
+  public setMacroFx(bus: FxBus, effect: MacroFx): void {
+    if (!this.macroBuses) throw new Error('Audio engine is not initialized.');
+    this.macroBuses[bus].setEffect(effect);
   }
 
   /** Latest analyser window only; short peaks between reads can be missed. */

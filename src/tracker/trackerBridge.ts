@@ -71,16 +71,19 @@ class TrackerBridge {
    * Schedules the step at an exact AudioContext timestamp (seconds).
    * Empty steps, invalid pad IDs, and pads without a loaded buffer are skipped.
    */
-  public scheduleStep(stepIndex: number, stepTime: number, stepDuration: number): void {
+  public scheduleStep(stepIndex: number, stepTime: number, stepDuration: number, rmx?: { stepIndex: number; firstTrack: number; lastTrack: number }): void {
     const pattern = this.getActivePattern();
     if (!pattern) return;
     for (const track of pattern.tracks) {
-      const step = track.steps[stepIndex];
-      if (step) this.scheduleTrackStep(step, track.id, stepIndex, stepTime, stepDuration);
+      const trackStep = rmx && track.id >= rmx.firstTrack && track.id <= rmx.lastTrack ? rmx.stepIndex : stepIndex;
+      const step = track.steps[trackStep];
+      if (step) this.scheduleTrackStep(step, track.id, trackStep, stepTime, stepDuration,
+        rmx && track.id >= rmx.firstTrack && track.id <= rmx.lastTrack ? rmx : undefined);
     }
   }
 
-  private scheduleTrackStep(step: TrackerStepItem, trackIndex: number, stepIndex: number, stepTime: number, stepDuration: number): void {
+  private scheduleTrackStep(step: TrackerStepItem, trackIndex: number, stepIndex: number, stepTime: number, stepDuration: number,
+    rmxScope?: { firstTrack: number; lastTrack: number }): void {
     const rawOffset = step.subTickOffset;
     const offset = typeof rawOffset === 'number' && Number.isFinite(rawOffset) ? Math.max(-4, Math.min(4, rawOffset)) : 0;
     const scheduledTime = stepTime + offset * stepDuration / 8;
@@ -95,7 +98,8 @@ class TrackerBridge {
       return;
     }
     if (step.fx === 'OFF' || step.fx === '00') {
-      audioEngine.resetPadFxAt(padId, scheduledTime);
+      if (rmxScope) audioEngine.resetPadFxAt(padId, scheduledTime, rmxScope);
+      else audioEngine.resetPadFxAt(padId, scheduledTime);
       if (!hasNote) return;
     }
     if (!hasNote) return;
@@ -145,6 +149,7 @@ class TrackerBridge {
       gated: settings?.playbackMode === 'gate',
       padVolume: padMetadata?.volume ?? 1,
       chokeGroup: padMetadata?.chokeGroup ?? null,
+      chokeTrackRange: rmxScope,
       scheduledTime,
       trackIndex,
       modulation: modulation.length ? modulation : undefined,

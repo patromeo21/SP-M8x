@@ -56,6 +56,7 @@ class AudioContextMock {
     return node;
   }
   createWaveShaper() { return new NodeMock(); }
+  createOscillator() { return Object.assign(new NodeMock(), { frequency: new AudioParamMock(), start() {} }); }
   createDynamicsCompressor() {
     return Object.assign(new NodeMock(), {
       threshold: new AudioParamMock(), knee: new AudioParamMock(), ratio: new AudioParamMock(),
@@ -82,17 +83,19 @@ test('preallocated voices reset FX without stopping dry audio and steal the olde
   const cacheUrl = asModuleUrl(await compile('../src/audio/audioCache.ts'));
   const poolUrl = asModuleUrl(await compile('../src/fx/VoiceFxPool.ts'));
   const deckUrl = asModuleUrl((await compile('../src/fx/PerformanceDeck.ts')).replace("'./VoiceFxPool'", `'${poolUrl}'`));
+  const fxUrl = asModuleUrl((await compile('../src/fx/fxEngine.ts')).replace("'./VoiceFxPool'", `'${poolUrl}'`));
   const source = (await compile('../src/audio/audioEngine.ts'))
     .replace("'./audioCache'", `'${cacheUrl}'`)
     .replace("'../fx/VoiceFxPool'", `'${poolUrl}'`)
-    .replace("'../fx/PerformanceDeck'", `'${deckUrl}'`);
+    .replace("'../fx/PerformanceDeck'", `'${deckUrl}'`)
+    .replace("'../fx/fxEngine'", `'${fxUrl}'`);
   const { audioEngine } = await import(asModuleUrl(source));
   await assert.rejects(audioEngine.initialize(), /resume blocked/);
   const context = audioEngine.getContext();
   context.rejectResume = false;
   await Promise.all([audioEngine.initialize(), audioEngine.initialize()]);
-  assert.equal(context.delays.length, 34);
-  assert.equal(context.filters.length, 34);
+  assert.equal(context.delays.length, 37);
+  assert.equal(context.filters.length, 37);
   const initialGains = context.gains.length;
 
   const bytes = new ArrayBuffer(8);
@@ -114,7 +117,7 @@ test('preallocated voices reset FX without stopping dry audio and steal the olde
   assert.deepEqual(audioEngine.activeVoices.get(ids[31]).slot.deckGains.map((gain) => gain.gain.value), [0, 1]);
   assert.equal(context.sources[0].playbackRate.value, 2);
   assert.equal(context.gains.length, initialGains);
-  assert.equal(context.delays.length, 34);
+  assert.equal(context.delays.length, 37);
   const slot = audioEngine.activeVoices.get(ids[0]).slot;
   const filteredSlot = audioEngine.activeVoices.get(ids[1]).slot;
   assert.notEqual(slot, filteredSlot);
@@ -155,7 +158,7 @@ test('preallocated voices reset FX without stopping dry audio and steal the olde
   sourceNode.onended();
   assert.equal(audioEngine.slotOwners.get(slot), next, 'stale cleanup must not release a reused slot');
   assert.equal(context.gains.length, initialGains);
-  assert.equal(context.delays.length, 34);
+  assert.equal(context.delays.length, 37);
   audioEngine.stopAllVoices();
   for (const source of context.sources) source.onended();
   context.currentTime = 50;

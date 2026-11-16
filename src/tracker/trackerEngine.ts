@@ -1,5 +1,6 @@
 import { trackerBridge } from './trackerBridge';
 import { audioEngine } from '../audio/audioEngine';
+import { rmxStepIndex, type FxBus, type RmxLength } from '../fx/fxEngine';
 
 const LOOKAHEAD_SECONDS = 0.1;
 const TIMER_MS = 25;
@@ -14,6 +15,7 @@ export class TrackerEngine {
   private bpm: number;
   private onStep?: (step: number) => void;
   private onStopped?: (reason?: string) => void;
+  private rmx: { bus: FxBus; length: RmxLength; anchor: number } | null = null;
 
   constructor(bpm = 120) {
     this.bpm = bpm;
@@ -44,6 +46,7 @@ export class TrackerEngine {
     this.generation++;
     const wasPlaying = this.playing;
     this.playing = false;
+    this.rmx = null;
     if (this.timerId !== null) {
       window.clearInterval(this.timerId);
       this.timerId = null;
@@ -61,6 +64,17 @@ export class TrackerEngine {
       step: nearest % trackerBridge.getStepCount(),
       subTickOffset: Math.max(-4, Math.min(4, Math.round((position - nearest) * 8))),
     };
+  }
+
+  public startRmx(bus: FxBus, length: RmxLength): boolean {
+    const context = audioEngine.getContext();
+    if (!this.playing || !context || context.currentTime < this.startTime) return false;
+    this.rmx = { bus, length, anchor: Math.floor((context.currentTime - this.startTime) / this.stepDuration) };
+    return true;
+  }
+
+  public stopRmx(): void {
+    this.rmx = null;
   }
 
   private get stepDuration(): number {
@@ -88,7 +102,12 @@ export class TrackerEngine {
     while (this.startTime + this.nextStep * duration < horizon) {
       const stepTime = this.startTime + this.nextStep * duration;
       if (stepTime + duration / 2 >= now) {
-        trackerBridge.scheduleStep(this.nextStep % stepCount, stepTime, duration);
+        const rmx = this.rmx;
+        trackerBridge.scheduleStep(this.nextStep % stepCount, stepTime, duration, rmx ? {
+          stepIndex: rmxStepIndex(this.nextStep, rmx.anchor, stepCount, rmx.length),
+          firstTrack: rmx.bus === 'B' ? 4 : 0,
+          lastTrack: rmx.bus === 'A' ? 3 : 7,
+        } : undefined);
       }
       this.nextStep++;
     }

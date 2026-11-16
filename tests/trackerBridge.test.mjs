@@ -130,6 +130,13 @@ test('bridge schedules pad slices and signed microtiming and cancels future voic
     trackerBridge.scheduleStep(2, 2.5, 0.125);
     assert.equal(triggered.at(-1).options.sliceStart, 0.3);
     assert.equal(triggered.at(-1).options.sliceEnd, 0.6);
+    otherSteps[2] = { instrumentId: 0, note: 'D-4' };
+    steps[3] = { instrumentId: 0, note: 'E-4' };
+    otherSteps[3] = { instrumentId: 0, note: 'E-4' };
+    trackerBridge.scheduleStep(3, 3, 0.125, { stepIndex: 2, firstTrack: 0, lastTrack: 0 });
+    assert.equal(triggered.at(-2).options.sliceStart, 0.3);
+    assert.deepEqual(triggered.at(-2).options.chokeTrackRange, { stepIndex: 2, firstTrack: 0, lastTrack: 0 });
+    assert.equal(triggered.at(-1).options.semitoneOffset, 4, 'unselected tracks continue forward');
   } finally {
     delete globalThis.bridgeTestAudio;
     delete globalThis.bridgeTestProject;

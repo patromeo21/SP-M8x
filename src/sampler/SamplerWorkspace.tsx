@@ -11,6 +11,7 @@ import { useInputRecorder } from './useInputRecorder';
 import { projectController } from '../project/projectController';
 import { audioEngine } from '../audio/audioEngine';
 import { PerformanceDeckControls } from '../fx/PerformanceDeckControls';
+import { FxStrip } from '../fx/FxStrip';
 
 export interface SamplerWorkspaceProps {
   padBank: PadBankApi;
@@ -63,6 +64,7 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({ padBank, rec
         </div>
       </div>
       {compact && <PerformanceDeckControls />}
+      <FxStrip />
       {volumeOpen && <div className="volume-drawer">
         <label>PAD {padBank.selectedPadId}
           <input aria-label="Selected pad volume" type="range" min="0" max="1" step="0.01" value={selectedPad.volume}

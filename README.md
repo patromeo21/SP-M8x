@@ -81,6 +81,14 @@ tracks for a free cell. The recorded hit uses the destination track's level.
 If every cell is occupied, the hit still sounds live but is not recorded and a
 warning is shown. Phrase changes inside the scheduling lookahead may not play
 until the next loop.
+The performance macro dock targets bus A (tracks 1–4), B (tracks 5–8), or
+MST (both). Hold FILTER, LO-FI, CHORUS, or PUNCH-MUTE for momentary effects;
+LO-FI uses amplitude quantization, and CHORUS uses a modulated delay.
+The existing Deck A/B controls remain independent. P1, P2, and P3 set RMX
+to 1, 2, and 4 rows; hold RMX during playback to repeat forward from the
+current row on the selected bus. The other bus continues forward. Already
+scheduled notes are not canceled, so pressing or releasing RMX takes effect
+at the next unscheduled row and rejoins the forward playhead on release.
 GATE releases are recorded as NOTE OFF on the same track and instrument. If
 the release's cell is occupied, it is left intact and a warning is shown;
 the release must be entered elsewhere manually.
