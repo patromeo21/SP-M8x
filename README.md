@@ -21,8 +21,8 @@ IndexedDB. Tap a restored pad to decode and play it; its first tap may be slower
 Browser storage can be cleared or reclaimed, so it is not a permanent backup.
 Watch the footer for save errors and avoid closing the page while it says SAVING.
 Drag the full-height S and E waveform markers to trim; hold P and slide
-vertically to adjust pitch in semitones. Drag across the waveform to audition
-from the selected sample position; pinch to zoom. FRAMES opens precise
+vertically to adjust pitch in semitones. Drag across the waveform to move its
+visual scrub line; tap the pad separately to audition. Pinch to zoom. FRAMES opens precise
 sample-frame fields (END is exclusive).
 The waveform displays the decoded buffer's sample rate, channel count, and
 duration. The browser may resample imported audio, so the displayed rate is not
