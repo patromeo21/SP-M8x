@@ -16,9 +16,11 @@ interface EditorProps {
   activeStep: number;
   transportBusy: boolean;
   mode: 'phrase' | 'table';
+  queuedPatternIndex: number | null;
+  onSelectPattern: (index: number) => void;
 }
 
-export function PhraseTableEditor({ slots, activeStep, transportBusy, mode }: EditorProps) {
+export function PhraseTableEditor({ slots, activeStep, transportBusy, mode, queuedPatternIndex, onSelectPattern }: EditorProps) {
   const [tableId, setTableId] = useState<number | null>(null);
   const [trackIndex, setTrackIndex] = useState(0);
   const state = projectController.getState();
@@ -37,10 +39,11 @@ export function PhraseTableEditor({ slots, activeStep, transportBusy, mode }: Ed
         </select></label>
         {mode === 'phrase' ? (
           <>
-            <label className="control-block">PHR <select aria-label="Active phrase" className={fieldClass} value={patternIndex} disabled={transportBusy}
-              onChange={(event) => projectController.setActivePattern(Number(event.target.value))}>
+            <label className="control-block">PHR <select aria-label="Active phrase" className={fieldClass} value={queuedPatternIndex ?? patternIndex}
+              onChange={(event) => onSelectPattern(Number(event.target.value))}>
               {state.tracker.patterns.map((item, index) => <option key={item.id} value={index}>{item.name}</option>)}
             </select></label>
+            {queuedPatternIndex !== null && <span role="status" className="text-cyan-300">QUEUED</span>}
             <button type="button" className={buttonClass} aria-label="New phrase" disabled={transportBusy} onClick={() => projectController.createPattern()}>＋</button>
             <label className="control-block">LEN <select aria-label="Phrase length" className={fieldClass} value={pattern.length} disabled={transportBusy}
               onChange={(event) => projectController.setPatternLength(patternIndex, Number(event.target.value) as PhraseLength)}>

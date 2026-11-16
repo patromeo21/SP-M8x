@@ -26,6 +26,7 @@ export function PerformanceDeckControls() {
     {([0, 1] as const).map((deck) => <div key={deck} className="flex items-center gap-1">
       <strong className="text-[9px] text-zinc-400">DECK {deck === 0 ? 'A' : 'B'}</strong>
       {effects.map((effect) => <button key={effect} type="button" aria-label={`Deck ${deck === 0 ? 'A' : 'B'} ${effect}`}
+        data-performance-touch
         aria-pressed={active[deck] === effect && effect !== 'off'}
         className="touch-none select-none flex-1 min-h-[36px] border border-zinc-700 rounded text-[9px] text-cyan-300"
         onPointerDown={(event) => {

@@ -14,7 +14,6 @@ export function applyTouchOptimizations(): void {
   style.innerHTML = `
     /* Disable default iOS touch gestures, rubber-banding, and text selection for tactile performance */
     html, body, #root {
-      touch-action: none;
       user-select: none;
       -webkit-user-select: none;
       -webkit-touch-callout: none;
@@ -49,7 +48,7 @@ export function applyTouchOptimizations(): void {
   document.addEventListener('gesturechange', preventZoom, { passive: false });
   const preventPerformanceGesture = (event: Event) => {
     const target = event.target;
-    if (!(target instanceof Element) || !target.closest('.app-shell') || target.closest('input, textarea, select')) return;
+    if (!(target instanceof Element) || !target.closest('.pad-grid, .sampler-waveform, .macro-trigger, [data-performance-touch]')) return;
     if (event.cancelable) event.preventDefault();
   };
   document.addEventListener('touchmove', preventPerformanceGesture, { passive: false });

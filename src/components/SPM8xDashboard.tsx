@@ -29,13 +29,17 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
   const [armed, setArmed] = useState(false);
   const [playhead, setPlayhead] = useState(-1);
   const [transportMessage, setTransportMessage] = useState('');
+  const [queuedPatternIndex, setQueuedPatternIndex] = useState<number | null>(null);
   const [, refreshProject] = useState(0);
   const startGeneration = useRef(0);
+  const queueGeneration = useRef(0);
   const recordingRef = useRef(false);
   recordingRef.current = armed && playing;
   const stopTransport = useCallback(() => {
     startGeneration.current++;
+    queueGeneration.current++;
     trackerEngine.stop();
+    setQueuedPatternIndex(null);
     padBank.stopGatedVoices();
     setStarting(false);
     setPlaying(false);
@@ -47,9 +51,14 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
       .forEach((volume, index) => audioEngine.setTrackVolume(index, volume));
     trackerBridge.setPadSettingsProvider(padBank.getPadSettings);
     trackerEngine.setCallbacks(setPlayhead, (reason) => {
+      queueGeneration.current++;
+      setQueuedPatternIndex(null);
       setPlaying(false);
       setPlayhead(-1);
       if (reason) setTransportMessage(reason);
+    }, (index) => {
+      projectController.setActivePattern(index);
+      setQueuedPatternIndex((queued) => queued === index ? null : queued);
     });
     const unsubscribe = projectController.subscribe(() => refreshProject((value) => value + 1));
     const unsubscribeOverload = audioEngine.subscribeOverload(setTransportMessage);
@@ -93,6 +102,37 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
     })();
   }, [padBank.preparePads, playing, starting, stopTransport]);
 
+  const selectPattern = useCallback((index: number) => {
+    const request = ++queueGeneration.current;
+    if (starting) {
+      setTransportMessage('Wait for playback to start before cueing a phrase.');
+      return;
+    }
+    if (!playing) {
+      projectController.setActivePattern(index);
+      setQueuedPatternIndex(null);
+      return;
+    }
+    const pattern = projectController.getState().tracker.patterns[index];
+    if (!pattern) { setTransportMessage('Phrase is unavailable.'); return; }
+    trackerEngine.queuePattern(null);
+    setQueuedPatternIndex(index);
+    setTransportMessage('PREPARING QUEUED PHRASE');
+    const ids = pattern.tracks.flatMap((track) => track.steps.slice(0, pattern.length).map((step) => instrumentIdToPadId(step.instrumentId)))
+      .filter((id): id is string => id !== null);
+    void padBank.preparePads(ids).then(() => {
+      if (request !== queueGeneration.current) return;
+      const queued = trackerEngine.queuePattern(index);
+      setTransportMessage('');
+      if (!queued) setQueuedPatternIndex(null);
+    }).catch((error: unknown) => {
+      if (request !== queueGeneration.current) return;
+      console.error('[SP-M8x] Could not cue phrase:', error);
+      setQueuedPatternIndex(null);
+      setTransportMessage(error instanceof Error ? error.message : 'Could not cue phrase.');
+    });
+  }, [padBank.preparePads, playing, starting]);
+
   const triggerPad = useCallback((padId: string, _onTriggered?: (time: number) => number | void, semitoneOffset = 0, pointerTime?: number, sliceIndex?: number) => {
     const context = audioEngine.getContext();
     const captureTime = context && pointerTime !== undefined && Number.isFinite(pointerTime)
@@ -106,7 +146,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
       const state = projectController.getState();
       const instrumentId = padIdToInstrumentId(padId);
       if (instrumentId === null) return;
-      const track = projectController.recordHit(state.settings.activePatternIndex, position.step,
+      const track = projectController.recordHit(position.patternIndex, position.step,
         state.sampler.pads[padId]?.targetTrack ?? 0, {
           note: chromaticNote(semitoneOffset), instrumentId, subTickOffset: position.subTickOffset, velocity: 127,
           ...(sliceIndex === undefined ? {} : { sliceIndex }),
@@ -116,7 +156,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
         return;
       }
       setTransportMessage('');
-      if (gated) captured = { patternIndex: state.settings.activePatternIndex, track, instrumentId, generation: startGeneration.current };
+      if (gated) captured = { patternIndex: position.patternIndex, track, instrumentId, generation: startGeneration.current };
       return track;
     }, semitoneOffset, pointerTime, sliceIndex);
     return (releasePointerTime?: number) => {
@@ -128,6 +168,10 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
       if (time === undefined) return;
       const position = trackerEngine.recordPosition(time);
       if (!position) return;
+      if (position.patternIndex !== captured.patternIndex) {
+        setTransportMessage('Gate crossed a phrase boundary — release not recorded.');
+        return;
+      }
       if (!projectController.recordRelease(captured.patternIndex, position.step, captured.track, captured.instrumentId, position.subTickOffset)) {
         setTransportMessage(`Step ${position.step + 1} occupied — gate release not recorded.`);
       }
@@ -153,11 +197,11 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
       <main className="flex-1 flex overflow-hidden p-3 gap-3 bg-[var(--bg-shell-deep)]">
         {currentTab === 'phrase'
           ? <div className="phrase-workspace">
-              <PhraseTableEditor slots={padBank.slots} activeStep={playing ? playhead : activeStep} transportBusy={playing || starting} mode="phrase" />
+              <PhraseTableEditor slots={padBank.slots} activeStep={playing ? playhead : activeStep} transportBusy={playing || starting} mode="phrase" queuedPatternIndex={queuedPatternIndex} onSelectPattern={selectPattern} />
               <SamplerWorkspace padBank={padBank} recorder={recorder} triggerPad={triggerPad} compact />
             </div>
           : currentTab === 'table'
-            ? <PhraseTableEditor slots={padBank.slots} activeStep={playing ? playhead : activeStep} transportBusy={playing || starting} mode="table" />
+            ? <PhraseTableEditor slots={padBank.slots} activeStep={playing ? playhead : activeStep} transportBusy={playing || starting} mode="table" queuedPatternIndex={queuedPatternIndex} onSelectPattern={selectPattern} />
           : currentTab === 'sampler'
             ? <SamplerWorkspace padBank={padBank} recorder={recorder} triggerPad={triggerPad} />
             : <section className="flex-1 p-4 bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl">

@@ -71,21 +71,22 @@ class TrackerBridge {
    * Schedules the step at an exact AudioContext timestamp (seconds).
    * Empty steps, invalid pad IDs, and pads without a loaded buffer are skipped.
    */
-  public scheduleStep(stepIndex: number, stepTime: number, stepDuration: number, rmx?: { stepIndex: number; firstTrack: number; lastTrack: number }): void {
-    const pattern = this.getActivePattern();
+  public scheduleStep(stepIndex: number, stepTime: number, stepDuration: number, rmx?: { stepIndex: number; firstTrack: number; lastTrack: number },
+    patternIndex?: number, boundary = false): void {
+    const pattern = patternIndex === undefined ? this.getActivePattern() : projectController.getState().tracker.patterns[patternIndex];
     if (!pattern) return;
     for (const track of pattern.tracks) {
       const trackStep = rmx && track.id >= rmx.firstTrack && track.id <= rmx.lastTrack ? rmx.stepIndex : stepIndex;
       const step = track.steps[trackStep];
       if (step) this.scheduleTrackStep(step, track.id, trackStep, stepTime, stepDuration,
-        rmx && track.id >= rmx.firstTrack && track.id <= rmx.lastTrack ? rmx : undefined);
+        rmx && track.id >= rmx.firstTrack && track.id <= rmx.lastTrack ? rmx : undefined, boundary);
     }
   }
 
   private scheduleTrackStep(step: TrackerStepItem, trackIndex: number, stepIndex: number, stepTime: number, stepDuration: number,
-    rmxScope?: { firstTrack: number; lastTrack: number }): void {
+    rmxScope?: { firstTrack: number; lastTrack: number }, boundary = false): void {
     const rawOffset = step.subTickOffset;
-    const offset = typeof rawOffset === 'number' && Number.isFinite(rawOffset) ? Math.max(-4, Math.min(4, rawOffset)) : 0;
+    const offset = typeof rawOffset === 'number' && Number.isFinite(rawOffset) ? Math.max(boundary ? 0 : -4, Math.min(4, rawOffset)) : 0;
     const scheduledTime = stepTime + offset * stepDuration / 8;
     const now = audioEngine.getContext()?.currentTime ?? 0;
     if (scheduledTime < now - 0.01) return;

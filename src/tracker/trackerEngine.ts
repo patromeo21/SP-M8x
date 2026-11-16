@@ -1,9 +1,12 @@
 import { trackerBridge } from './trackerBridge';
 import { audioEngine } from '../audio/audioEngine';
 import { rmxStepIndex, type FxBus, type RmxLength } from '../fx/fxEngine';
+import { projectController } from '../project/projectController';
 
 const LOOKAHEAD_SECONDS = 0.1;
 const TIMER_MS = 25;
+const BAR_STEPS = 16;
+interface PatternSegment { patternIndex: number; startStep: number; length: number }
 
 export class TrackerEngine {
   private playing = false;
@@ -16,14 +19,19 @@ export class TrackerEngine {
   private onStep?: (step: number) => void;
   private onStopped?: (reason?: string) => void;
   private rmx: { bus: FxBus; length: RmxLength; anchor: number } | null = null;
+  private segments: PatternSegment[] = [];
+  private queuedPattern: number | null = null;
+  private displayedPattern: number | null = null;
+  private onPattern?: (index: number) => void;
 
   constructor(bpm = 120) {
     this.bpm = bpm;
   }
 
-  public setCallbacks(onStep: (step: number) => void, onStopped: (reason?: string) => void): void {
+  public setCallbacks(onStep: (step: number) => void, onStopped: (reason?: string) => void, onPattern?: (index: number) => void): void {
     this.onStep = onStep;
     this.onStopped = onStopped;
+    this.onPattern = onPattern;
   }
 
   public async start(bpm = this.bpm): Promise<void> {
@@ -36,6 +44,11 @@ export class TrackerEngine {
     this.playing = true;
     this.startTime = context.currentTime + 0.08;
     this.nextStep = 0;
+    const state = projectController.getState();
+    const index = state.settings.activePatternIndex;
+    this.segments = [{ patternIndex: index, startStep: 0, length: state.tracker.patterns[index].length }];
+    this.queuedPattern = null;
+    this.displayedPattern = index;
     this.lastDisplayedStep = -1;
     this.tick();
     if (!this.playing) throw new Error('Audio paused before transport started.');
@@ -47,6 +60,7 @@ export class TrackerEngine {
     const wasPlaying = this.playing;
     this.playing = false;
     this.rmx = null;
+    this.queuedPattern = null;
     if (this.timerId !== null) {
       window.clearInterval(this.timerId);
       this.timerId = null;
@@ -56,14 +70,31 @@ export class TrackerEngine {
   }
 
   /** Nearest step plus signed eighth-step microtiming relative to the audio clock. */
-  public recordPosition(time: number): { step: number; subTickOffset: number } | null {
+  public recordPosition(time: number): { step: number; subTickOffset: number; patternIndex: number } | null {
     if (!this.playing || time < this.startTime) return null;
     const position = (time - this.startTime) / this.stepDuration;
     const nearest = Math.round(position);
+    const segment = this.segmentAt(nearest);
+    if (!segment) return null;
     return {
-      step: nearest % trackerBridge.getStepCount(),
+      step: (nearest - segment.startStep) % segment.length,
       subTickOffset: Math.max(-4, Math.min(4, Math.round((position - nearest) * 8))),
+      patternIndex: segment.patternIndex,
     };
+  }
+
+  public queuePattern(index: number | null): boolean {
+    if (!this.playing) throw new Error('Transport is not playing.');
+    if (index !== null && !projectController.getState().tracker.patterns[index]) throw new Error('Pattern is unavailable.');
+    this.queuedPattern = index === this.segments.at(-1)?.patternIndex ? null : index;
+    return this.queuedPattern !== null;
+  }
+
+  private segmentAt(step: number): PatternSegment | undefined {
+    for (let index = this.segments.length - 1; index >= 0; index--) {
+      if (this.segments[index].startStep <= step) return this.segments[index];
+    }
+    return undefined;
   }
 
   public startRmx(bus: FxBus, length: RmxLength): boolean {
@@ -89,8 +120,13 @@ export class TrackerEngine {
     }
     const now = context.currentTime;
     const duration = this.stepDuration;
-    const stepCount = trackerBridge.getStepCount();
-    const displayStep = now < this.startTime ? -1 : Math.floor((now - this.startTime) / duration) % stepCount;
+    const absoluteDisplayStep = now < this.startTime ? -1 : Math.floor((now - this.startTime) / duration);
+    const displaySegment = this.segmentAt(absoluteDisplayStep);
+    const displayStep = displaySegment ? (absoluteDisplayStep - displaySegment.startStep) % displaySegment.length : -1;
+    if (displaySegment && displaySegment.patternIndex !== this.displayedPattern) {
+      this.displayedPattern = displaySegment.patternIndex;
+      this.onPattern?.(displaySegment.patternIndex);
+    }
     if (displayStep !== this.lastDisplayedStep) {
       this.lastDisplayedStep = displayStep;
       this.onStep?.(displayStep);
@@ -102,12 +138,25 @@ export class TrackerEngine {
     while (this.startTime + this.nextStep * duration < horizon) {
       const stepTime = this.startTime + this.nextStep * duration;
       if (stepTime + duration / 2 >= now) {
+        let boundary = false;
+        if (this.queuedPattern !== null && this.nextStep > 0 && this.nextStep % BAR_STEPS === 0) {
+          const index = this.queuedPattern;
+          const pattern = projectController.getState().tracker.patterns[index];
+          if (!pattern) { this.stop('Queued phrase is unavailable.'); return; }
+          this.segments.push({ patternIndex: index, startStep: this.nextStep, length: pattern.length });
+          if (this.segments.length > 64) this.segments.shift();
+          this.queuedPattern = null;
+          boundary = true;
+        }
+        const segment = this.segmentAt(this.nextStep);
+        if (!segment) { this.stop('Phrase timeline is unavailable.'); return; }
+        const localStep = this.nextStep - segment.startStep;
         const rmx = this.rmx;
-        trackerBridge.scheduleStep(this.nextStep % stepCount, stepTime, duration, rmx ? {
-          stepIndex: rmxStepIndex(this.nextStep, rmx.anchor, stepCount, rmx.length),
+        trackerBridge.scheduleStep(localStep % segment.length, stepTime, duration, rmx ? {
+          stepIndex: rmxStepIndex(localStep, Math.max(0, rmx.anchor - segment.startStep), segment.length, rmx.length),
           firstTrack: rmx.bus === 'B' ? 4 : 0,
           lastTrack: rmx.bus === 'A' ? 3 : 7,
-        } : undefined);
+        } : undefined, segment.patternIndex, boundary);
       }
       this.nextStep++;
     }

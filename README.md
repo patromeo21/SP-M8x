@@ -79,8 +79,14 @@ event per step: an identical instrument, slice, note and offset updates its velo
 otherwise recording scans from the preferred track, wrapping through the eight
 tracks for a free cell. The recorded hit uses the destination track's level.
 If every cell is occupied, the hit still sounds live but is not recorded and a
-warning is shown. Phrase changes inside the scheduling lookahead may not play
-until the next loop.
+warning is shown. While playing, choose another phrase in PHR to cue it. Its samples are
+prepared first, then playback switches to its first step on the next 16-step
+bar boundary not already scheduled. A cue close to the boundary or a slow
+sample decode can therefore wait an extra bar. The outgoing phrase keeps
+playing while preparation is pending. The incoming first step's negative
+microtiming is clamped to the boundary. Selecting the scheduled phrase
+cancels a cue that has not entered lookahead; STOP clears pending cues.
+Gated releases crossing a phrase change are not recorded and show a warning.
 The performance macro dock targets bus A (tracks 1–4), B (tracks 5–8), or
 MST (both). Hold FILTER, LO-FI, CHORUS, or PUNCH-MUTE for momentary effects;
 LO-FI uses amplitude quantization, and CHORUS uses a modulated delay.
