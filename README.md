@@ -1,6 +1,10 @@
 # SP-M8x
 Web based SP/MPC/M8 style sampler/tracker
 
+For an explanation of the implementation and a code-based status audit, see
+[the sampler engineering course](docs/sampler-engineering-course.md) and
+[the feature/function audit](docs/feature-function-audit.md).
+
 The shared Web Audio engine lives in `src/audio/audioEngine.ts`. Initialize it
 from a user gesture before triggering playback.
 If iPadOS interrupts audio, the footer shows a resume button. Tap it after the
