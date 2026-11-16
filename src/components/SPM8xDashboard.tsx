@@ -190,7 +190,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
       <header className="flex items-center justify-between px-4 py-2 bg-[var(--bg-canvas)] border-b border-[var(--border-grid)] shrink-0">
         <h1 className="text-xs font-black tracking-widest text-[var(--accent-phrase)]">SP-M8x <span className="text-zinc-500 font-normal">v0.9.2</span></h1>
         <nav className="flex items-center space-x-1 bg-zinc-950 p-1 rounded-lg border border-[var(--border-grid)]">
-          {(['phrase', 'table', 'song', 'mixer', 'sampler'] as const).map((tab) => <button key={tab} type="button" onClick={() => setCurrentTab(tab)}
+          {(['phrase', 'table', 'song', 'mixer', 'sampler'] as const).map((tab) => <button key={tab} type="button" aria-current={currentTab === tab ? 'page' : undefined} onClick={() => setCurrentTab(tab)}
             className={`px-3 py-1 text-[10px] font-bold tracking-wider rounded uppercase border ${currentTab === tab ? 'text-[var(--accent-phrase)] border-[var(--accent-phrase)] bg-cyan-950/40' : 'text-zinc-500 border-transparent'}`}>[ {tab} ]</button>)}
         </nav>
       </header>
@@ -236,9 +236,9 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
               }}>{audioError ? 'AUDIO BLOCKED — TAP TO RETRY' : engineStatus.state === 'idle' ? 'TAP TO START AUDIO' : 'AUDIO PAUSED — TAP TO RESUME'}</button>}
           </span>
           <span>VOICES: <strong className="text-zinc-200">{engineStatus.voices}</strong></span>
-          <button type="button" onClick={toggleTransport} className="text-cyan-300 font-bold">{starting ? 'CANCEL' : playing ? 'STOP' : 'PLAY'}</button>
-          <button type="button" onClick={stopTransport} className="text-rose-300 font-bold">STOP</button>
-          <button type="button" aria-pressed={armed} onClick={() => setArmed(!armed)} className={armed ? 'text-rose-400 font-bold' : 'text-zinc-400'}>{armed ? 'PHRASE REC ARMED' : 'PHRASE REC'}</button>
+          <button type="button" aria-pressed={playing} onClick={toggleTransport} className="transport-control text-cyan-300">{starting ? 'CANCEL' : playing ? 'STOP' : 'PLAY'}</button>
+          <button type="button" onClick={stopTransport} className="transport-control transport-control-stop">STOP</button>
+          <button type="button" aria-pressed={armed} onClick={() => setArmed(!armed)} className={`transport-control ${armed ? 'text-rose-300' : 'text-zinc-400'}`}>{armed ? 'PHRASE REC ARMED' : 'PHRASE REC'}</button>
           <span>BPM: <strong className="text-zinc-200">{projectController.getState().settings.bpm.toFixed(1)}</strong></span>
           <MasterOutput savedLocally={padBank.storageReady && !padBank.storageError && !projectController.hasSaveError() && !['SAVING', 'DELETING'].includes(padBank.storageStatus)} />
           {padBank.storageError && <span role="alert" className="text-rose-400">{padBank.storageStatus}</span>}

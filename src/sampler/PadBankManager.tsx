@@ -195,6 +195,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
           <button
             key={padId}
             data-pad-id={padId}
+            data-pressed={isPressed || undefined}
             type="button"
             aria-pressed={selecting ? isSelected : undefined}
             onClick={(event) => {
