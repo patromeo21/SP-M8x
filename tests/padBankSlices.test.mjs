@@ -126,6 +126,10 @@ test('restored slices share a single decode and each receives the buffer', async
     await flush();
     assert.equal(triggered.at(-1).options.sliceStart, 0.75);
     assert.equal(triggered.at(-1).options.sliceEnd, 1);
+    api.triggerPad('A1', undefined, 0, undefined, 3, true);
+    await flush();
+    assert.equal(triggered.at(-1).options.sliceStart, 0.5);
+    assert.equal(triggered.at(-1).options.sliceEnd, 1, 'SLI play-through continues from the selected marker to sample end');
     assert.equal(render().slots.A4.sampleKey, null, 'SLI markers do not occupy another pad');
     holdAssignment = false;
     const many = await render().chopToBank('A1', 'C', 32);

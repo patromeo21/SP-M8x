@@ -20,10 +20,11 @@ test('phrases and reusable tables persist, and table deletion preserves other ti
     assert.deepEqual(controller.getTables(), []);
     const id = controller.createTable();
     controller.updateTableStep(id, 0, { pitch: 12, volume: 64 });
-    controller.updateTableStep(id, 1, { pitch: -5 });
+    controller.updateTableStep(id, 1, { pitch: -5, subTickOffset: 3 });
     controller.updateTableStep(id, 2, { volume: 0 });
     assert.throws(() => controller.updateTableStep(id, 0, { pitch: 25 }), /pitch/);
     assert.throws(() => controller.updateTableStep(id, 0, { volume: -1 }), /volume/);
+    assert.throws(() => controller.updateTableStep(id, 0, { subTickOffset: 5 }), /microtiming/);
     controller.createPattern();
     controller.updateStep(1, 0, { note: 'D-4', instrumentId: 17, velocity: 80, tableId: id });
     controller.clearTableSteps(id, [0, 1, 1, 999]);

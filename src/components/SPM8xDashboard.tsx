@@ -133,7 +133,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
     });
   }, [padBank.preparePads, playing, starting]);
 
-  const triggerPad = useCallback((padId: string, _onTriggered?: (time: number) => number | void, semitoneOffset = 0, pointerTime?: number, sliceIndex?: number) => {
+  const triggerPad = useCallback((padId: string, _onTriggered?: (time: number) => number | void, semitoneOffset = 0, pointerTime?: number, sliceIndex?: number, playThrough = false) => {
     const context = audioEngine.getContext();
     const captureTime = context && pointerTime !== undefined && Number.isFinite(pointerTime)
       ? context.currentTime + (pointerTime - performance.now()) / 1000 : undefined;
@@ -158,7 +158,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
       setTransportMessage('');
       if (gated) captured = { patternIndex: position.patternIndex, track, instrumentId, generation: startGeneration.current };
       return track;
-    }, semitoneOffset, pointerTime, sliceIndex);
+    }, semitoneOffset, pointerTime, sliceIndex, playThrough);
     return (releasePointerTime?: number) => {
       release(releasePointerTime);
       if (!captured || !recordingRef.current || captured.generation !== startGeneration.current) return;
@@ -237,7 +237,6 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
           </span>
           <span>VOICES: <strong className="text-zinc-200">{engineStatus.voices}</strong></span>
           <button type="button" aria-pressed={playing} onClick={toggleTransport} className="transport-control text-cyan-300">{starting ? 'CANCEL' : playing ? 'STOP' : 'PLAY'}</button>
-          <button type="button" onClick={stopTransport} className="transport-control transport-control-stop">STOP</button>
           <button type="button" aria-pressed={armed} onClick={() => setArmed(!armed)} className={`transport-control ${armed ? 'text-rose-300' : 'text-zinc-400'}`}>{armed ? 'PHRASE REC ARMED' : 'PHRASE REC'}</button>
           <span>BPM: <strong className="text-zinc-200">{projectController.getState().settings.bpm.toFixed(1)}</strong></span>
           <MasterOutput savedLocally={padBank.storageReady && !padBank.storageError && !projectController.hasSaveError() && !['SAVING', 'DELETING'].includes(padBank.storageStatus)} />

@@ -34,6 +34,7 @@ export interface TableStep {
   reset?: boolean;
   fx?: 'FL' | 'DL' | 'DR' | 'OFF';
   fxValue?: number;
+  subTickOffset?: number;
 }
 
 export interface TrackerTable {
@@ -575,6 +576,10 @@ class ProjectController {
         (!Number.isInteger(changes.pitch) || changes.pitch < -24 || changes.pitch > 24)) throw new Error('Table pitch must be -24 to 24.');
     if (changes.volume !== undefined && changes.volume !== null &&
         (!Number.isInteger(changes.volume) || changes.volume < 0 || changes.volume > 127)) throw new Error('Table volume must be 0 to 127.');
+    if (changes.subTickOffset !== undefined &&
+        (!Number.isInteger(changes.subTickOffset) || changes.subTickOffset < -4 || changes.subTickOffset > 4)) {
+      throw new Error('Table microtiming must be -4 to 4.');
+    }
     Object.assign(step, changes);
     this.notify();
   }
@@ -586,7 +591,7 @@ class ProjectController {
     let changed = false;
     for (const index of new Set(stepIndices)) {
       const step = table.steps[index];
-      if (!step || (step.pitch === null && !step.reset && !step.fx)) continue;
+      if (!step || (step.pitch === null && !step.reset && !step.fx && step.subTickOffset === undefined)) continue;
       table.steps[index] = { pitch: null, volume: step.volume };
       changed = true;
     }

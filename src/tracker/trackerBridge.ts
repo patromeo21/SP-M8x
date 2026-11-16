@@ -126,7 +126,9 @@ class TrackerBridge {
       for (let tick = startTick; tick < 128; tick++) {
         const item = table.steps[pageIndex * 128 + tick];
         if (!item) break;
-        const offset = (tick - startTick) * stepDuration / 8;
+        const microOffset = typeof item.subTickOffset === 'number' && Number.isFinite(item.subTickOffset)
+          ? Math.max(-4, Math.min(4, item.subTickOffset)) : 0;
+        const offset = ((tick - startTick) + microOffset / 8) * stepDuration / 8;
         const fx = item.reset ? { code: 'OFF' as const } : item.fx ? { code: item.fx, value: item.fxValue } : undefined;
         if (item.pitch !== null || item.volume !== null || fx) {
           modulation.push({

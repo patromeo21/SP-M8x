@@ -99,7 +99,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
       ? Math.min(index + 1, slots[selectedPadId].sliceMarkers.length - 1) : undefined;
     const source = slice !== undefined ? selectedPadId : padPlayMode === 'CHROMATIC_16' ? selectedPadId : padId;
     const pitch = padPlayMode === 'CHROMATIC_16' ? chromaticOffset(index, chromaticRootOffset) : 0;
-    activePointers.current.set(event.pointerId, { padId, release: triggerPad(source, undefined, pitch, event.timeStamp, slice) });
+    activePointers.current.set(event.pointerId, { padId, release: triggerPad(source, undefined, pitch, event.timeStamp, slice, sliActive) });
     syncPressed();
   };
 

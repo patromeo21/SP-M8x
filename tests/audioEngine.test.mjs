@@ -192,6 +192,15 @@ test('preallocated voices reset FX without stopping dry audio and steal the olde
   assert.equal(audioEngine.activeVoices.get(oneShot).source.stopTime, undefined);
   assert.equal(audioEngine.activeVoices.get(future).source.stopTime, 100, 'STOP cancels queued gated notes immediately');
 
+  const sameTrackGate = audioEngine.triggerPad('A1', { gated: true, trackIndex: 2 });
+  const differentTrackGate = audioEngine.triggerPad('A2', { gated: true, trackIndex: 3 });
+  const replacementGate = audioEngine.triggerPad('A2', { gated: true, trackIndex: 2 });
+  assert.equal(audioEngine.activeVoices.get(sameTrackGate).source.stopTime, 100.004,
+    'a gate on another pad replaces the previous gate on the same track');
+  assert.equal(audioEngine.activeVoices.get(differentTrackGate).source.stopTime, undefined,
+    'gate replacement never bleeds across tracks');
+  assert.equal(audioEngine.activeVoices.get(replacementGate).source.stopTime, undefined);
+
   const chokeOld = audioEngine.triggerPad('A1', { chokeGroup: 3 });
   const chokeFuture = audioEngine.triggerPad('A2', { chokeGroup: 3, scheduledTime: 101 });
   const chokeNew = audioEngine.triggerPad('A1', { chokeGroup: 3, scheduledTime: 100.5 });

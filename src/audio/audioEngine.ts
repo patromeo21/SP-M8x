@@ -233,6 +233,15 @@ class AudioEngine {
 
     let targetGainTime = Math.max(options.scheduledTime ?? context.currentTime, context.currentTime);
     const chokeGroup = options.chokeGroup ?? null;
+    if (options.gated) {
+      for (const [voiceId, voice] of this.activeVoices) {
+        if (voice.gated && voice.trackIndex === trackIndex && voice.startTime <= targetGainTime &&
+            voice.slot.generationId === voice.generationId &&
+            (voice.stopTime === undefined || voice.stopTime > targetGainTime)) {
+          this.stopVoiceAt(voiceId, targetGainTime, 0.004, true);
+        }
+      }
+    }
     if (chokeGroup !== null) {
       for (const [voiceId, voice] of this.activeVoices) {
         if (voice.chokeGroup === chokeGroup && (!options.chokeTrackRange ||

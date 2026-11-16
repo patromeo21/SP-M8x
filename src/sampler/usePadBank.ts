@@ -48,7 +48,7 @@ export interface PadBankApi {
   generateSliceMarkers: (padId: string, count: number) => Promise<void>;
   copyPad: (sourceId: string, destinationId: string) => Promise<void>;
   deletePads: (padIds: string[]) => Promise<void>;
-  triggerPad: (padId: string, onTriggered?: (time: number) => number | void, semitoneOffset?: number, pointerTime?: number, sliceIndex?: number) => (pointerTime?: number) => void;
+  triggerPad: (padId: string, onTriggered?: (time: number) => number | void, semitoneOffset?: number, pointerTime?: number, sliceIndex?: number, playThrough?: boolean) => (pointerTime?: number) => void;
   preparePads: (padIds: string[]) => Promise<void>;
   getPadSettings: (padId: string) => PadSlot | undefined;
   stopAll: () => void;
@@ -383,7 +383,7 @@ export function usePadBank(): PadBankApi {
     }
   }, [storageReady, stopLoop]);
 
-  const triggerPad = useCallback((padId: string, onTriggered?: (time: number) => number | void, semitoneOffset = 0, _pointerTime?: number, sliceIndex?: number) => {
+  const triggerPad = useCallback((padId: string, onTriggered?: (time: number) => number | void, semitoneOffset = 0, _pointerTime?: number, sliceIndex?: number, playThrough = false) => {
     setSelectedPadId(padId);
     const noop = () => {};
     const audioReady = audioEngine.initialize();
@@ -426,7 +426,7 @@ export function usePadBank(): PadBankApi {
       const { start, end } = range;
       const voiceId = audioEngine.triggerPad(padId, {
         sliceStart: start / buffer.sampleRate,
-        sliceEnd: end / buffer.sampleRate,
+        sliceEnd: (playThrough && resolvedSlice !== undefined ? buffer.length : end) / buffer.sampleRate,
         semitoneOffset: current.pitch + semitoneOffset,
         loop: mode === 'loop',
         gated: mode === 'gate',
