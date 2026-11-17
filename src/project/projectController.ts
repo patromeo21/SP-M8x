@@ -3,6 +3,8 @@
  * projectController.ts — Single Source of Truth for Global State & Hybrid Persistence
  */
 
+import { UndoRedoStack, type UndoableProjectData } from './undoStack';
+
 export type BankId = 'A' | 'B' | 'C' | 'D';
 
 export interface PadProjectData {
@@ -248,6 +250,7 @@ class ProjectController {
   private saveFailed = false;
   private readOnly = false;
   private migrationBackup: string | null = null;
+  private undoStack = new UndoRedoStack(16);
 
   constructor() {
     this.state = this.getDefaultState();
@@ -268,6 +271,8 @@ class ProjectController {
       this.saveFailed = true;
       this.freezeState(this.state);
       console.error('[ProjectController] Failed to load project; using read-only defaults:', e);
+    } finally {
+      this.undoStack.seed(this.state);
     }
   }
 
@@ -369,9 +374,45 @@ class ProjectController {
     return () => this.listeners.delete(listener);
   }
 
-  private notify(): void {
+  private notify(recordHistory = true): void {
+    if (recordHistory) this.undoStack.push(this.state);
     this.saveToLocalStorage(); // Auto-save on every state change
     this.listeners.forEach((listener) => listener(this.state));
+  }
+
+  private restoreSnapshot(snapshot: UndoableProjectData): void {
+    const patterns = snapshot.tracker.patterns;
+    const candidate: ProjectState = {
+      ...this.state,
+      settings: {
+        ...this.state.settings,
+        bpm: snapshot.settings.bpm,
+        activePatternIndex: Math.max(0, Math.min(snapshot.settings.activePatternIndex, patterns.length - 1)),
+      },
+      tracker: { patterns, tables: snapshot.tracker.tables },
+    };
+    migrateProject(candidate); // Validates before anything is replaced.
+    this.state = candidate;
+  }
+
+  public undo(): boolean {
+    if (this.readOnly || !this.undoStack.undo((snapshot) => this.restoreSnapshot(snapshot))) return false;
+    this.notify(false);
+    return true;
+  }
+
+  public redo(): boolean {
+    if (this.readOnly || !this.undoStack.redo((snapshot) => this.restoreSnapshot(snapshot))) return false;
+    this.notify(false);
+    return true;
+  }
+
+  public canUndo(): boolean {
+    return !this.readOnly && this.undoStack.canUndo();
+  }
+
+  public canRedo(): boolean {
+    return !this.readOnly && this.undoStack.canRedo();
   }
 
   public setBpm(bpm: number): void {
@@ -628,7 +669,8 @@ class ProjectController {
     }
     if (migrated && this.migrationBackup === null) this.migrationBackup = original;
     this.state = imported;
-    this.notify();
+    this.undoStack.seed(this.state);
+    this.notify(false);
     console.log('[ProjectController] Project successfully imported and state updated.');
   }
 }
