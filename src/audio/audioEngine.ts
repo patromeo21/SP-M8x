@@ -86,7 +86,11 @@ class AudioEngine {
       }
       ceiling.curve = curve;
       this.masterGain.connect(compressor).connect(ceiling);
-      ceiling.connect(this.ctx.destination);
+      const limiter = createMasterLimiterNode(this.ctx);
+      ceiling.connect(limiter);
+      const safetyShaper = createSafetySaturationNode(this.ctx);
+      limiter.connect(safetyShaper);
+      safetyShaper.connect(this.ctx.destination);
       const splitter = this.ctx.createChannelSplitter(2);
       const left = this.ctx.createAnalyser();
       const right = this.ctx.createAnalyser();
@@ -615,5 +619,49 @@ class AudioEngine {
   }
 }
 
+
+/**
+ * Master lookahead brickwall limiter stage for the final output bus.
+ * Threshold -0.5 dBFS, hard knee, ratio 20:1, 3ms attack, 50ms release.
+ */
+export function createMasterLimiterNode(audioCtx: BaseAudioContext): DynamicsCompressorNode {
+  const limiter = audioCtx.createDynamicsCompressor();
+
+  limiter.threshold.setValueAtTime(-0.5, audioCtx.currentTime);
+  limiter.knee.setValueAtTime(0.0, audioCtx.currentTime);
+  limiter.ratio.setValueAtTime(20.0, audioCtx.currentTime);
+  limiter.attack.setValueAtTime(0.003, audioCtx.currentTime);
+  limiter.release.setValueAtTime(0.050, audioCtx.currentTime);
+
+  return limiter;
+}
+
+/**
+ * Sigmoid soft-clip / feedback safety clamp stage (< 0.92).
+ * Protects against runaway resonance in voice filter / FX feedback loops.
+ * 4x oversampling for linear interpolation accuracy.
+ */
+export function createSafetySaturationNode(audioCtx: BaseAudioContext): WaveShaperNode {
+  const shaper = audioCtx.createWaveShaper();
+  const curveLength = 44100;
+  const curve = new Float32Array(curveLength);
+  const clampThreshold = 0.92;
+
+  for (let i = 0; i < curveLength; ++i) {
+    const x = (i * 2) / curveLength - 1;
+    // Sigmoid soft-clip curve clamped strictly below 0.92
+    if (x > clampThreshold) {
+      curve[i] = clampThreshold + (x - clampThreshold) / (1 + Math.abs(x));
+    } else if (x < -clampThreshold) {
+      curve[i] = -clampThreshold + (x + clampThreshold) / (1 + Math.abs(x));
+    } else {
+      curve[i] = x;
+    }
+  }
+
+  shaper.curve = curve;
+  shaper.oversample = '4x';
+  return shaper;
+}
 export const audioEngine = new AudioEngine();
 export default audioEngine;

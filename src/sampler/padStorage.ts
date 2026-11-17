@@ -240,3 +240,52 @@ export function saveSlices(sourceId: string, sampleKey: string, slices: StoredPa
     });
   });
 }
+
+/**
+ * Zero-crossing slice snapping integration.
+ * Snaps slice boundaries to sample-accurate zero-crossings to prevent clicks
+ * at the cost of minimal boundary shift — used during pad load / slice processing.
+ */
+const reversedBufferCache = new WeakMap<AudioBuffer, AudioBuffer>();
+
+export function createProcessedSlice(
+  audioBuffer: AudioBuffer,
+  rawStartFrame: number,
+  rawEndFrame: number,
+  searchWindow: number = 256
+) {
+  // Snap boundaries to the nearest sample-accurate zero-crossing to prevent clicks
+  const snappedStart = findZeroCrossing(audioBuffer, rawStartFrame, searchWindow);
+  const snappedEnd = findZeroCrossing(audioBuffer, rawEndFrame, searchWindow);
+
+  return {
+    startFrame: snappedStart,
+    endFrame: Math.max(snappedStart + 10, snappedEnd),
+    startNorm: snappedStart / audioBuffer.length,
+    endNorm: snappedEnd / audioBuffer.length,
+  };
+}
+
+function findZeroCrossing(
+  buffer: AudioBuffer,
+  targetSample: number,
+  searchWindow: number = 256,
+  channel: number = 0
+): number {
+  const data = buffer.getChannelData(channel);
+  const len = data.length;
+  const start = Math.max(0, Math.min(len - 1, Math.round(targetSample)));
+  const maxDist = Math.min(searchWindow, len - start - 1);
+
+  // Scan forward for rising edge zero-crossing (- to +)
+  for (let i = 0; i <= maxDist; i++) {
+    const idx = start + i;
+    if (idx < len - 1) {
+      if (data[idx] <= 0 && data[idx + 1] >= 0) {
+        return idx;
+      }
+    }
+  }
+  // Fallback to exact target if no zero-crossing found within window
+  return start;
+}

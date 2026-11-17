@@ -105,3 +105,40 @@ export class VoiceFxPool {
     slot.wetGain.gain.setTargetAtTime(value, time, 0.005);
   }
 }
+
+/**
+ * Bipolar LPF/HPF parameter ramp with de-zippering AudioParam ramps.
+ * Maps -1.0 (full lowpass) to +1.0 (full highpass), 0.0 = bypass/neutral.
+ * Safe for voice filter application during performance playback.
+ */
+export function applyVoiceFilter(
+  filterNode: BiquadFilterNode,
+  audioCtx: BaseAudioContext,
+  bipolarValue: number,
+  resonance: number = 1.0,
+  time: number = audioCtx.currentTime
+) {
+  const rampTime = 0.015; // 15ms de-zippering ramp
+
+  if (Math.abs(bipolarValue) < 0.01) {
+    // Neutral: set to lowpass at max frequency (open filter)
+    filterNode.type = 'lowpass';
+    filterNode.frequency.setTargetAtTime(20000, time, rampTime);
+    filterNode.Q.setTargetAtTime(1.0, time, rampTime);
+    return;
+  }
+
+  if (bipolarValue < 0) {
+    // Negative range (-1 to 0): Lowpass sweep from 20Hz to 20,000Hz
+    filterNode.type = 'lowpass';
+    const cutoff = 20 + Math.pow(1 + bipolarValue, 2) * 19980;
+    filterNode.frequency.setTargetAtTime(Math.max(20, Math.min(20000, cutoff)), time, rampTime);
+  } else {
+    // Positive range (0 to +1): Highpass sweep from 20Hz to 10,000Hz
+    filterNode.type = 'highpass';
+    const cutoff = 20 + Math.pow(bipolarValue, 2) * 9980;
+    filterNode.frequency.setTargetAtTime(Math.max(20, Math.min(10000, cutoff)), time, rampTime);
+  }
+
+  filterNode.Q.setTargetAtTime(Math.max(0.1, Math.min(20.0, resonance)), time, rampTime);
+}
