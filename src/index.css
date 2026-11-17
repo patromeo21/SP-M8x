@@ -869,6 +869,8 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   font-family: var(--m8-font-mono);
   font-variant-numeric: tabular-nums;
   transition: background-color 60ms ease, border-color 60ms ease, color 60ms ease;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 /* 4. Brighten cells that contain active note/FX/parameter data (not '--' or empty) */

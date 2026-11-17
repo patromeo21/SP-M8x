@@ -115,13 +115,15 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, tran
               {hexStep(index)}
             </button>
             <select aria-label={`Phrase note step ${index + 1}`} className={fieldClass} value={step.note || '---'}
-              disabled={!padId} onChange={(event) => projectController.updateStep(patternIndex, index, { note: event.target.value }, trackIndex)}>
+              disabled={!padId} onChange={(event) => projectController.updateStep(patternIndex, index, { note: event.target.value }, trackIndex)}
+              data-filled={step.note && step.note !== '---' ? 'true' : undefined}>
               <option value="---">---</option>
               {Array.from({ length: 72 }, (_, i) => noteName(i + 24)).map((note) => <option key={note} value={note}>{note}</option>)}
               <option value="OFF">OFF</option>
             </select>
             <select aria-label={`Phrase instrument step ${index + 1}`} className={fieldClass}
               value={padId ?? ''} disabled={transportBusy}
+              data-filled={padId !== null ? 'true' : undefined}
               onChange={(event) => projectController.updateStep(patternIndex, index, {
                 instrumentId: event.target.value ? padIdToInstrumentId(event.target.value) : null,
                 note: event.target.value ? (step.note && step.note !== '---' ? step.note : 'C-4') : '---',
@@ -129,7 +131,7 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, tran
               <option value="">---</option>
               {pads.map((pad) => <option key={pad.id} value={pad.id}>{pad.id}</option>)}
             </select>
-            <label className="phrase-inline-volume">
+            <label className={`phrase-inline-volume ${occupied ? 'has-value' : ''}`}>
               <input aria-label={`Phrase volume step ${index + 1}`} type="range" min="0" max="127"
                 value={step.velocity ?? 127} disabled={!padId}
                 onChange={(event) => projectController.updateStep(patternIndex, index, { velocity: Number(event.target.value) }, trackIndex)} />
@@ -137,11 +139,13 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, tran
             </label>
             <select aria-label={`Phrase FX step ${index + 1}`} className={fieldClass}
               value={step.fx ?? 'OFF'} disabled={!padId}
+              data-filled={step.fx !== 'OFF' ? 'true' : undefined}
               onChange={(event) => projectController.updateStep(patternIndex, index, { fx: event.target.value }, trackIndex)}>
               <option value="OFF">OFF</option><option value="FL">FL</option><option value="DR">DR</option><option value="DL">DL</option>
             </select>
             <select aria-label={`Phrase table step ${index + 1}`} className={fieldClass}
               value={step.tableId ?? ''} disabled={!padId}
+              data-filled={step.tableId !== null ? 'true' : undefined}
               onChange={(event) => projectController.updateStep(patternIndex, index, {
                 tableId: event.target.value ? Number(event.target.value) : null,
               }, trackIndex)}>
