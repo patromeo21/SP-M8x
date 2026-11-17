@@ -1,3 +1,55 @@
+/* ==========================================================================
+   SP-M8x GLOBAL INDUSTRIAL HARDWARE THEME (Dirtywave M8 / SP-404 Aesthetic)
+   ========================================================================== */
+:root {
+  /* Core Surfaces */
+  --m8-bg-chassis: #0b0d10;
+  --m8-bg-panel: #0d0f12;
+  --m8-bg-header: #14181e;
+  --m8-bg-cell: #13171d;
+  --m8-bg-cell-active: #1b2430;
+  --m8-bg-control: #1c222b;
+
+  /* Borders */
+  --m8-border-subtle: #222832;
+  --m8-border-panel: #252b34;
+  --m8-border-strong: #303846;
+
+  /* Typography */
+  --m8-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --m8-text-primary: #f1f5f9;
+  --m8-text-secondary: #cbd5e1;
+  --m8-text-muted: #7c8799;
+  --m8-text-dim: #4b5565;
+
+  /* Hardware LED & Accent Colors */
+  --m8-accent-orange: #ff6b2b;
+  --m8-accent-cyan: #38bdf8;
+  --m8-accent-green: #38e58c;
+  --m8-accent-amber: #fbbf24;
+  --m8-accent-red: #ef4444;
+}
+
+/* Global Chassis & iPad 9th Gen Touch Baseline */
+html,
+body,
+#root,
+.app-shell {
+  background-color: var(--m8-bg-chassis);
+  color: var(--m8-text-primary);
+  font-family: var(--m8-font-mono);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+  box-sizing: border-box;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: inherit;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -683,4 +735,101 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   color: #bbf7d0;
   background: #052e16;
   box-shadow: 0 0 8px rgba(74,222,128,0.35);
+}
+
+/* ==========================================================================
+   UNIFIED HARDWARE PANELS, BUTTONS, & VERTICAL SEQUENCER CELLS
+   ========================================================================== */
+
+/* 1. Every top-level module panel gets the Song View chassis border & surface */
+.app-shell section,
+.phrase-panel,
+.table-panel,
+.pad-bank-panel,
+.transport-bar,
+.phrase-table-container {
+  background: var(--m8-bg-panel);
+  border: 1px solid var(--m8-border-panel);
+  border-radius: 6px;
+  color: var(--m8-text-primary);
+  font-family: var(--m8-font-mono);
+}
+
+/* 2. Unified Hardware Utility & Mode Buttons (44px iPad touch safe) */
+.app-shell button {
+  font-family: var(--m8-font-mono);
+  letter-spacing: 0.05em;
+  border-radius: 4px;
+  transition: background-color 80ms ease, border-color 80ms ease, color 80ms ease;
+}
+
+/* 3. Unify Phrase & Table Rows/Cells with Song View Grid Styling */
+.phrase-grid-scroll,
+.table-grid-scroll {
+  background: var(--m8-bg-panel);
+  font-family: var(--m8-font-mono);
+}
+
+.phrase-grid-header,
+.table-grid-header {
+  background: var(--m8-bg-header);
+  border-bottom: 1px solid var(--m8-border-panel);
+  color: var(--m8-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.phrase-row,
+.table-row {
+  border-bottom: 1px solid var(--m8-border-subtle);
+  background: var(--m8-bg-cell);
+  min-height: 40px;
+}
+
+.phrase-row.is-playing,
+.table-row.is-playing,
+.phrase-row[data-playing="true"],
+.table-row[data-playing="true"] {
+  background: rgba(56, 229, 140, 0.12);
+  outline: 1px solid rgba(56, 229, 140, 0.45);
+}
+
+/* 4. Unify Pad Triggers with Hardware Bevel & Active Glow */
+.pad-trigger {
+  background: var(--m8-bg-control);
+  border: 1px solid var(--m8-border-strong);
+  border-radius: 6px;
+  color: var(--m8-text-primary);
+  font-family: var(--m8-font-mono);
+  font-weight: 700;
+}
+
+.pad-trigger:active,
+.pad-trigger.is-triggered,
+.pad-trigger[data-active="true"] {
+  background: var(--m8-bg-cell-active);
+  border-color: var(--m8-accent-orange);
+  box-shadow: inset 0 0 0 1px var(--m8-accent-orange), 0 0 10px rgba(255, 107, 43, 0.25);
+}
+
+/* 5. Custom Subtle Scrollbars for Vertical Grids on iPad Safari */
+.song-grid-scroll::-webkit-scrollbar,
+.phrase-grid-scroll::-webkit-scrollbar,
+.table-grid-scroll::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.song-grid-scroll::-webkit-scrollbar-track,
+.phrase-grid-scroll::-webkit-scrollbar-track,
+.table-grid-scroll::-webkit-scrollbar-track {
+  background: var(--m8-bg-chassis);
+}
+
+.song-grid-scroll::-webkit-scrollbar-thumb,
+.phrase-grid-scroll::-webkit-scrollbar-thumb,
+.table-grid-scroll::-webkit-scrollbar-thumb {
+  background: var(--m8-border-strong);
+  border-radius: 3px;
 }
