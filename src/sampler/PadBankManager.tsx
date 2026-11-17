@@ -182,7 +182,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
           </div>
         </div>
       </div>}
-      <div ref={gridRef} className="pad-grid grid grid-cols-4 gap-1.5 flex-1 min-h-0">
+      <div ref={gridRef} className="pad-grid grid grid-cols-4 gap-1.5 flex-1 min-h-0 aspect-square w-full max-h-full">
       {Array.from({ length: PADS_PER_BANK }, (_, i) => {
         const padId = `${activeBank}${i + 1}`;
         const isSlice = sliActive && padPlayMode === 'BANK_64' && i < 10 && !copying && !selecting;
