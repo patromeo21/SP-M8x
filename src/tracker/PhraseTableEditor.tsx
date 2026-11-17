@@ -4,7 +4,7 @@ import type { PadSlot } from '../sampler/usePadBank';
 import { trackerBridge } from './trackerBridge';
 import { instrumentIdToPadId, padIdToInstrumentId } from '../sampler/padIds';
 
-const fieldClass = 'tracker-cell-control bg-zinc-950 border border-zinc-700 text-zinc-100';
+const fieldClass = 'phrase-cell-control bg-zinc-950 border border-zinc-700 text-zinc-100';
 const buttonClass = 'border border-zinc-700 px-2 py-1 text-zinc-300';
 const notes = ['C-', 'C#', 'D-', 'D#', 'E-', 'F-', 'F#', 'G-', 'G#', 'A-', 'A#', 'B-'];
 const noteName = (midi: number) => `${notes[midi % 12]}${Math.floor(midi / 12) - 1}`;
@@ -30,8 +30,8 @@ export function PhraseTableEditor({ slots, activeStep, transportBusy, mode, queu
   if (!pattern) return <p role="alert">Active phrase is unavailable.</p>;
 
   return (
-    <section className="tracker-editor flex-1 min-h-0 flex flex-col gap-2 p-3 bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl font-mono text-xs">
-      <div className="tracker-editor-toolbar flex items-center gap-2">
+    <section className={`${mode === 'phrase' ? 'phrase-panel' : 'table-panel'} flex-1 min-h-0 flex flex-col gap-2 p-3 bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl font-mono text-xs`}>
+      <div className="phrase-toolbar flex items-center gap-2">
         <label className="control-block">TRK <select aria-label="Phrase track" className={fieldClass} value={trackIndex}
           onChange={(event) => setTrackIndex(Number(event.target.value))}>
           {Array.from({ length: 8 }, (_, index) => <option key={index} value={index}>{index + 1}</option>)}
@@ -96,8 +96,8 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, tran
   };
 
   return (
-    <div className="tracker-sequencer-list phrase-sequencer-list flex-1 min-h-0" aria-label="Vertical phrase steps">
-      <div className="tracker-sequencer-header phrase-sequencer-grid">
+    <div className="phrase-grid-scroll phrase-sequencer-list flex-1 min-h-0" aria-label="Vertical phrase steps">
+      <div className="phrase-grid-header phrase-sequencer-grid">
         <span>STEP</span><span>NOTE</span><span>INST</span><span>VOL</span><span>FX</span><span>TBL</span>
       </div>
       {steps.slice(page * 16, page * 16 + 16).map((step, row) => {
@@ -106,12 +106,12 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, tran
         const active = padId !== null && step.note !== '---' && step.note !== 'OFF';
         const occupied = Boolean(step.instrumentId !== null || (step.note && step.note !== '---'));
         return (
-          <div className={`tracker-sequencer-row phrase-sequencer-grid ${activeStep === index ? 'is-playing' : ''}`}
+          <div className={`phrase-row phrase-sequencer-grid ${activeStep === index ? 'is-playing' : ''}`}
             key={index} data-step={hexStep(index)}>
             <button type="button" aria-label={`Phrase step ${index + 1}`} aria-pressed={active}
               disabled={transportBusy && !occupied}
               onClick={() => toggleStep(index)}
-              className={`tracker-step-toggle ${active ? 'is-active' : ''}`}>
+              className={`phrase-step-toggle ${active ? 'is-active' : ''}`}>
               {hexStep(index)}
             </button>
             <select aria-label={`Phrase note step ${index + 1}`} className={fieldClass} value={step.note || '---'}
@@ -129,7 +129,7 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, tran
               <option value="">---</option>
               {pads.map((pad) => <option key={pad.id} value={pad.id}>{pad.id}</option>)}
             </select>
-            <label className="tracker-inline-volume">
+            <label className="phrase-inline-volume">
               <input aria-label={`Phrase volume step ${index + 1}`} type="range" min="0" max="127"
                 value={step.velocity ?? 127} disabled={!padId}
                 onChange={(event) => projectController.updateStep(patternIndex, index, { velocity: Number(event.target.value) }, trackIndex)} />
@@ -151,7 +151,7 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, tran
           </div>
         );
       })}
-      <div className="tracker-page-controls">
+      <div className="phrase-page-controls">
         {Array.from({ length: pageCount }, (_, index) => <button key={index} type="button"
           className={`${buttonClass} ${page === index ? 'border-cyan-400 text-cyan-300' : ''}`}
           aria-label={`Phrase page ${index + 1}${activeStep >= index * 16 && activeStep < (index + 1) * 16 ? ', playing' : ''}`}
@@ -186,24 +186,24 @@ function TableRows({ table, playing }: { table: TrackerTable; playing: boolean }
   }, [pageGroup, playing, table.id]);
 
   return (
-    <div className="tracker-sequencer-list table-sequencer-list flex-1 min-h-0" aria-label="Vertical table ticks">
-      <div className="tracker-page-controls">
+    <div className="table-grid-scroll table-sequencer-list flex-1 min-h-0" aria-label="Vertical table ticks">
+      <div className="table-page-controls">
         <label className="control-block">PAGE <select aria-label="Table page" className={fieldClass}
           value={page} onChange={(event) => setPage(Number(event.target.value))}>
           {Array.from({ length: pageCount }, (_, index) => <option key={index} value={index}>{index + 1} · {hexStep(index * 16)}-{hexStep(index * 16 + 15)}</option>)}
         </select></label>
         <span className="text-zinc-400">TICKS {page * 16 + 1}-{Math.min((page + 1) * 16, table.steps.length)}</span>
       </div>
-      <div className="tracker-sequencer-header table-sequencer-grid">
+      <div className="table-grid-header table-sequencer-grid">
         <span>TICK</span><span>PITCH</span><span>FX</span><span>MICRO-TIMING</span>
       </div>
       {table.steps.slice(page * 16, page * 16 + 16).map((step, row) => {
         const index = page * 16 + row;
         const tickInGroup = page % 8 * 16 + row;
         return (
-          <div className={`tracker-sequencer-row table-sequencer-grid ${playingTicks.includes(tickInGroup) ? 'is-playing' : ''}`}
+          <div className={`table-row table-sequencer-grid ${playingTicks.includes(tickInGroup) ? 'is-playing' : ''}`}
             key={index} data-tick={hexStep(row)}>
-            <span className="tracker-step-address">{hexStep(row)} <small>/{String(index + 1).padStart(3, '0')}</small></span>
+            <span className="table-step-address">{hexStep(row)} <small>/{String(index + 1).padStart(3, '0')}</small></span>
             <select aria-label={`Table pitch tick ${index + 1}`} className={fieldClass}
               value={step.pitch ?? ''} onChange={(event) => projectController.updateTableStep(table.id, index, {
                 pitch: event.target.value === '' ? null : Number(event.target.value),

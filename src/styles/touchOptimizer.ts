@@ -24,7 +24,7 @@ export function applyTouchOptimizations(): void {
     }
 
     /* Ensure all interactive pads, buttons, and tracker grids capture pointer events instantly without tap highlights */
-    button, input, canvas, [role="button"], .tracker-cell {
+    button, input, canvas, [role="button"], .phrase-cell-control {
       touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
       user-select: none;
