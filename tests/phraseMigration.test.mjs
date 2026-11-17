@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import ts from 'typescript';
+import { inlineUndoStack } from './helpers/inlineUndoStack.mjs';
 
 test('legacy 64-step phrases split without losing notes, tables, or active selection', async () => {
   const steps = Array.from({ length: 64 }, (_, index) => ({
@@ -22,8 +23,8 @@ test('legacy 64-step phrases split without losing notes, tables, or active selec
   globalThis.window = {};
   globalThis.localStorage = { getItem: (key) => store.get(key) ?? null, setItem: (key, value) => store.set(key, value) };
   try {
-    const source = ts.transpileModule(await readFile(new URL('../src/project/projectController.ts', import.meta.url), 'utf8'),
-      { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+    const source = inlineUndoStack(ts.transpileModule(await readFile(new URL('../src/project/projectController.ts', import.meta.url), 'utf8'),
+      { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText);
     const url = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
     const { projectController } = await import(url);
     const state = projectController.getState();
@@ -64,8 +65,8 @@ test('different existing backups survive and each migrated original gets a separ
   globalThis.window = {};
   globalThis.localStorage = { getItem: (key) => store.get(key) ?? null, setItem: (key, value) => store.set(key, value) };
   try {
-    const source = ts.transpileModule(await readFile(new URL('../src/project/projectController.ts', import.meta.url), 'utf8'),
-      { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+    const source = inlineUndoStack(ts.transpileModule(await readFile(new URL('../src/project/projectController.ts', import.meta.url), 'utf8'),
+      { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText);
     const url = (suffix) => `data:text/javascript;base64,${Buffer.from(`${source}\n// ${suffix}`).toString('base64')}`;
     const { projectController } = await import(url('existing backup'));
     assert.deepEqual(projectController.getState().settings.trackVolumes, legacy.settings.trackVolumes);
@@ -89,8 +90,8 @@ test('load failures keep a frozen read-only default and never overwrite storage'
     sampler: { pads: {} },
     tracker: { patterns: [{ id: 1, name: 'Old', steps: [{ note: 'C-4', sampleId: 'X99' }] }] },
   });
-  const source = ts.transpileModule(await readFile(new URL('../src/project/projectController.ts', import.meta.url), 'utf8'),
-    { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const source = inlineUndoStack(ts.transpileModule(await readFile(new URL('../src/project/projectController.ts', import.meta.url), 'utf8'),
+    { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText);
   const url = (suffix) => `data:text/javascript;base64,${Buffer.from(`${source}\n// ${suffix}`).toString('base64')}`;
   const log = console.error;
   const errors = [];
@@ -155,8 +156,8 @@ test('a failed migration backup prevents overwriting the original project and re
   const log = console.error;
   console.error = () => {};
   try {
-    const source = ts.transpileModule(await readFile(new URL('../src/project/projectController.ts', import.meta.url), 'utf8'),
-      { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+    const source = inlineUndoStack(ts.transpileModule(await readFile(new URL('../src/project/projectController.ts', import.meta.url), 'utf8'),
+      { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText);
     const url = `data:text/javascript;base64,${Buffer.from(`${source}\n// backup failure`).toString('base64')}`;
     const { projectController } = await import(url);
     assert.equal(projectController.hasSaveError(), true);

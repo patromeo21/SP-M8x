@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import ts from 'typescript';
+import { inlineUndoStack } from './helpers/inlineUndoStack.mjs';
 
 test('recording spills and wraps, retriggers exactly, and never overwrites occupied cells', async () => {
   const store = new Map();
@@ -12,8 +13,8 @@ test('recording spills and wraps, retriggers exactly, and never overwrites occup
     setItem: (key, value) => { writes++; store.set(key, value); },
   };
   try {
-    const source = ts.transpileModule(await readFile(new URL('../src/project/projectController.ts', import.meta.url), 'utf8'),
-      { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+    const source = inlineUndoStack(ts.transpileModule(await readFile(new URL('../src/project/projectController.ts', import.meta.url), 'utf8'),
+      { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText);
     const url = (suffix) => `data:text/javascript;base64,${Buffer.from(`${source}\n// ${suffix}`).toString('base64')}`;
     const { projectController: controller } = await import(url('record'));
     let notifications = 0;
