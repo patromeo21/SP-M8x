@@ -8,6 +8,7 @@ import { trackerEngine } from '../tracker/trackerEngine';
 import { trackerBridge } from '../tracker/trackerBridge';
 import { projectController } from '../project/projectController';
 import { PhraseTableEditor } from '../tracker/PhraseTableEditor';
+import { SongArrangementView } from '../tracker/SongArrangementView';
 import { chromaticNote } from '../sampler/chromatic';
 import { instrumentIdToPadId, padIdToInstrumentId } from '../sampler/padIds';
 
@@ -206,7 +207,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
             ? <SamplerWorkspace padBank={padBank} recorder={recorder} triggerPad={triggerPad} />
             : <section className="flex-1 p-4 bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl">
                 <h2 className="text-sm text-cyan-300 uppercase">{currentTab}</h2>
-                {currentTab === 'song' ? <p className="text-xs text-zinc-400 mt-2">Song arrangement is not yet implemented.</p> :
+                {currentTab === 'song' ? <SongArrangementView isPlaying={playing} currentStep={playing ? playhead : activeStep} /> :
                   <div className="flex gap-4 mt-4">
                     {(projectController.getState().settings.trackVolumes ?? Array.from({ length: 8 }, () => 1)).map((volume, index) =>
                       <label key={index} className="flex flex-col gap-2 text-xs">TRACK {index + 1}
