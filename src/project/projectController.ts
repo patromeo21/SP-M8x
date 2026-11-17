@@ -4,6 +4,7 @@
  */
 
 import { UndoRedoStack, type UndoableProjectData } from './undoStack';
+import { validateStepEvent, type StepEvent } from './stepModel';
 
 export type BankId = 'A' | 'B' | 'C' | 'D';
 
@@ -28,6 +29,7 @@ export interface TrackerStepItem {
   velocity?: number;
   tableId?: number | null;
   sliceIndex?: number;
+  events?: StepEvent[];
 }
 
 export interface TableStep {
@@ -126,6 +128,10 @@ function migrateStep(value: unknown): TrackerStepItem {
   }
   if (instrumentId !== null && (typeof instrumentId !== 'number' || !Number.isInteger(instrumentId) || instrumentId < 0 || instrumentId > 63)) {
     throw new Error('Invalid instrument ID.');
+  }
+  if (step.events !== undefined) {
+    if (!Array.isArray(step.events)) throw new Error('Invalid polyphonic step events.');
+    step.events.forEach((event) => validateStepEvent(event as StepEvent));
   }
   const { sampleId: _sampleId, ...rest } = step;
   return { ...rest, note: step.note, instrumentId: instrumentId as number | null };
