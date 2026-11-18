@@ -1,0 +1,43 @@
+/**
+ * ahdsr.ts — Pure AHDSR envelope scheduling onto an AudioParam.
+ * Kept free of Web Audio node imports so it can be unit tested directly.
+ */
+
+export interface AHDSRParams {
+  attackTime: number;   // seconds
+  holdTime: number;     // seconds
+  decayTime: number;    // seconds
+  sustainLevel: number; // 0.0 to 1.0
+  releaseTime: number;  // seconds
+}
+
+export function validateAHDSR(params: AHDSRParams): void {
+  if (!params || typeof params !== 'object') {
+    throw new Error('Invalid AHDSR envelope parameters.');
+  }
+  const finite = (v: number) => Number.isFinite(v) && v >= 0;
+  if (!finite(params.attackTime) || !finite(params.holdTime) || !finite(params.decayTime) || !finite(params.releaseTime) ||
+      !Number.isFinite(params.sustainLevel) || params.sustainLevel < 0 || params.sustainLevel > 1) {
+    throw new Error('Invalid AHDSR envelope parameters.');
+  }
+}
+
+/**
+ * Schedules Attack/Hold/Decay/Sustain onto a gain param using AudioParam automation.
+ * Peak is scaled by `peak`; the release stage is applied later when the voice is stopped.
+ */
+export function scheduleAHDSR(gainParam: AudioParam, startTime: number, peak: number, params: AHDSRParams): void {
+  validateAHDSR(params);
+  if (!Number.isFinite(startTime) || startTime < 0 || !Number.isFinite(peak) || peak < 0 || peak > 1) {
+    throw new Error('Invalid AHDSR start time or peak level.');
+  }
+  const attackEnd = startTime + Math.max(0.001, params.attackTime);
+  const holdEnd = attackEnd + params.holdTime;
+  const decayEnd = holdEnd + Math.max(0.001, params.decayTime);
+  const sustain = Math.max(0.0001, peak * params.sustainLevel);
+  gainParam.cancelScheduledValues(startTime);
+  gainParam.setValueAtTime(0.0001, startTime);
+  gainParam.linearRampToValueAtTime(peak, attackEnd);
+  if (params.holdTime > 0) gainParam.setValueAtTime(peak, holdEnd);
+  gainParam.linearRampToValueAtTime(sustain, decayEnd);
+}

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 export interface AudioWaveformCanvasProps {
   /** Audio buffer from the loaded sample */
@@ -20,12 +20,44 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
   isPlaying,
   playheadNorm,
   slicePoints,
+  onSliceChange,
   height = 128,
 }) => {
   const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const activeSliceHandleRef = useRef<'start' | 'end' | null>(null);
   const [mipmaps, setMipmaps] = useState<{ [res: number]: { min: Float32Array; max: Float32Array } } | null>(null);
   const workerRef = useRef<Worker | null>(null);
+
+  const getPointerPosition = (event: React.PointerEvent<HTMLDivElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    if (bounds.width <= 0) return 0;
+    return Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
+  };
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!slicePoints || !onSliceChange || event.button !== 0) return;
+    const position = getPointerPosition(event);
+    activeSliceHandleRef.current =
+      Math.abs(position - slicePoints.startNorm) <= Math.abs(position - slicePoints.endNorm) ? 'start' : 'end';
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  };
+
+  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const handle = activeSliceHandleRef.current;
+    if (!handle || !slicePoints || !onSliceChange) return;
+    const position = getPointerPosition(event);
+    if (handle === 'start') {
+      onSliceChange(Math.min(position, slicePoints.endNorm), slicePoints.endNorm);
+    } else {
+      onSliceChange(slicePoints.startNorm, Math.max(position, slicePoints.startNorm));
+    }
+  };
+
+  const handlePointerUp = () => {
+    activeSliceHandleRef.current = null;
+  };
 
   // 1. Initialize Worker & Compute Mipmaps on Buffer Load
   useEffect(() => {
@@ -33,6 +65,7 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
       setMipmaps(null);
       return;
     }
+    setMipmaps(null);
 
     // Instantiate worker via Vite worker import syntax
     workerRef.current = new Worker(
@@ -41,6 +74,7 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
     );
 
     const channelData = audioBuffer.getChannelData(0);
+    const channelDataCopy = channelData.slice();
     const workerId = Math.random().toString(36).substring(7);
 
     workerRef.current.onmessage = (e) => {
@@ -49,7 +83,10 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
       }
     };
 
-    workerRef.current.postMessage({ id: workerId, channelData }, [channelData.buffer]);
+    workerRef.current.postMessage(
+      { id: workerId, channelData: channelDataCopy },
+      [channelDataCopy.buffer],
+    );
 
     return () => {
       workerRef.current?.terminate();
@@ -163,7 +200,14 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
   }, []);
 
   return (
-    <div className="relative w-full rounded border border-[#222832] bg-[#13171d] overflow-hidden" style={{ height }}>
+    <div
+      className="relative w-full rounded border border-[#222832] bg-[#13171d] overflow-hidden"
+      style={{ height, touchAction: 'none' }}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+    >
       {/* Layer 1: Static Waveform */}
       <canvas
         ref={staticCanvasRef}

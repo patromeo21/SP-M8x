@@ -7,6 +7,8 @@ import { audioCache } from './audioCache';
 import { holdAudioParam, VoiceFxPool, type VoiceFxCommand, type VoiceFxSlot } from '../fx/VoiceFxPool';
 import { PerformanceDeck, type PerformanceFx } from '../fx/PerformanceDeck';
 import { MacroFxBus, type FxBus, type MacroFx } from '../fx/fxEngine';
+import { makeSafetyClampCurve, makeTapeSaturationCurve } from '../fx/dspMath';
+import { scheduleAHDSR, validateAHDSR, type AHDSRParams } from './ahdsr';
 
 declare global {
   interface Window {
@@ -32,6 +34,7 @@ export interface ActiveVoice {
   trackIndex: number;
   gated: boolean;
   chokeGroup: number | null;
+  envelope?: AHDSRParams;
 }
 
 export interface VoiceModulation {
@@ -71,23 +74,21 @@ class AudioEngine {
       this.ctx = new AudioContextClass({ latencyHint: 'interactive' });
       this.masterGain = this.ctx.createGain();
       this.masterGain.gain.setValueAtTime(this.masterVolume, this.ctx.currentTime);
-      const compressor = this.ctx.createDynamicsCompressor();
-      compressor.threshold.value = -6;
-      compressor.knee.value = 6;
-      compressor.ratio.value = 20;
-      compressor.attack.value = 0.003;
-      compressor.release.value = 0.15;
-      const ceiling = this.ctx.createWaveShaper();
-      const curve = new Float32Array(4097);
-      for (let i = 0; i < curve.length; i++) {
-        const x = 2 * i / (curve.length - 1) - 1;
-        const magnitude = Math.abs(x);
-        curve[i] = Math.sign(x) * (magnitude <= 0.8 ? magnitude : 0.8 + 0.18 * Math.tanh((magnitude - 0.8) / 0.18));
-      }
-      ceiling.curve = curve;
-      this.masterGain.connect(compressor).connect(ceiling);
+
+      // Module 2 master chain:
+      // masterGain -> glue compressor -> tape saturation -> hard limiter -> 0.92 safety clamp -> out
+      const glue = this.ctx.createDynamicsCompressor();
+      glue.threshold.value = -12;
+      glue.knee.value = 6;
+      glue.ratio.value = 4;
+      glue.attack.value = 0.003;
+      glue.release.value = 0.15;
+      const tape = this.ctx.createWaveShaper();
+      tape.curve = makeTapeSaturationCurve(3.5);
+      tape.oversample = '2x';
+      this.masterGain.connect(glue).connect(tape);
       const limiter = createMasterLimiterNode(this.ctx);
-      ceiling.connect(limiter);
+      tape.connect(limiter);
       const safetyShaper = createSafetySaturationNode(this.ctx);
       limiter.connect(safetyShaper);
       safetyShaper.connect(this.ctx.destination);
@@ -95,7 +96,7 @@ class AudioEngine {
       const left = this.ctx.createAnalyser();
       const right = this.ctx.createAnalyser();
       left.fftSize = right.fftSize = this.meterSamples.length;
-      ceiling.connect(splitter);
+      limiter.connect(splitter);
       splitter.connect(left, 0);
       splitter.connect(right, 1);
       this.outputMeters = [left, right];
@@ -221,6 +222,7 @@ class AudioEngine {
       padVolume?: number;
       chokeGroup?: number | null;
       chokeTrackRange?: { firstTrack: number; lastTrack: number };
+      envelope?: AHDSRParams;
     } = {},
   ): string | null {
     const context = this.ctx;
@@ -297,9 +299,14 @@ class AudioEngine {
 
     const voiceGain = slot.voiceGain;
     const volume = clamp(options.volume ?? 1, 0, 1);
-    voiceGain.gain.setValueAtTime(volume, targetGainTime);
-    const rateChanges: { time: number; rate: number }[] = [];
     const gainChanges = [{ time: targetGainTime, gain: volume }];
+    if (options.envelope) {
+      validateAHDSR(options.envelope);
+      scheduleAHDSR(voiceGain.gain, targetGainTime, volume, options.envelope);
+    } else {
+      voiceGain.gain.setValueAtTime(volume, targetGainTime);
+    }
+    const rateChanges: { time: number; rate: number }[] = [];
     if (options.fx) this.fxPool.apply(slot, options.fx, targetGainTime);
     for (const change of [...(options.modulation ?? [])].sort((a, b) => a.offset - b.offset)) {
       if (!Number.isFinite(change.offset) || change.offset < 0) continue;
@@ -335,6 +342,10 @@ class AudioEngine {
       options.gated ?? false,
       chokeGroup,
     );
+    if (voiceId && options.envelope) {
+      const voice = this.activeVoices.get(voiceId);
+      if (voice) voice.envelope = options.envelope;
+    }
     return voiceId;
   }
 
@@ -385,7 +396,9 @@ class AudioEngine {
     const stopTime = Math.max(context.currentTime, time);
     if (voice.stopTime !== undefined && voice.stopTime <= stopTime) return;
     if (voice.slot.generationId !== voice.generationId) return;
-    const fade = clamp(fadeSeconds, 0.001, 0.05);
+    const fade = voice.envelope
+      ? clamp(Math.max(voice.envelope.releaseTime, fadeSeconds), 0.005, 2)
+      : clamp(fadeSeconds, 0.001, 0.05);
     holdAudioParam(voice.gainNode.gain, stopTime);
     if (exponential) {
       if (voice.gainNode.gain.value <= 0) voice.gainNode.gain.setValueAtTime(0.0001, stopTime);
@@ -643,23 +656,7 @@ export function createMasterLimiterNode(audioCtx: BaseAudioContext): DynamicsCom
  */
 export function createSafetySaturationNode(audioCtx: BaseAudioContext): WaveShaperNode {
   const shaper = audioCtx.createWaveShaper();
-  const curveLength = 44100;
-  const curve = new Float32Array(curveLength);
-  const clampThreshold = 0.92;
-
-  for (let i = 0; i < curveLength; ++i) {
-    const x = (i * 2) / curveLength - 1;
-    // Sigmoid soft-clip curve clamped strictly below 0.92
-    if (x > clampThreshold) {
-      curve[i] = clampThreshold + (x - clampThreshold) / (1 + Math.abs(x));
-    } else if (x < -clampThreshold) {
-      curve[i] = -clampThreshold + (x + clampThreshold) / (1 + Math.abs(x));
-    } else {
-      curve[i] = x;
-    }
-  }
-
-  shaper.curve = curve;
+  shaper.curve = makeSafetyClampCurve();
   shaper.oversample = '4x';
   return shaper;
 }

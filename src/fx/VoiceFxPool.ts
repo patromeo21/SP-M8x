@@ -117,7 +117,13 @@ export function applyVoiceFilter(
   bipolarValue: number,
   resonance: number = 1.0,
   time: number = audioCtx.currentTime
-) {
+): void {
+  if (!Number.isFinite(bipolarValue) || !Number.isFinite(resonance) ||
+      !Number.isFinite(time) || time < 0) {
+    throw new RangeError('Voice filter value, resonance, and time must be finite.');
+  }
+  bipolarValue = Math.max(-1, Math.min(1, bipolarValue));
+  resonance = Math.max(0.1, Math.min(20, resonance));
   const rampTime = 0.015; // 15ms de-zippering ramp
 
   if (Math.abs(bipolarValue) < 0.01) {

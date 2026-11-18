@@ -26,25 +26,25 @@ self.onmessage = (e: MessageEvent<WaveformWorkerRequest>) => {
   const mipmaps: WaveformWorkerResponse['mipmaps'] = {};
 
   for (const res of resolutions) {
-    const blockSize = Math.max(1, Math.floor(channelData.length / res));
     const minArr = new Float32Array(res);
     const maxArr = new Float32Array(res);
 
     for (let i = 0; i < res; i++) {
-      let min = 1.0;
-      let max = -1.0;
-      const start = i * blockSize;
-      const end = Math.min(start + blockSize, channelData.length);
+      let min = Number.POSITIVE_INFINITY;
+      let max = Number.NEGATIVE_INFINITY;
+      const start = Math.floor(i * channelData.length / res);
+      const end = Math.floor((i + 1) * channelData.length / res);
 
       for (let j = start; j < end; j++) {
         const val = channelData[j];
-        if (val < min) min = val;
-        if (val > max) max = val;
+        if (Number.isFinite(val)) {
+          if (val < min) min = val;
+          if (val > max) max = val;
+        }
       }
 
-      // Replace absolute-zero sentinel with 0
-      minArr[i] = min === 1.0 ? 0 : min;
-      maxArr[i] = max === -1.0 ? 0 : max;
+      minArr[i] = Number.isFinite(min) ? min : 0;
+      maxArr[i] = Number.isFinite(max) ? max : 0;
     }
 
     mipmaps[res] = { min: minArr, max: maxArr };

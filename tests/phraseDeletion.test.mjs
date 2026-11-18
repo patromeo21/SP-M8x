@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import ts from 'typescript';
-import { inlineUndoStack } from './helpers/inlineUndoStack.mjs';
+import { inlineProjectModules } from './helpers/inlineProjectModules.mjs';
 
 test('batch deletion persists once, preserving effects and unselected notes', async () => {
   const saved = new Map();
@@ -13,7 +13,7 @@ test('batch deletion persists once, preserving effects and unselected notes', as
     setItem: (key, value) => { writes++; saved.set(key, value); },
   };
   try {
-    const source = inlineUndoStack(ts.transpileModule(
+    const source = inlineProjectModules(ts.transpileModule(
       await readFile(new URL('../src/project/projectController.ts', import.meta.url), 'utf8'),
       { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } },
     ).outputText);

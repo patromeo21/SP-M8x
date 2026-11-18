@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import ts from 'typescript';
+import { inlineProjectModules } from './helpers/inlineProjectModules.mjs';
 
 const compile = async (path) => ts.transpileModule(
   await readFile(new URL(path, import.meta.url), 'utf8'),
@@ -12,8 +13,7 @@ const dataUrl = (source) => `data:text/javascript;base64,${Buffer.from(source).t
 async function loadController(saved = new Map()) {
   globalThis.window = {};
   globalThis.localStorage = { getItem: (key) => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
-  const stackUrl = dataUrl(await compile('../src/project/undoStack.ts'));
-  const source = (await compile('../src/project/projectController.ts')).replace("'./undoStack'", `'${stackUrl}'`);
+  const source = inlineProjectModules(await compile('../src/project/projectController.ts'));
   return (await import(dataUrl(`${source}\n// ${Math.random()}`))).projectController;
 }
 

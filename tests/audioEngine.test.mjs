@@ -84,11 +84,15 @@ test('preallocated voices reset FX without stopping dry audio and steal the olde
   const poolUrl = asModuleUrl(await compile('../src/fx/VoiceFxPool.ts'));
   const deckUrl = asModuleUrl((await compile('../src/fx/PerformanceDeck.ts')).replace("'./VoiceFxPool'", `'${poolUrl}'`));
   const fxUrl = asModuleUrl((await compile('../src/fx/fxEngine.ts')).replace("'./VoiceFxPool'", `'${poolUrl}'`));
+  const dspUrl = asModuleUrl(await compile('../src/fx/dspMath.ts'));
+  const ahdsrUrl = asModuleUrl(await compile('../src/audio/ahdsr.ts'));
   const source = (await compile('../src/audio/audioEngine.ts'))
     .replace("'./audioCache'", `'${cacheUrl}'`)
+    .replace("'./ahdsr'", `'${ahdsrUrl}'`)
     .replace("'../fx/VoiceFxPool'", `'${poolUrl}'`)
     .replace("'../fx/PerformanceDeck'", `'${deckUrl}'`)
-    .replace("'../fx/fxEngine'", `'${fxUrl}'`);
+    .replace("'../fx/fxEngine'", `'${fxUrl}'`)
+    .replace("'../fx/dspMath'", `'${dspUrl}'`);
   const { audioEngine } = await import(asModuleUrl(source));
   await assert.rejects(audioEngine.initialize(), /resume blocked/);
   const context = audioEngine.getContext();

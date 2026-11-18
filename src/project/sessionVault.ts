@@ -8,7 +8,10 @@ export class SessionVault {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
       request.onerror = () => reject(request.error);
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => {
+        request.result.onversionchange = () => request.result.close();
+        resolve(request.result);
+      };
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
         if (!db.objectStoreNames.contains(PROJECT_STORE)) {
@@ -21,43 +24,68 @@ export class SessionVault {
     });
   }
 
+  private static async request<T>(
+    storeName: string,
+    mode: IDBTransactionMode,
+    createRequest: (store: IDBObjectStore) => IDBRequest<T>,
+  ): Promise<T> {
+    const db = await this.openDB();
+    return new Promise<T>((resolve, reject) => {
+      let settled = false;
+      const tx = db.transaction(storeName, mode);
+      const req = createRequest(tx.objectStore(storeName));
+      const fail = (error: DOMException | null) => {
+        if (settled) return;
+        settled = true;
+        db.close();
+        reject(error ?? new Error('IndexedDB transaction failed.'));
+      };
+
+      req.onerror = () => fail(req.error);
+      tx.onerror = () => fail(tx.error);
+      tx.onabort = () => fail(tx.error);
+      tx.oncomplete = () => {
+        if (settled) return;
+        settled = true;
+        const result = req.result;
+        db.close();
+        resolve(result);
+      };
+    });
+  }
+
   public static async saveProjectSession(projectId: string, projectJson: string): Promise<void> {
+    if (!projectId || typeof projectJson !== 'string') {
+      throw new TypeError('A project ID and serialized project are required.');
+    }
     try {
-      const db = await this.openDB();
-      const tx = db.transaction(PROJECT_STORE, 'readwrite');
-      const store = tx.objectStore(PROJECT_STORE);
-      await new Promise<void>((resolve, reject) => {
-        const req = store.put({ id: projectId, data: projectJson, updatedAt: Date.now() });
-        req.onsuccess = () => resolve();
-        req.onerror = () => reject(req.error);
-      });
-    } catch (err: any) {
-      if (err.name === 'QuotaExceededError') {
-        console.error('IndexedDB Quota Exceeded on iPad Safari! Freeing local cache...');
+      await this.request(PROJECT_STORE, 'readwrite', (store) =>
+        store.put({ id: projectId, data: projectJson, updatedAt: Date.now() }),
+      );
+    } catch (err) {
+      if (err instanceof Error && err.name === 'QuotaExceededError') {
+        console.error('IndexedDB quota exceeded while saving the project session.');
       }
       throw err;
     }
   }
 
   public static async storeSampleBlob(hash: string, wavBlob: Blob): Promise<void> {
-    const db = await this.openDB();
-    const tx = db.transaction(SAMPLE_STORE, 'readwrite');
-    const store = tx.objectStore(SAMPLE_STORE);
-    return new Promise((resolve, reject) => {
-      const req = store.put({ hash, blob: wavBlob });
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
-    });
+    if (!hash || !(wavBlob instanceof Blob)) {
+      throw new TypeError('A sample hash and Blob are required.');
+    }
+    await this.request(SAMPLE_STORE, 'readwrite', (store) =>
+      store.put({ hash, blob: wavBlob }),
+    );
   }
 
   public static async getSampleBlob(hash: string): Promise<Blob | null> {
-    const db = await this.openDB();
-    const tx = db.transaction(SAMPLE_STORE, 'readonly');
-    const store = tx.objectStore(SAMPLE_STORE);
-    return new Promise((resolve, reject) => {
-      const req = store.get(hash);
-      req.onsuccess = () => resolve(req.result ? req.result.blob : null);
-      req.onerror = () => reject(req.error);
-    });
+    if (!hash) throw new TypeError('A sample hash is required.');
+    const result = await this.request<{ hash: string; blob: Blob } | undefined>(
+      SAMPLE_STORE,
+      'readonly',
+      (store) => store.get(hash),
+    );
+    return result?.blob ?? null;
   }
 }
