@@ -2,6 +2,7 @@ import { trackerBridge } from './trackerBridge';
 import { audioEngine } from '../audio/audioEngine';
 import { rmxStepIndex, type FxBus, type RmxLength } from '../fx/fxEngine';
 import { projectController } from '../project/projectController';
+import { evaluateTrig } from './trigEvaluator';
 
 const LOOKAHEAD_SECONDS = 0.1;
 const TIMER_MS = 25;
@@ -21,6 +22,7 @@ export class TrackerEngine {
   private rmx: { bus: FxBus; length: RmxLength; anchor: number } | null = null;
   private segments: PatternSegment[] = [];
   private queuedPattern: number | null = null;
+  private fillActive = false;
   private displayedPattern: number | null = null;
   private onPattern?: (index: number) => void;
 
@@ -59,6 +61,7 @@ export class TrackerEngine {
     this.generation++;
     const wasPlaying = this.playing;
     this.playing = false;
+    this.fillActive = false;
     this.rmx = null;
     this.queuedPattern = null;
     if (this.timerId !== null) {
@@ -67,6 +70,10 @@ export class TrackerEngine {
     }
     trackerBridge.cancelPending();
     if (wasPlaying) this.onStopped?.(reason);
+  }
+
+  public setFillActive(active: boolean): void {
+    this.fillActive = active;
   }
 
   /** Nearest step plus signed eighth-step microtiming relative to the audio clock. */
@@ -151,12 +158,25 @@ export class TrackerEngine {
         const segment = this.segmentAt(this.nextStep);
         if (!segment) { this.stop('Phrase timeline is unavailable.'); return; }
         const localStep = this.nextStep - segment.startStep;
+        const pattern = projectController.getState().tracker.patterns[segment.patternIndex];
         const rmx = this.rmx;
+        const rmxStep = rmx
+          ? rmxStepIndex(localStep, Math.max(0, rmx.anchor - segment.startStep), segment.length, rmx.length)
+          : null;
+        const cycle = Math.floor(this.nextStep / BAR_STEPS);
+        const allowedTracks = new Set(pattern.tracks
+          .filter((track) => {
+            const trackStep = rmx && rmxStep !== null && track.id >= (rmx.bus === 'B' ? 4 : 0) &&
+              track.id <= (rmx.bus === 'A' ? 3 : 7) ? rmxStep : localStep % segment.length;
+            const trig = track.steps[trackStep]?.trig;
+            return !trig || evaluateTrig(trig, cycle, this.fillActive);
+          })
+          .map((track) => track.id));
         trackerBridge.scheduleStep(localStep % segment.length, stepTime, duration, rmx ? {
-          stepIndex: rmxStepIndex(localStep, Math.max(0, rmx.anchor - segment.startStep), segment.length, rmx.length),
+          stepIndex: rmxStep ?? localStep % segment.length,
           firstTrack: rmx.bus === 'B' ? 4 : 0,
           lastTrack: rmx.bus === 'A' ? 3 : 7,
-        } : undefined, segment.patternIndex, boundary);
+        } : undefined, segment.patternIndex, boundary, allowedTracks);
       }
       this.nextStep++;
     }

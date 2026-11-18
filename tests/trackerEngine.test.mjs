@@ -25,7 +25,18 @@ test('lookahead schedules on the audio clock, records microtiming and cancels fu
     cancelPending: () => { cancelled++; },
   };
   globalThis.trackerTestProject = {
-    getState: () => ({ settings: { activePatternIndex: 0 }, tracker: { patterns: [{ length: 2 }, { length: 16 }] } }),
+    getState: () => ({
+      settings: { activePatternIndex: 0 },
+      tracker: {
+        patterns: [2, 16].map((length) => ({
+          length,
+          tracks: Array.from({ length: 8 }, (_, id) => ({
+            id,
+            steps: Array.from({ length }, () => ({})),
+          })),
+        })),
+      },
+    }),
   };
 
   try {
@@ -40,11 +51,20 @@ test('lookahead schedules on the audio clock, records microtiming and cancels fu
     const { rmxStepIndex } = await import(moduleUrl(fxSource));
     assert.deepEqual([15, 16, 17, 18, 19].map((step) => rmxStepIndex(step, 15, 16, 4)), [15, 0, 1, 2, 15]);
     assert.deepEqual([31, 32, 33].map((step) => rmxStepIndex(step, 31, 32, 2)), [31, 0, 31]);
+    const stepTypesSource = ts.transpileModule(
+      await readFile(new URL('../src/tracker/stepTypes.ts', import.meta.url), 'utf8'),
+      { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } },
+    ).outputText;
+    const trigSource = ts.transpileModule(
+      await readFile(new URL('../src/tracker/trigEvaluator.ts', import.meta.url), 'utf8'),
+      { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } },
+    ).outputText.replace("'./stepTypes'", `'${moduleUrl(stepTypesSource)}'`);
     const source = ts.transpileModule(
       await readFile(new URL('../src/tracker/trackerEngine.ts', import.meta.url), 'utf8'),
       { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } },
     ).outputText
       .replace("'./trackerBridge'", `'${moduleUrl('export const trackerBridge = globalThis.trackerTestBridge;')}'`)
+      .replace("'./trigEvaluator'", `'${moduleUrl(trigSource)}'`)
       .replace("'../audio/audioEngine'", `'${moduleUrl('export const audioEngine = globalThis.trackerTestAudio;')}'`)
       .replace("'../fx/fxEngine'", `'${moduleUrl(fxSource)}'`)
       .replace("'../project/projectController'", `'${moduleUrl('export const projectController = globalThis.trackerTestProject;')}'`);

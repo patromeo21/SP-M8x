@@ -55,6 +55,7 @@ class AudioEngine {
   private meterSamples = new Float32Array(2048);
   private masterVolume = 0.8;
   private activeVoices = new Map<string, ActiveVoice>();
+  private reversedBuffers = new WeakMap<AudioBuffer, AudioBuffer>();
   private voiceListeners = new Set<() => void>();
   private overloadListeners = new Set<(message: string) => void>();
   private fxPool: VoiceFxPool | null = null;
@@ -206,6 +207,22 @@ class AudioEngine {
     return audioCache.get(normalizePadKey(padId));
   }
 
+  private getReversedBuffer(buffer: AudioBuffer): AudioBuffer {
+    const cached = this.reversedBuffers.get(buffer);
+    if (cached) return cached;
+    if (!this.ctx) throw new Error('AudioContext is unavailable.');
+    const reversed = this.ctx.createBuffer(buffer.numberOfChannels, buffer.length, buffer.sampleRate);
+    for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
+      const source = buffer.getChannelData(channel);
+      const destination = reversed.getChannelData(channel);
+      for (let i = 0, last = source.length - 1; i < source.length; i++, last--) {
+        destination[i] = source[last];
+      }
+    }
+    this.reversedBuffers.set(buffer, reversed);
+    return reversed;
+  }
+
   public triggerPad(
     padId: string | number,
     options: {
@@ -214,6 +231,7 @@ class AudioEngine {
       volume?: number;
       semitoneOffset?: number;
       loop?: boolean;
+      reverse?: boolean;
       scheduledTime?: number; // Added to support lookahead sample-accurate scheduling
       modulation?: VoiceModulation[];
       fx?: VoiceFxCommand;
@@ -284,13 +302,15 @@ class AudioEngine {
     slot.padGain.gain.setValueAtTime(clamp(options.padVolume ?? 1, 0, 1), targetGainTime);
     this.setSlotDeck(slot, trackIndex, targetGainTime);
     const source = context.createBufferSource();
-    source.buffer = buffer;
+    source.buffer = options.reverse ? this.getReversedBuffer(buffer) : buffer;
     source.loop = options.loop ?? false;
 
     const duration = sliceEnd - sliceStart;
+    const playbackStart = options.reverse ? buffer.duration - sliceEnd : sliceStart;
+    const playbackEnd = options.reverse ? buffer.duration - sliceStart : sliceEnd;
     if (source.loop) {
-      source.loopStart = sliceStart;
-      source.loopEnd = sliceEnd;
+      source.loopStart = playbackStart;
+      source.loopEnd = playbackEnd;
     }
 
     const semitones = clamp(options.semitoneOffset ?? 0, -48, 48);
@@ -329,7 +349,7 @@ class AudioEngine {
       source,
       voiceGain,
       normalizePadKey(padId),
-      sliceStart,
+      playbackStart,
       duration,
       source.loop,
       targetGainTime,

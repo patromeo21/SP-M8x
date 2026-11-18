@@ -5,6 +5,7 @@
 
 import { UndoRedoStack, type UndoableProjectData } from './undoStack';
 import { validateStepEvent, type StepEvent } from './stepModel';
+import { validateConditionalTrig, type ConditionalTrig } from '../tracker/stepTypes';
 
 export type BankId = 'A' | 'B' | 'C' | 'D';
 
@@ -30,6 +31,7 @@ export interface TrackerStepItem {
   tableId?: number | null;
   sliceIndex?: number;
   events?: StepEvent[];
+  trig?: ConditionalTrig;
 }
 
 export interface TableStep {
@@ -132,6 +134,9 @@ function migrateStep(value: unknown): TrackerStepItem {
   if (step.events !== undefined) {
     if (!Array.isArray(step.events)) throw new Error('Invalid polyphonic step events.');
     step.events.forEach((event) => validateStepEvent(event as StepEvent));
+  }
+  if (step.trig !== undefined && !validateConditionalTrig(step.trig)) {
+    throw new Error('Invalid phrase step condition.');
   }
   const { sampleId: _sampleId, ...rest } = step;
   return { ...rest, note: step.note, instrumentId: instrumentId as number | null };
@@ -581,6 +586,80 @@ class ProjectController {
       return index;
     }
     return null;
+  }
+
+  public recordPolyphonicHit(patternIndex: number, stepIndex: number, preferredTrack: number, event: StepEvent): number | null {
+    this.assertWritable();
+    this.getTrack(patternIndex, preferredTrack);
+    this.validateStepIndex(patternIndex, stepIndex);
+    validateStepEvent(event);
+    const pattern = this.state.tracker.patterns[patternIndex];
+    for (let offset = 0; offset < TRACK_COUNT; offset++) {
+      const trackIndex = (preferredTrack + offset) % TRACK_COUNT;
+      const track = pattern.tracks[trackIndex];
+      const step = track.steps[stepIndex];
+      const empty = step.note === '---' && step.instrumentId === null &&
+        Object.entries(step).every(([key, value]) => key === 'note' || key === 'instrumentId' ||
+          value == null || (key === 'subTickOffset' && value === 0) || (key === 'fx' && value === ''));
+      if (empty) {
+        track.steps[stepIndex] = {
+          ...step,
+          note: event.note,
+          instrumentId: event.instrumentId ?? event.padId,
+          subTickOffset: event.subTickOffset,
+          velocity: event.velocity,
+          events: [event],
+        };
+        this.notify();
+        return trackIndex;
+      }
+      if (step.events) {
+        track.steps[stepIndex] = { ...step, events: [...step.events, event] };
+        this.notify();
+        return trackIndex;
+      }
+    }
+    return null;
+  }
+
+  public applyEuclideanPattern(
+    patternIndex: number,
+    trackIndex: number,
+    hits: readonly boolean[],
+    instrumentId: number,
+  ): void {
+    this.assertWritable();
+    const track = this.getTrack(patternIndex, trackIndex);
+    const pattern = this.state.tracker.patterns[patternIndex];
+    if (hits.length > pattern.length || hits.some((hit) => typeof hit !== 'boolean')) {
+      throw new Error('Euclidean pattern must contain no more steps than the active phrase.');
+    }
+    if (!Number.isInteger(instrumentId) || instrumentId < 0 || instrumentId > 63) {
+      throw new Error('Invalid instrument ID for Euclidean pattern.');
+    }
+    for (let index = 0; index < pattern.length; index++) {
+      const previous = track.steps[index];
+      if (hits[index]) {
+        track.steps[index] = {
+          ...previous,
+          note: 'C-4',
+          instrumentId,
+          velocity: previous.velocity ?? 127,
+          events: undefined,
+        };
+      } else if (index < hits.length) {
+        track.steps[index] = {
+          ...previous,
+          note: '---',
+          instrumentId: null,
+          subTickOffset: undefined,
+          velocity: undefined,
+          sliceIndex: undefined,
+          events: undefined,
+        };
+      }
+    }
+    this.notify();
   }
 
   public recordRelease(patternIndex: number, stepIndex: number, trackIndex: number, instrumentId: number, subTickOffset: number): boolean {

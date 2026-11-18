@@ -20,8 +20,10 @@ test('SP8 bundle export includes samples and import hydrates the project vault',
     }
   `;
   const vaultUrl = dataUrl(vaultSource);
+  const padStorageUrl = dataUrl('export async function saveSample() {}');
   const bundleSource = (await compile('../src/project/sp8Bundle.ts'))
-    .replace("'./sessionVault'", `'${vaultUrl}'`);
+    .replace("'./sessionVault'", `'${vaultUrl}'`)
+    .replace("'../sampler/padStorage'", `'${padStorageUrl}'`);
   const { SPM8BundleManager } = await import(dataUrl(bundleSource));
   const { SessionVault } = await import(vaultUrl);
   const originalSample = new Blob([new Uint8Array([0, 1, 2, 255])], { type: 'audio/wav' });
@@ -48,8 +50,10 @@ test('SP8 bundle import rejects missing bundled sample data', async () => {
       static async saveProjectSession() {}
     }
   `);
+  const padStorageUrl = dataUrl('export async function saveSample() {}');
   const source = (await compile('../src/project/sp8Bundle.ts'))
-    .replace("'./sessionVault'", `'${vaultUrl}'`);
+    .replace("'./sessionVault'", `'${vaultUrl}'`)
+    .replace("'../sampler/padStorage'", `'${padStorageUrl}'`);
   const { SPM8BundleManager } = await import(dataUrl(source));
 
   await assert.rejects(

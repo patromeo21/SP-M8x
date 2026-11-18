@@ -22,6 +22,21 @@ export interface ConditionalTrig {
   fillOnly?: boolean;
 }
 
+export function validateConditionalTrig(value: unknown): value is ConditionalTrig {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const trig = value as Record<string, unknown>;
+  if (trig.probability !== undefined &&
+      (typeof trig.probability !== 'number' || !Number.isFinite(trig.probability) ||
+       trig.probability < 0 || trig.probability > 100)) return false;
+  if (trig.fillOnly !== undefined && typeof trig.fillOnly !== 'boolean') return false;
+  if (trig.cycleCondition !== undefined) {
+    if (typeof trig.cycleCondition !== 'string') return false;
+    const match = /^([1-9]\d*):([1-9]\d*)$/.exec(trig.cycleCondition);
+    if (!match || Number(match[1]) > Number(match[2])) return false;
+  }
+  return true;
+}
+
 export interface EnhancedTrackerStep extends StepPLocks, ConditionalTrig {
   step: number;
   note: string | null;

@@ -50,6 +50,7 @@ export interface PadBankApi {
   deletePads: (padIds: string[]) => Promise<void>;
   triggerPad: (padId: string, onTriggered?: (time: number) => number | void, semitoneOffset?: number, pointerTime?: number, sliceIndex?: number, playThrough?: boolean) => (pointerTime?: number) => void;
   preparePads: (padIds: string[]) => Promise<void>;
+  refreshFromStorage: () => Promise<void>;
   getPadSettings: (padId: string) => PadSlot | undefined;
   stopAll: () => void;
   storageReady: boolean;
@@ -122,10 +123,8 @@ export function usePadBank(): PadBankApi {
     });
   }, []);
 
-  useEffect(() => {
-    let active = true;
-    void readStoredPads().then((saved) => {
-      if (!active) return;
+  const refreshFromStorage = useCallback(async () => {
+    const saved = await readStoredPads();
       const restored = { ...slotsRef.current };
       for (const pad of saved) {
         if (pad.startPct < 0 || pad.endPct > 100 || pad.startPct >= pad.endPct) {
@@ -138,7 +137,12 @@ export function usePadBank(): PadBankApi {
       slotsRef.current = restored;
       setSlots(restored);
       setStorageStatus('LOCAL STORAGE READY');
-    }).catch((error: unknown) => {
+      setStorageError(false);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void refreshFromStorage().catch((error: unknown) => {
       if (!active) return;
       console.error('[usePadBank] Could not restore samples:', error);
       failedWrite.current = true;
@@ -148,7 +152,7 @@ export function usePadBank(): PadBankApi {
       if (active) setStorageReady(true);
     });
     return () => { active = false; };
-  }, []);
+  }, [refreshFromStorage]);
 
   const stopLoop = useCallback((padId: string, pitch?: number, sliceIndex?: number): boolean => {
     let stopped = false;
@@ -508,6 +512,7 @@ export function usePadBank(): PadBankApi {
     deletePads: removePads,
     triggerPad,
     preparePads,
+    refreshFromStorage,
     getPadSettings,
     stopAll,
     storageReady,

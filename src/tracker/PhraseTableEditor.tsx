@@ -3,6 +3,7 @@ import { projectController, type Pattern, type PhraseLength, type TrackerTable }
 import type { PadSlot } from '../sampler/usePadBank';
 import { trackerBridge } from './trackerBridge';
 import { instrumentIdToPadId, padIdToInstrumentId } from '../sampler/padIds';
+import { generateEuclideanSteps } from './euclideanGenerator';
 
 const fieldClass = 'phrase-cell-control bg-zinc-950 border border-zinc-700 text-zinc-100';
 const buttonClass = 'border border-zinc-700 px-2 py-1 text-zinc-300';
@@ -30,7 +31,7 @@ export function PhraseTableEditor({ slots, activeStep, transportBusy, mode, queu
   if (!pattern) return <p role="alert">Active phrase is unavailable.</p>;
 
   return (
-    <section className={`${mode === 'phrase' ? 'phrase-panel' : 'table-panel'} flex-1 min-h-0 flex flex-col gap-2 p-3 bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl font-mono text-xs`}>
+    <section className={`${mode === 'phrase' ? 'phrase-panel' : 'table-panel'} relative flex-1 min-h-0 flex flex-col gap-2 p-3 bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl font-mono text-xs`}>
       <div className="phrase-toolbar flex items-center gap-2">
         <label className="control-block">TRK <select aria-label="Phrase track" className={fieldClass} value={trackIndex}
           onChange={(event) => setTrackIndex(Number(event.target.value))}>
@@ -74,6 +75,10 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, tran
   pattern: Pattern; patternIndex: number; trackIndex: number; slots: Record<string, PadSlot>; activeStep: number; transportBusy: boolean;
 }) {
   const [page, setPage] = useState(0);
+  const [euclideanOpen, setEuclideanOpen] = useState(false);
+  const [euclideanSteps, setEuclideanSteps] = useState<number>(pattern.length);
+  const [euclideanHits, setEuclideanHits] = useState(Math.min(4, pattern.length));
+  const [euclideanRotation, setEuclideanRotation] = useState(0);
   const steps = pattern.tracks[trackIndex].steps;
   const firstLoadedPad = Object.values(slots).find((slot) => slot.sampleKey)?.id;
   const pads = Object.values(slots).filter((slot) => slot.sampleKey);
@@ -98,7 +103,7 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, tran
   return (
     <div className="phrase-grid-scroll phrase-sequencer-list flex-1 min-h-0" aria-label="Vertical phrase steps">
       <div className="phrase-grid-header phrase-sequencer-grid">
-        <span>STEP</span><span>NOTE</span><span>INST</span><span>VOL</span><span>FX</span><span>TBL</span>
+        <span>STEP</span><span>NOTE</span><span>INST</span><span>VOL</span><span>FX</span><span>TBL</span><span>COND</span>
       </div>
       {steps.slice(page * 16, page * 16 + 16).map((step, row) => {
         const index = page * 16 + row;
@@ -152,10 +157,48 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, tran
               <option value="">---</option>
               {projectController.getTables().map((table) => <option key={table.id} value={table.id}>{table.name}</option>)}
             </select>
+            <select aria-label={`Phrase condition step ${index + 1}`} className={fieldClass}
+              value={step.trig?.fillOnly ? 'FILL' : step.trig?.cycleCondition ?? ''}
+              onChange={(event) => {
+                const value = event.target.value;
+                projectController.updateStep(patternIndex, index, {
+                  trig: value === 'FILL' ? { fillOnly: true } :
+                    value ? { cycleCondition: value } : undefined,
+                }, trackIndex);
+              }}>
+              <option value="">---</option><option value="FILL">FILL</option>
+              <option value="1:2">1:2</option><option value="2:2">2:2</option>
+              <option value="1:4">1:4</option><option value="2:4">2:4</option>
+              <option value="3:4">3:4</option><option value="4:4">4:4</option>
+            </select>
           </div>
         );
       })}
       <div className="phrase-page-controls">
+        <button type="button" className={buttonClass} disabled={transportBusy || !firstLoadedPad}
+          aria-expanded={euclideanOpen} onClick={() => setEuclideanOpen((open) => !open)}>EUCLID</button>
+        {euclideanOpen && <form className="euclidean-controls" onSubmit={(event) => {
+          event.preventDefault();
+          const currentPadId = instrumentIdToPadId(steps.find((step) => step.instrumentId !== null)?.instrumentId ?? null) ?? firstLoadedPad;
+          if (!currentPadId) return;
+          const hits = generateEuclideanSteps(euclideanSteps, euclideanHits, euclideanRotation);
+          const instrumentId = padIdToInstrumentId(currentPadId);
+          if (instrumentId === null) return;
+          projectController.applyEuclideanPattern(patternIndex, trackIndex, hits, instrumentId);
+          setEuclideanOpen(false);
+        }}>
+          <label>STEPS <input aria-label="Euclidean steps" type="number" min="1" max={pattern.length}
+            value={euclideanSteps} onChange={(event) => {
+              const next = Math.max(1, Math.min(pattern.length, Number(event.target.value)));
+              setEuclideanSteps(next);
+              setEuclideanHits((hits) => Math.min(hits, next));
+            }} /></label>
+          <label>HITS <input aria-label="Euclidean hits" type="number" min="0" max={euclideanSteps}
+            value={euclideanHits} onChange={(event) => setEuclideanHits(Math.max(0, Math.min(euclideanSteps, Number(event.target.value))))} /></label>
+          <label>ROT <input aria-label="Euclidean rotation" type="number" value={euclideanRotation}
+            onChange={(event) => setEuclideanRotation(Number(event.target.value) || 0)} /></label>
+          <button type="submit" className={buttonClass}>APPLY</button>
+        </form>}
         {Array.from({ length: pageCount }, (_, index) => <button key={index} type="button"
           className={`${buttonClass} ${page === index ? 'border-cyan-400 text-cyan-300' : ''}`}
           aria-label={`Phrase page ${index + 1}${activeStep >= index * 16 && activeStep < (index + 1) * 16 ? ', playing' : ''}`}

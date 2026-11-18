@@ -1,9 +1,16 @@
 import { SessionVault } from './sessionVault';
+import { saveSample, type StoredPad } from '../sampler/padStorage';
 
 export interface SPM8BundleSample {
   hash: string;
   base64Data: string;
   mimeType?: string;
+  pads?: StoredPad[];
+}
+
+export interface Sp8BundleImport {
+  projectId: string;
+  projectJson: string;
 }
 
 export interface SPM8BundleManifest {
@@ -73,10 +80,19 @@ function parseManifest(value: unknown): SPM8BundleManifest {
         throw new Error(`Bundle sample "${sample.hash}" is not listed in sampleHashes.`);
       }
       seen.add(sample.hash);
+      const pads = sample.pads;
+      if (pads !== undefined && (!Array.isArray(pads) || pads.some((pad) =>
+        !isRecord(pad) || typeof pad.id !== 'string' || typeof pad.sampleKey !== 'string' ||
+        typeof pad.name !== 'string' || typeof pad.startPct !== 'number' ||
+        typeof pad.endPct !== 'number' || typeof pad.pitch !== 'number' ||
+        typeof pad.loop !== 'boolean'))) {
+        throw new Error('Invalid .sp8 bundle pad assignment.');
+      }
       samples.push({
         hash: sample.hash,
         base64Data: sample.base64Data,
         ...(typeof sample.mimeType === 'string' ? { mimeType: sample.mimeType } : {}),
+        ...(Array.isArray(pads) ? { pads: pads as unknown as StoredPad[] } : {}),
       });
     }
     if (seen.size !== value.sampleHashes.length) {
@@ -96,7 +112,12 @@ function parseManifest(value: unknown): SPM8BundleManifest {
 
 export class SPM8BundleManager {
   /** Export a project and all referenced sample blobs into a portable .sp8 JSON bundle. */
-  public static async exportBundle(projectId: string, projectJson: string, sampleHashes: string[]): Promise<Blob> {
+  public static async exportBundle(
+    projectId: string,
+    projectJson: string,
+    sampleHashes: string[],
+    padAssignments: Array<{ hash: string; pad: StoredPad }> = [],
+  ): Promise<Blob> {
     if (!projectId || typeof projectJson !== 'string' || !Array.isArray(sampleHashes) ||
         !sampleHashes.every((hash) => typeof hash === 'string' && hash.length > 0)) {
       throw new TypeError('A project ID, serialized project, and valid sample hashes are required.');
@@ -118,6 +139,7 @@ export class SPM8BundleManager {
         hash,
         base64Data: encodeBase64(new Uint8Array(await sample.arrayBuffer())),
         mimeType: sample.type,
+        pads: padAssignments.filter((assignment) => assignment.hash === hash).map(({ pad }) => pad),
       });
     }
 
@@ -134,10 +156,14 @@ export class SPM8BundleManager {
 
   /** Import project JSON and hydrate all bundled sample blobs into IndexedDB. */
   public static async importBundle(file: File): Promise<string> {
-    return this.importBundleJson(await file.text());
+    return (await this.importBundleJsonWithState(await file.text())).projectId;
   }
 
   public static async importBundleJson(json: string): Promise<string> {
+    return (await this.importBundleJsonWithState(json)).projectId;
+  }
+
+  public static async importBundleJsonWithState(json: string): Promise<Sp8BundleImport> {
     let raw: unknown;
     try {
       raw = JSON.parse(json);
@@ -156,8 +182,31 @@ export class SPM8BundleManager {
 
     for (const sample of hydratedSamples) {
       await SessionVault.storeSampleBlob(sample.hash, sample.blob);
+      for (const pad of manifest.samples?.find((item) => item.hash === sample.hash)?.pads ?? []) {
+        await saveSample(pad, sample.blob);
+      }
     }
     await SessionVault.saveProjectSession(projectId, manifest.projectJson);
-    return projectId;
+    return { projectId, projectJson: manifest.projectJson };
   }
+}
+
+export async function exportSp8Bundle(
+  projectJson: string,
+  pads: Array<{ pad: StoredPad; audio: Blob }>,
+): Promise<Blob> {
+  const blobsByHash = new Map<string, Blob>();
+  const assignments: Array<{ hash: string; pad: StoredPad }> = [];
+  for (const { pad, audio } of pads) {
+    if (!pad.sampleKey) continue;
+    const hash = pad.sampleKey;
+    if (!blobsByHash.has(hash)) blobsByHash.set(hash, audio);
+    assignments.push({ hash, pad });
+  }
+  for (const [hash, blob] of blobsByHash) await SessionVault.storeSampleBlob(hash, blob);
+  return SPM8BundleManager.exportBundle('active-project', projectJson, [...blobsByHash.keys()], assignments);
+}
+
+export async function importSp8Bundle(file: File): Promise<Sp8BundleImport> {
+  return SPM8BundleManager.importBundleJsonWithState(await file.text());
 }

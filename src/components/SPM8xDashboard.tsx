@@ -11,6 +11,9 @@ import { PhraseTableEditor } from '../tracker/PhraseTableEditor';
 import { SongArrangementView } from '../tracker/SongArrangementView';
 import { chromaticNote } from '../sampler/chromatic';
 import { instrumentIdToPadId, padIdToInstrumentId } from '../sampler/padIds';
+import { exportSp8Bundle, importSp8Bundle } from '../project/sp8Bundle';
+import { readStoredAudio } from '../sampler/padStorage';
+import type { StoredPad } from '../sampler/padStorage';
 
 export type WorkspaceTab = 'phrase' | 'table' | 'song' | 'mixer' | 'sampler';
 
@@ -28,10 +31,14 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
   const [playing, setPlaying] = useState(false);
   const [starting, setStarting] = useState(false);
   const [armed, setArmed] = useState(false);
+  const [fillActive, setFillActive] = useState(false);
   const [playhead, setPlayhead] = useState(-1);
   const [transportMessage, setTransportMessage] = useState('');
   const [queuedPatternIndex, setQueuedPatternIndex] = useState<number | null>(null);
-  const [, refreshProject] = useState(0);
+  const [projectRevision, refreshProject] = useState(0);
+  const [bundleStatus, setBundleStatus] = useState('');
+  const [bundleBusy, setBundleBusy] = useState(false);
+  const bundleInputRef = useRef<HTMLInputElement>(null);
   const startGeneration = useRef(0);
   const queueGeneration = useRef(0);
   const recordingRef = useRef(false);
@@ -45,7 +52,94 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
     setStarting(false);
     setPlaying(false);
     setPlayhead(-1);
+    setFillActive(false);
+    trackerEngine.setFillActive(false);
   }, [padBank.stopGatedVoices]);
+
+  const handleUndo = useCallback(() => {
+    projectController.undo();
+  }, []);
+
+  const handleRedo = useCallback(() => {
+    projectController.redo();
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+      const target = event.target;
+      if (target instanceof HTMLElement &&
+          (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      const key = event.key.toLowerCase();
+      if (key === 'z') {
+        event.preventDefault();
+        if (event.shiftKey) handleRedo();
+        else handleUndo();
+      } else if (key === 'y' && !event.shiftKey) {
+        event.preventDefault();
+        handleRedo();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleRedo, handleUndo]);
+
+  const exportBundle = useCallback(async () => {
+    if (!padBank.storageReady || bundleBusy) return;
+    setBundleBusy(true);
+    setBundleStatus('');
+    try {
+      const pads: Array<{ pad: StoredPad; audio: Blob }> = [];
+      for (const slot of Object.values(padBank.slots)) {
+        if (!slot.sampleKey) continue;
+        const audio = await readStoredAudio(slot.id, slot.sampleKey);
+        pads.push({
+          pad: {
+            id: slot.id,
+            sampleKey: slot.sampleKey,
+            name: slot.name,
+            startPct: slot.startPct,
+            endPct: slot.endPct,
+            pitch: slot.pitch,
+            loop: slot.playbackMode === 'loop',
+            playbackMode: slot.playbackMode,
+            sliceMarkers: slot.sliceMarkers,
+          },
+          audio,
+        });
+      }
+      const bundle = await exportSp8Bundle(JSON.stringify(projectController.getState()), pads);
+      const url = URL.createObjectURL(bundle);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `sp-m8x-${Date.now()}.sp8`;
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      setBundleStatus('PROJECT EXPORTED');
+    } catch (error) {
+      console.error('[SP-M8x] Could not export project bundle:', error);
+      setBundleStatus(error instanceof Error ? error.message : 'BUNDLE EXPORT FAILED');
+    } finally {
+      setBundleBusy(false);
+    }
+  }, [bundleBusy, padBank.slots, padBank.storageReady]);
+
+  const importBundle = useCallback(async (file: File) => {
+    setBundleBusy(true);
+    setBundleStatus('');
+    try {
+      const imported = await importSp8Bundle(file);
+      projectController.importProjectJson(JSON.parse(imported.projectJson));
+      await padBank.refreshFromStorage();
+      setBundleStatus(`IMPORTED ${imported.projectId}`);
+    } catch (error) {
+      console.error('[SP-M8x] Could not import project bundle:', error);
+      setBundleStatus(error instanceof Error ? error.message : 'BUNDLE IMPORT FAILED');
+    } finally {
+      setBundleBusy(false);
+      if (bundleInputRef.current) bundleInputRef.current.value = '';
+    }
+  }, [padBank.refreshFromStorage]);
 
   useEffect(() => {
     (projectController.getState().settings.trackVolumes ?? Array.from({ length: 8 }, () => 1))
@@ -188,12 +282,29 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
 
   return (
     <div className="app-shell flex flex-col w-full bg-[var(--bg-shell-deep)] text-[var(--text-primary)] font-mono overflow-hidden select-none">
-      <header className="flex items-center justify-between px-4 py-2 bg-[var(--bg-canvas)] border-b border-[var(--border-grid)] shrink-0">
+      <header className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 bg-[var(--bg-canvas)] border-b border-[var(--border-grid)] shrink-0">
         <h1 className="text-xs font-black tracking-widest text-[var(--accent-phrase)]">SP-M8x <span className="text-zinc-500 font-normal">v0.9.2</span></h1>
         <nav className="flex items-center space-x-1 bg-zinc-950 p-1 rounded-lg border border-[var(--border-grid)]">
           {(['phrase', 'table', 'song', 'mixer', 'sampler'] as const).map((tab) => <button key={tab} type="button" aria-current={currentTab === tab ? 'page' : undefined} onClick={() => setCurrentTab(tab)}
             className={`px-3 py-1 text-[10px] font-bold tracking-wider rounded uppercase border ${currentTab === tab ? 'text-[var(--accent-phrase)] border-[var(--accent-phrase)] bg-cyan-950/40' : 'text-zinc-500 border-transparent'}`}>[ {tab} ]</button>)}
         </nav>
+        <div className="flex flex-wrap items-center gap-1">
+          <button type="button" className="transport-control" onClick={handleUndo}
+            disabled={!projectController.canUndo()} aria-label="Undo" title="Undo (Ctrl/Cmd+Z)">UNDO</button>
+          <button type="button" className="transport-control" onClick={handleRedo}
+            disabled={!projectController.canRedo()} aria-label="Redo" title="Redo (Ctrl/Cmd+Shift+Z)">REDO</button>
+          <button type="button" className="transport-control" onClick={() => void exportBundle()}
+            disabled={bundleBusy || !padBank.storageReady}>EXPORT .SP8</button>
+          <button type="button" className="transport-control" onClick={() => bundleInputRef.current?.click()}
+            disabled={bundleBusy || !padBank.storageReady}>IMPORT .SP8</button>
+          <input ref={bundleInputRef} className="hidden" type="file" accept=".sp8,application/json"
+            aria-label="Import SP8 project bundle"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void importBundle(file);
+            }} />
+          {bundleStatus && <span role={bundleStatus.includes('FAILED') ? 'alert' : 'status'} className="text-[9px] text-cyan-300">{bundleStatus}</span>}
+        </div>
       </header>
       <main className="flex-1 flex overflow-hidden p-3 gap-3 bg-[var(--bg-shell-deep)]">
         {currentTab === 'phrase'
@@ -239,11 +350,25 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
           <span>VOICES: <strong className="text-zinc-200">{engineStatus.voices}</strong></span>
           <button type="button" aria-pressed={playing} onClick={toggleTransport} className="transport-control text-cyan-300">{starting ? 'CANCEL' : playing ? 'STOP' : 'PLAY'}</button>
           <button type="button" aria-pressed={armed} onClick={() => setArmed(!armed)} className={`transport-control ${armed ? 'text-rose-300' : 'text-zinc-400'}`}>{armed ? 'PHRASE REC ARMED' : 'PHRASE REC'}</button>
+          <button type="button" aria-pressed={fillActive} onPointerDown={() => {
+            setFillActive(true);
+            trackerEngine.setFillActive(true);
+          }} onPointerUp={() => {
+            setFillActive(false);
+            trackerEngine.setFillActive(false);
+          }} onPointerCancel={() => {
+            setFillActive(false);
+            trackerEngine.setFillActive(false);
+          }} onBlur={() => {
+            setFillActive(false);
+            trackerEngine.setFillActive(false);
+          }} className={`transport-control ${fillActive ? 'text-amber-300' : 'text-zinc-500'}`}>FILL</button>
           <span>BPM: <strong className="text-zinc-200">{projectController.getState().settings.bpm.toFixed(1)}</strong></span>
           <MasterOutput savedLocally={padBank.storageReady && !padBank.storageError && !projectController.hasSaveError() && !['SAVING', 'DELETING'].includes(padBank.storageStatus)} />
           {padBank.storageError && <span role="alert" className="text-rose-400">{padBank.storageStatus}</span>}
           {projectController.hasSaveError() && <span role="alert" className="text-rose-400">PHRASE SAVE FAILED</span>}
           {transportMessage && <span role="alert" className="text-rose-400">{transportMessage}</span>}
+          <span className="sr-only" aria-live="polite">Project revision {projectRevision}</span>
         </div>
       </footer>
     </div>

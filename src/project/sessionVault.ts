@@ -17,6 +17,7 @@ export class SessionVault {
         if (!db.objectStoreNames.contains(PROJECT_STORE)) {
           db.createObjectStore(PROJECT_STORE, { keyPath: 'id' });
         }
+
         if (!db.objectStoreNames.contains(SAMPLE_STORE)) {
           db.createObjectStore(SAMPLE_STORE, { keyPath: 'hash' });
         }
@@ -89,3 +90,9 @@ export class SessionVault {
     return result?.blob ?? null;
   }
 }
+
+export const sessionVault = {
+  saveProjectSession: SessionVault.saveProjectSession.bind(SessionVault),
+  storeSampleBlob: SessionVault.storeSampleBlob.bind(SessionVault),
+  getSampleBlob: SessionVault.getSampleBlob.bind(SessionVault),
+};

@@ -1,10 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { audioEngine } from '../audio/audioEngine';
 import { percentFromFrame, rangeFromPercent, type SampleRange } from './sampleRange';
-import { createWaveformPeakBuilder, type WaveformPeaks } from './waveformPeaks';
 import type { PadBankApi, PadSlot } from './usePadBank';
-
-const peakCache = new WeakMap<AudioBuffer, { width: number; start: number; end: number; peaks: WaveformPeaks }>();
+import { AudioWaveformCanvas } from './AudioWaveformCanvas';
 
 interface Props {
   pad: PadSlot;
@@ -15,8 +13,6 @@ interface Props {
 
 export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRange, sliceCount }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const playheadRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ pointerId: number; edge: 'start' | 'end'; range: SampleRange; original: SampleRange; x: number; origin: number } | null>(null);
   const pitchDrag = useRef<{ pointerId: number; y: number; initial: number; value: number } | null>(null);
   const waveformPointers = useRef(new Map<number, { x: number; y: number }>());
@@ -27,17 +23,18 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
   const [pitchPreview, setPitchPreview] = useState<number | null>(null);
   const [precision, setPrecision] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [canvasSize, setCanvasSize] = useState({ width: 600, height: 96 });
-  const [rendered, setRendered] = useState<{ buffer: AudioBuffer; width: number; start: number; end: number; peaks: WaveformPeaks } | null>(null);
+  const [waveformPlaying, setWaveformPlaying] = useState(false);
+  const [playheadNorm, setPlayheadNorm] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [position, setPosition] = useState(0);
   const length = pad.buffer?.length ?? 0;
   const viewLength = Math.max(1, Math.ceil(length / zoom));
   const viewStart = Math.max(0, Math.min(length - viewLength, Math.round(position * length)));
   const viewEnd = Math.min(length, viewStart + viewLength);
-  const peaks = rendered?.buffer === pad.buffer && rendered.width === Math.min(canvasSize.width, viewLength) &&
-    rendered.start === viewStart && rendered.end === viewEnd ? rendered.peaks : null;
   const range = preview ?? (length ? rangeFromPercent(pad.startPct, pad.endPct, length) : { start: 0, end: 0 });
+  const sliceMarkerFrames = sliceCount > 0
+    ? Array.from({ length: sliceCount - 1 }, (_, index) => range.start + Math.floor((index + 1) * (range.end - range.start) / sliceCount))
+    : pad.sliceMarkers.slice(1, -1);
 
   useEffect(() => {
     drag.current = null;
@@ -58,90 +55,20 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
   }, [pad.id, pad.sampleKey, length, onPreviewRange]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => {
-      const bounds = canvas.getBoundingClientRect();
-      const scale = Math.min(window.devicePixelRatio || 1, 2);
-      const width = Math.max(1, Math.min(2048, Math.round(bounds.width * scale)));
-      const height = Math.max(1, Math.min(512, Math.round(bounds.height * scale)));
-      setCanvasSize((previous) => previous.width === width && previous.height === height ? previous : { width, height });
-    };
-    const observer = new ResizeObserver(resize);
-    observer.observe(canvas);
-    resize();
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
     const buffer = pad.buffer;
     if (!buffer) {
-      setRendered(null);
+      setWaveformPlaying(false);
+      setPlayheadNorm(0);
       return;
     }
-    const width = Math.min(canvasSize.width, viewLength);
-    const cached = peakCache.get(buffer);
-    if (cached?.width === width && cached.start === viewStart && cached.end === viewEnd) {
-      setRendered({ buffer, width, start: viewStart, end: viewEnd, peaks: cached.peaks });
-      return;
-    }
-    setRendered(null);
-    const builder = createWaveformPeakBuilder(buffer, width, viewStart, viewEnd);
-    let timer: number | undefined;
-    const run = () => {
-      if (builder.process(16384)) {
-        peakCache.set(buffer, { width, start: viewStart, end: viewEnd, peaks: builder.peaks });
-        setRendered({ buffer, width, start: viewStart, end: viewEnd, peaks: builder.peaks });
-      } else {
-        timer = window.setTimeout(run, zoom > 1 ? 80 : 0);
-      }
-    };
-    timer = window.setTimeout(run, 0);
-    return () => { if (timer !== undefined) window.clearTimeout(timer); };
-  }, [pad.buffer, canvasSize.width, viewLength, viewStart, viewEnd, zoom]);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext('2d');
-    if (!canvas || !ctx) return;
-    const { width, height } = canvas;
-    ctx.clearRect(0, 0, width, height);
-    if (!peaks || !length) return;
-    const colWidth = width / peaks.min.length;
-    for (let col = 0; col < peaks.min.length; col++) {
-      const frame = viewStart + col * viewLength / peaks.min.length;
-      ctx.fillStyle = frame >= range.start && frame < range.end ? '#00e6c3' : '#28313d';
-      const center = height / 2;
-      const scale = (height - 8) / 2;
-      const top = center - peaks.max[col] * scale;
-      const bottom = center - peaks.min[col] * scale;
-      ctx.fillRect(col * colWidth, top, Math.max(1, colWidth), Math.max(1, bottom - top));
-    }
-    ctx.fillStyle = 'rgba(255,255,255,0.28)';
-    const markers = sliceCount > 0
-      ? Array.from({ length: sliceCount - 1 }, (_, index) => range.start + Math.floor((index + 1) * (range.end - range.start) / sliceCount))
-      : pad.sliceMarkers.slice(1, -1);
-    for (const frame of markers) {
-      if (frame >= viewStart && frame <= viewEnd) ctx.fillRect(Math.round((frame - viewStart) * width / viewLength), 0, 1, height);
-    }
-  }, [peaks, length, range.start, range.end, sliceCount, pad.sliceMarkers, canvasSize, viewStart, viewEnd, viewLength]);
-
-  useEffect(() => {
-    const playhead = playheadRef.current;
-    const buffer = pad.buffer;
-    if (!playhead || !buffer) return;
     let frame: number | null = null;
     const draw = () => {
       frame = null;
       const position = audioEngine.getPadPlaybackPosition(pad.id, buffer);
-      const framePosition = position === null ? null : position * buffer.sampleRate;
-      if (framePosition === null || framePosition < viewStart || framePosition > viewEnd) {
-        playhead.style.display = 'none';
-      } else {
-        playhead.style.display = 'block';
-        playhead.style.left = `${Math.min(100, Math.max(0, (framePosition - viewStart) * 100 / viewLength))}%`;
-      }
-      if (audioEngine.hasPadVoices(pad.id, buffer)) frame = requestAnimationFrame(draw);
+      const playing = audioEngine.hasPadVoices(pad.id, buffer);
+      setWaveformPlaying(playing);
+      if (position !== null) setPlayheadNorm(Math.max(0, Math.min(1, position / buffer.duration)));
+      if (playing) frame = requestAnimationFrame(draw);
     };
     const update = () => {
       if (frame !== null) cancelAnimationFrame(frame);
@@ -152,9 +79,8 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
     return () => {
       unsubscribe();
       if (frame !== null) cancelAnimationFrame(frame);
-      playhead.style.display = 'none';
     };
-  }, [pad.id, pad.buffer, viewStart, viewEnd, viewLength]);
+  }, [pad.id, pad.buffer]);
 
   const commitRange = (next: SampleRange) => {
     if (!length) return;
@@ -255,7 +181,7 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
 
   return (
     <div ref={containerRef} className="sampler-waveform relative h-24 bg-zinc-950 border border-zinc-700 overflow-hidden shrink-0">
-      <canvas ref={canvasRef} width={canvasSize.width} height={canvasSize.height} className="absolute inset-0 w-full h-full touch-none"
+      <div className="waveform-gesture-surface absolute inset-0 touch-none"
         onPointerDown={(event) => {
           event.preventDefault();
           event.currentTarget.setPointerCapture(event.pointerId);
@@ -302,8 +228,23 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
         }}
         onPointerUp={(event) => endWaveformPointer(event.pointerId)}
         onPointerCancel={(event) => endWaveformPointer(event.pointerId)}
-        onLostPointerCapture={(event) => endWaveformPointer(event.pointerId)} />
-      <div ref={playheadRef} aria-hidden="true"
+        onLostPointerCapture={(event) => endWaveformPointer(event.pointerId)}>
+        <AudioWaveformCanvas
+          audioBuffer={pad.buffer}
+          isPlaying={waveformPlaying}
+          playheadNorm={playheadNorm}
+          slicePoints={length ? { startNorm: range.start / length, endNorm: range.end / length } : undefined}
+          viewStartNorm={length ? viewStart / length : 0}
+          viewEndNorm={length ? viewEnd / length : 1}
+          height={96}
+          className="pointer-events-none border-0 rounded-none"
+        />
+      </div>
+      {length > 0 && sliceMarkerFrames.filter((frame) => frame >= viewStart && frame <= viewEnd).map((frame) => (
+        <div key={frame} aria-hidden="true" className="absolute top-0 bottom-0 w-px bg-white/40 pointer-events-none z-[1]"
+          style={{ left: `${(frame - viewStart) * 100 / viewLength}%` }} />
+      ))}
+      <div aria-hidden="true"
         style={scrubPosition !== null && scrubPosition >= viewStart && scrubPosition <= viewEnd
           ? { left: `${(scrubPosition - viewStart) * 100 / viewLength}%` }
           : { display: 'none' }}
@@ -314,7 +255,6 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
           <span className="text-[9px] text-zinc-600">{pad.sampleKey ? 'TAP PAD TO LOAD' : 'WAVEFORM / SLICING GRID'}</span>
         </div>
       )}
-      {pad.buffer && !peaks && <span className="absolute inset-0 flex items-center justify-center text-[9px] text-zinc-500 pointer-events-none">DRAWING WAVEFORM</span>}
       {pad.buffer && <>
         <div className="absolute top-0 inset-x-1 flex items-center justify-between gap-2 text-[9px] pointer-events-none">
           <span className="min-w-0 truncate text-cyan-300">{pad.name}</span>

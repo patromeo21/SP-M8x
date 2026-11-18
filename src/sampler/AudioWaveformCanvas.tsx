@@ -13,6 +13,10 @@ export interface AudioWaveformCanvasProps {
   onSliceChange?: (startNorm: number, endNorm: number) => void;
   /** Canvas height in pixels */
   height?: number;
+  viewStartNorm?: number;
+  viewEndNorm?: number;
+  className?: string;
+  style?: React.CSSProperties;
 }
 
 export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
@@ -22,12 +26,20 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
   slicePoints,
   onSliceChange,
   height = 128,
+  viewStartNorm = 0,
+  viewEndNorm = 1,
+  className = '',
+  style,
 }) => {
   const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const activeSliceHandleRef = useRef<'start' | 'end' | null>(null);
   const [mipmaps, setMipmaps] = useState<{ [res: number]: { min: Float32Array; max: Float32Array } } | null>(null);
   const workerRef = useRef<Worker | null>(null);
+  const playheadRef = useRef(playheadNorm);
+  playheadRef.current = playheadNorm;
+  const viewStart = Math.max(0, Math.min(1 - 1e-6, viewStartNorm));
+  const viewEnd = Math.max(viewStart + 1e-6, Math.min(1, viewEndNorm));
 
   const getPointerPosition = (event: React.PointerEvent<HTMLDivElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect();
@@ -119,9 +131,12 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
     ctx.lineWidth = 1;
     ctx.beginPath();
 
-    const step = width / peakData.min.length;
-    for (let i = 0; i < peakData.min.length; i++) {
-      const x = i * step;
+    const firstBin = Math.min(peakData.min.length - 1, Math.floor(viewStart * peakData.min.length));
+    const lastBin = Math.max(firstBin + 1, Math.min(peakData.min.length, Math.ceil(viewEnd * peakData.min.length)));
+    const visibleBins = lastBin - firstBin;
+    const step = width / visibleBins;
+    for (let i = firstBin; i < lastBin; i++) {
+      const x = (i - firstBin) * step;
       const yMin = mid + peakData.min[i] * mid * 0.85;
       const yMax = mid + peakData.max[i] * mid * 0.85;
 
@@ -133,18 +148,25 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
     // Draw Slice Regions if present
     if (slicePoints) {
       ctx.fillStyle = 'rgba(56, 189, 248, 0.15)';
-      const startX = slicePoints.startNorm * width;
-      const endX = slicePoints.endNorm * width;
-      ctx.fillRect(startX, 0, endX - startX, height);
+      const range = viewEnd - viewStart;
+      const visibleStart = Math.max(viewStart, slicePoints.startNorm);
+      const visibleEnd = Math.min(viewEnd, slicePoints.endNorm);
+      const startX = (visibleStart - viewStart) / range * width;
+      const endX = (visibleEnd - viewStart) / range * width;
+      if (endX > startX) ctx.fillRect(startX, 0, endX - startX, height);
 
       ctx.strokeStyle = '#f59e0b'; // Amber slice handles
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(startX, 0); ctx.lineTo(startX, height);
-      ctx.moveTo(endX, 0); ctx.lineTo(endX, height);
+      if (slicePoints.startNorm >= viewStart && slicePoints.startNorm <= viewEnd) {
+        ctx.moveTo(startX, 0); ctx.lineTo(startX, height);
+      }
+      if (slicePoints.endNorm >= viewStart && slicePoints.endNorm <= viewEnd) {
+        ctx.moveTo(endX, 0); ctx.lineTo(endX, height);
+      }
       ctx.stroke();
     }
-  }, [mipmaps, slicePoints, height]);
+  }, [mipmaps, slicePoints, height, viewStart, viewEnd]);
 
   // 3. Demand-Gated Overlay Layer (Layer 2 - RAF active ONLY during playback)
   useEffect(() => {
@@ -159,7 +181,7 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       if (isPlaying) {
-        const x = playheadNorm * canvas.width;
+        const x = (playheadRef.current - viewStart) / (viewEnd - viewStart) * canvas.width;
         ctx.strokeStyle = '#38e58c'; // Phosphor Green Playhead
         ctx.lineWidth = 2;
         ctx.beginPath();
@@ -183,7 +205,7 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
     return () => {
       cancelAnimationFrame(animId);
     };
-  }, [isPlaying, playheadNorm]);
+  }, [isPlaying, viewStart, viewEnd]);
 
   // 4. Strict GPU Memory Cleanup on Unmount (WebKit Guardrail)
   useEffect(() => {
@@ -201,8 +223,8 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
 
   return (
     <div
-      className="relative w-full rounded border border-[#222832] bg-[#13171d] overflow-hidden"
-      style={{ height, touchAction: 'none' }}
+      className={`relative w-full rounded border border-[#222832] bg-[#13171d] overflow-hidden ${className}`}
+      style={{ ...style, height, touchAction: 'none' }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}

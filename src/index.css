@@ -382,7 +382,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 .phrase-row.is-playing,
 .table-row.is-playing { background: rgba(8, 145, 178, 0.25); }
 .phrase-sequencer-grid {
-  grid-template-columns: 2.5rem minmax(3.2rem, 0.9fr) minmax(3rem, 0.8fr) minmax(5rem, 1.2fr) minmax(3rem, 0.8fr) minmax(3.5rem, 0.8fr);
+  grid-template-columns: 2.5rem minmax(3.2rem, 0.9fr) minmax(3rem, 0.8fr) minmax(5rem, 1.2fr) minmax(3rem, 0.8fr) minmax(3.5rem, 0.8fr) minmax(3.6rem, 0.8fr);
 }
 .table-sequencer-grid {
   grid-template-columns: 5rem minmax(4rem, 1fr) minmax(3.5rem, 0.8fr) minmax(6rem, 1.2fr);
@@ -425,6 +425,33 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 }
 .phrase-page-controls button,
 .table-page-controls button { min-height: 30px; touch-action: manipulation; }
+.euclidean-controls {
+  position: absolute;
+  z-index: 20;
+  display: flex;
+  align-items: end;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid #3f3f46;
+  border-radius: 6px;
+  background: #09090b;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.euclidean-controls label {
+  display: grid;
+  gap: 3px;
+  color: #a1a1aa;
+  font-size: 9px;
+}
+.euclidean-controls input {
+  width: 56px;
+  min-height: 30px;
+  border: 1px solid #3f3f46;
+  border-radius: 3px;
+  padding-inline: 5px;
+  color: #f4f4f5;
+  background: #18181b;
+}
 .table-step-address { color: #d4d4d8; font-variant-numeric: tabular-nums; }
 .table-step-address small { color: #71717a; }
 

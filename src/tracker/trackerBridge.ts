@@ -6,6 +6,7 @@
 import { audioEngine } from '../audio/audioEngine';
 import { projectController, type Pattern, type TrackerStepItem } from '../project/projectController';
 import type { VoiceFxCommand } from '../fx/VoiceFxPool';
+import type { StepEvent } from '../project/stepModel';
 import { instrumentIdToPadId } from '../sampler/padIds';
 import { sliceRange } from '../sampler/gridSlices';
 
@@ -72,10 +73,11 @@ class TrackerBridge {
    * Empty steps, invalid pad IDs, and pads without a loaded buffer are skipped.
    */
   public scheduleStep(stepIndex: number, stepTime: number, stepDuration: number, rmx?: { stepIndex: number; firstTrack: number; lastTrack: number },
-    patternIndex?: number, boundary = false): void {
+    patternIndex?: number, boundary = false, allowedTracks?: ReadonlySet<number>): void {
     const pattern = patternIndex === undefined ? this.getActivePattern() : projectController.getState().tracker.patterns[patternIndex];
     if (!pattern) return;
     for (const track of pattern.tracks) {
+      if (allowedTracks && !allowedTracks.has(track.id)) continue;
       const trackStep = rmx && track.id >= rmx.firstTrack && track.id <= rmx.lastTrack ? rmx.stepIndex : stepIndex;
       const step = track.steps[trackStep];
       if (step) this.scheduleTrackStep(step, track.id, trackStep, stepTime, stepDuration,
@@ -84,21 +86,32 @@ class TrackerBridge {
   }
 
   private scheduleTrackStep(step: TrackerStepItem, trackIndex: number, stepIndex: number, stepTime: number, stepDuration: number,
-    rmxScope?: { firstTrack: number; lastTrack: number }, boundary = false): void {
-    const rawOffset = step.subTickOffset;
+    rmxScope?: { firstTrack: number; lastTrack: number }, boundary = false, event?: StepEvent): void {
+    if (!event && step.note === 'OFF') {
+      const padId = instrumentIdToPadId(step.instrumentId);
+      if (padId) audioEngine.releaseTrackGatedVoicesAt(padId, trackIndex, stepTime);
+      return;
+    }
+
+    if (!event && step.events?.length) {
+      for (const polyphonicEvent of step.events) {
+        this.scheduleTrackStep(step, trackIndex, stepIndex, stepTime, stepDuration, rmxScope, boundary, polyphonicEvent);
+      }
+      return;
+    }
+
+    const rawOffset = event?.subTickOffset ?? step.subTickOffset;
     const offset = typeof rawOffset === 'number' && Number.isFinite(rawOffset) ? Math.max(boundary ? 0 : -4, Math.min(4, rawOffset)) : 0;
     const scheduledTime = stepTime + offset * stepDuration / 8;
     const now = audioEngine.getContext()?.currentTime ?? 0;
     if (scheduledTime < now - 0.01) return;
 
-    const hasNote = Boolean(step.note) && step.note !== EMPTY_NOTE && step.note !== 'OFF';
-    const padId = instrumentIdToPadId(step.instrumentId);
+    const note = event?.note ?? step.note;
+    const instrumentId = event ? event.instrumentId ?? event.padId : step.instrumentId;
+    const hasNote = Boolean(note) && note !== EMPTY_NOTE && note !== 'OFF';
+    const padId = instrumentIdToPadId(instrumentId);
     if (!padId) return;
-    if (step.note === 'OFF') {
-      audioEngine.releaseTrackGatedVoicesAt(padId, trackIndex, scheduledTime);
-      return;
-    }
-    if (step.fx === 'OFF' || step.fx === '00') {
+    if (!event && (step.fx === 'OFF' || step.fx === '00')) {
       if (rmxScope) audioEngine.resetPadFxAt(padId, scheduledTime, rmxScope);
       else audioEngine.resetPadFxAt(padId, scheduledTime);
       if (!hasNote) return;
@@ -112,9 +125,17 @@ class TrackerBridge {
     const padMetadata = projectController.getState().sampler.pads[padId];
     const startPct = settings?.startPct ?? 0;
     const endPct = settings?.endPct ?? 100;
-    const slice = step.sliceIndex === undefined ? undefined : sliceRange(settings?.sliceMarkers ?? [], step.sliceIndex, buffer.length);
-    if (step.sliceIndex !== undefined && !slice) {
+    const slice = !event && step.sliceIndex !== undefined
+      ? sliceRange(settings?.sliceMarkers ?? [], step.sliceIndex, buffer.length)
+      : undefined;
+    if (!event && step.sliceIndex !== undefined && !slice) {
       console.error(`[TrackerBridge] Missing or invalid slice ${step.sliceIndex} for ${padId}.`);
+      return;
+    }
+    const eventStart = event ? Math.max(0, Math.min(buffer.length, event.sliceStartFrame)) : undefined;
+    const eventEnd = event ? Math.max(0, Math.min(buffer.length, event.sliceEndFrame)) : undefined;
+    if (event && (eventStart === undefined || eventEnd === undefined || eventEnd <= eventStart)) {
+      console.error(`[TrackerBridge] Invalid recorded slice for ${padId}.`);
       return;
     }
     const table = projectController.getState().tracker.tables?.find((item) => item.id === step.tableId);
@@ -140,24 +161,31 @@ class TrackerBridge {
         }
       }
     }
-    const velocity = typeof step.velocity === 'number' && Number.isFinite(step.velocity)
-      ? Math.max(0, Math.min(127, step.velocity)) / 127 : 1;
+    const rawVelocity = event?.velocity ?? step.velocity;
+    const velocity = typeof rawVelocity === 'number' && Number.isFinite(rawVelocity)
+      ? Math.max(0, Math.min(127, rawVelocity)) / 127 : 1;
+    const playbackMode = event?.playMode ?? settings?.playbackMode;
+    const reverse = event?.isReversed === true || playbackMode === 'reverse';
+    const eventFx = event?.fx ?? step.fx;
 
     const voiceId = audioEngine.triggerPad(padId, {
-      sliceStart: slice ? slice.start / buffer.sampleRate : (startPct / 100) * buffer.duration,
-      sliceEnd: slice ? slice.end / buffer.sampleRate : (endPct / 100) * buffer.duration,
-      semitoneOffset: (settings?.pitch ?? 0) + noteOffset(step.note),
+      sliceStart: eventStart !== undefined ? eventStart / buffer.sampleRate :
+        slice ? slice.start / buffer.sampleRate : (startPct / 100) * buffer.duration,
+      sliceEnd: eventEnd !== undefined ? eventEnd / buffer.sampleRate :
+        slice ? slice.end / buffer.sampleRate : (endPct / 100) * buffer.duration,
+      semitoneOffset: (settings?.pitch ?? 0) + noteOffset(note),
       volume: velocity,
-      loop: false,
-      gated: settings?.playbackMode === 'gate',
+      loop: playbackMode === 'loop',
+      reverse,
+      gated: playbackMode === 'gate',
       padVolume: padMetadata?.volume ?? 1,
       chokeGroup: padMetadata?.chokeGroup ?? null,
       chokeTrackRange: rmxScope,
       scheduledTime,
       trackIndex,
       modulation: modulation.length ? modulation : undefined,
-      fx: step.fx === 'FL' || step.fx === 'DL' || step.fx === 'DR'
-        ? { code: step.fx, value: step.fxValue } satisfies VoiceFxCommand : undefined,
+      fx: eventFx === 'FL' || eventFx === 'DL' || eventFx === 'DR'
+        ? { code: eventFx, value: event?.fxValue ?? step.fxValue } satisfies VoiceFxCommand : undefined,
     });
 
     this.prunePending();
