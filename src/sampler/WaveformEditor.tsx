@@ -2,16 +2,17 @@ import React, { useEffect, useRef, useState } from 'react';
 import { audioEngine } from '../audio/audioEngine';
 import { percentFromFrame, rangeFromPercent, type SampleRange } from './sampleRange';
 import type { PadBankApi, PadSlot } from './usePadBank';
-import { AudioWaveformCanvas } from './AudioWaveformCanvas';
+import type { AudioWaveformCanvasProps } from './AudioWaveformCanvas';
 
 interface Props {
   pad: PadSlot;
   onUpdatePad: PadBankApi['updatePad'];
   onPreviewRange: PadBankApi['previewRange'];
   sliceCount: number;
+  renderWaveform: (props: Omit<AudioWaveformCanvasProps, 'audioBuffer'>) => React.ReactNode;
 }
 
-export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRange, sliceCount }) => {
+export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRange, sliceCount, renderWaveform }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ pointerId: number; edge: 'start' | 'end'; range: SampleRange; original: SampleRange; x: number; origin: number } | null>(null);
   const pitchDrag = useRef<{ pointerId: number; y: number; initial: number; value: number } | null>(null);
@@ -229,16 +230,15 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
         onPointerUp={(event) => endWaveformPointer(event.pointerId)}
         onPointerCancel={(event) => endWaveformPointer(event.pointerId)}
         onLostPointerCapture={(event) => endWaveformPointer(event.pointerId)}>
-        <AudioWaveformCanvas
-          audioBuffer={pad.buffer}
-          isPlaying={waveformPlaying}
-          playheadNorm={playheadNorm}
-          slicePoints={length ? { startNorm: range.start / length, endNorm: range.end / length } : undefined}
-          viewStartNorm={length ? viewStart / length : 0}
-          viewEndNorm={length ? viewEnd / length : 1}
-          height={96}
-          className="pointer-events-none border-0 rounded-none"
-        />
+        {renderWaveform({
+          isPlaying: waveformPlaying,
+          playheadNorm,
+          slicePoints: length ? { startNorm: range.start / length, endNorm: range.end / length } : undefined,
+          viewStartNorm: length ? viewStart / length : 0,
+          viewEndNorm: length ? viewEnd / length : 1,
+          height: 96,
+          className: 'pointer-events-none border-0 rounded-none',
+        })}
       </div>
       {length > 0 && sliceMarkerFrames.filter((frame) => frame >= viewStart && frame <= viewEnd).map((frame) => (
         <div key={frame} aria-hidden="true" className="absolute top-0 bottom-0 w-px bg-white/40 pointer-events-none z-[1]"

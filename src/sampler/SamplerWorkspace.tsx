@@ -3,7 +3,7 @@
  * SamplerWorkspace.tsx — Sampler view with workbench above the pad bank
  */
 
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { BANKS, type PadBankApi } from './usePadBank';
 import { PadBankManager } from './PadBankManager';
 import { SamplerWorkbench } from './SamplerWorkbench';
@@ -12,6 +12,7 @@ import { projectController } from '../project/projectController';
 import { audioEngine } from '../audio/audioEngine';
 import { PerformanceDeckControls } from '../fx/PerformanceDeckControls';
 import { FxStrip } from '../fx/FxStrip';
+import { AudioWaveformCanvas, type AudioWaveformCanvasProps } from './AudioWaveformCanvas';
 
 export interface SamplerWorkspaceProps {
   padBank: PadBankApi;
@@ -25,6 +26,9 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({ padBank, rec
   const project = projectController.getState();
   const selectedPad = project.sampler.pads[padBank.selectedPadId];
   const trackVolume = project.settings.trackVolumes?.[selectedPad.targetTrack] ?? 1;
+  const renderWaveform = useCallback((props: Omit<AudioWaveformCanvasProps, 'audioBuffer'>) => (
+    <AudioWaveformCanvas audioBuffer={padBank.selectedPad.buffer} {...props} />
+  ), [padBank.selectedPad.buffer]);
   return (
   <div className={`${compact ? 'sampler-compact' : 'sampler-full'} flex-1 grid gap-3 overflow-hidden min-h-0`}>
     <div className="sampler-full-pads bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col gap-2 min-h-0">
@@ -110,6 +114,7 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({ padBank, rec
       activeBank={padBank.activeBank}
       onChop={padBank.chopToBank}
       onGenerateSliceMarkers={padBank.generateSliceMarkers}
+      renderWaveform={renderWaveform}
     />}
   </div>
   );

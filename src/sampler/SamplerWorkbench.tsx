@@ -3,6 +3,7 @@ import { AudioSampleDropzone } from '../components/AudioSampleDropzone';
 import type { RecordingStatus } from '../audio/inputRecorder';
 import type { BankId } from '../project/projectController';
 import type { PadBankApi, PadSlot } from './usePadBank';
+import type { AudioWaveformCanvasProps } from './AudioWaveformCanvas';
 import { WaveformEditor } from './WaveformEditor';
 
 export interface SamplerWorkbenchProps {
@@ -16,10 +17,11 @@ export interface SamplerWorkbenchProps {
   activeBank: BankId;
   onChop: PadBankApi['chopToBank'];
   onGenerateSliceMarkers: PadBankApi['generateSliceMarkers'];
+  renderWaveform: (props: Omit<AudioWaveformCanvasProps, 'audioBuffer'>) => React.ReactNode;
 }
 
 export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
-  pad, onUpdatePad, onPreviewRange, onLoadSample, recordingStatus, onRecord, storageReady, activeBank, onChop, onGenerateSliceMarkers,
+  pad, onUpdatePad, onPreviewRange, onLoadSample, recordingStatus, onRecord, storageReady, activeBank, onChop, onGenerateSliceMarkers, renderWaveform,
 }) => {
   const [count, setCount] = useState<number | null>(null);
   const [chopping, setChopping] = useState(false);
@@ -27,7 +29,8 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
   const [chopError, setChopError] = useState(false);
   return (
   <div className="sampler-workbench bg-[var(--bg-canvas)] flex flex-col shrink-0 font-mono select-none">
-    <WaveformEditor pad={pad} onUpdatePad={onUpdatePad} onPreviewRange={onPreviewRange} sliceCount={count ?? 0} />
+    <WaveformEditor pad={pad} onUpdatePad={onUpdatePad} onPreviewRange={onPreviewRange}
+      sliceCount={count ?? 0} renderWaveform={renderWaveform} />
     <div className="sampler-toolbar">
       <button type="button" disabled={!pad.buffer} onClick={() => onUpdatePad(pad.id, {
         playbackMode: pad.playbackMode === 'one-shot' ? 'gate' : pad.playbackMode === 'gate' ? 'loop' : 'one-shot',
