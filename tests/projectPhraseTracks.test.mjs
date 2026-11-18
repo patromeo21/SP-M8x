@@ -113,3 +113,40 @@ test('recording spills and wraps, retriggers exactly, and never overwrites occup
     delete globalThis.localStorage;
   }
 });
+
+test('polyphonic recording appends events and Euclidean generation populates phrase steps', async () => {
+  const store = new Map();
+  globalThis.window = {};
+  globalThis.localStorage = {
+    getItem: (key) => store.get(key) ?? null,
+    setItem: (key, value) => store.set(key, value),
+  };
+  try {
+    const source = inlineProjectModules(ts.transpileModule(
+      await readFile(new URL('../src/project/projectController.ts', import.meta.url), 'utf8'),
+      { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } },
+    ).outputText);
+    const url = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
+    const { projectController: controller } = await import(url);
+    const event = (id, note) => ({
+      id, note, instrumentId: 0, padId: 0, velocity: 127, subTickOffset: 0,
+      playMode: 'one-shot', sliceStartFrame: 0, sliceEndFrame: 1, isReversed: false,
+    });
+
+    assert.equal(controller.recordPolyphonicHit(0, 0, 0, event('first', 'C-4')), 0);
+    assert.equal(controller.recordPolyphonicHit(0, 0, 0, event('second', 'E-4')), 0);
+    assert.deepEqual(
+      controller.getState().tracker.patterns[0].tracks[0].steps[0].events.map(({ id }) => id),
+      ['first', 'second'],
+    );
+
+    controller.applyEuclideanPattern(0, 1, [true, false, true], 2);
+    const steps = controller.getState().tracker.patterns[0].tracks[1].steps;
+    assert.deepEqual(steps.slice(0, 3).map(({ note, instrumentId }) => [note, instrumentId]), [
+      ['C-4', 2], ['---', null], ['C-4', 2],
+    ]);
+  } finally {
+    delete globalThis.window;
+    delete globalThis.localStorage;
+  }
+});
