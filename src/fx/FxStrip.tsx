@@ -1,120 +1,109 @@
-/**
- * SP-M8x Hybrid Music Production Suite
- * FxStrip.tsx — Effects Strip & Punch-In Control Interface
- */
+import React, { useEffect, useRef, useState } from 'react';
+import { audioEngine } from '../audio/audioEngine';
+import { trackerEngine } from '../tracker/trackerEngine';
+import type { FxBus, MacroFx, RmxLength } from './fxEngine';
 
-import React, { useState, useEffect } from 'react';
-import { projectController } from '../project/projectController';
-import { fxEngine } from './fxEngine';
+type Trigger = Exclude<MacroFx, 'off'> | 'rmx';
+type Held = { bus: FxBus; effect: Trigger; ready: boolean };
+const triggers: { effect: Trigger; label: string }[] = [
+  { effect: 'filter', label: 'FILTER' },
+  { effect: 'rmx', label: 'RMX' },
+  { effect: 'lofi', label: 'LO-FI' },
+  { effect: 'chorus', label: 'CHORUS' },
+  { effect: 'mute', label: 'PUNCH-MUTE' },
+];
+const buses: FxBus[] = ['A', 'B', 'MST'];
+const lengths: RmxLength[] = [1, 2, 4];
 
-export const FxStrip: React.FC = () => {
-  const [projectState, setProjectState] = useState(() => projectController.getState());
-  const [activeEffect, setActiveEffect] = useState<string>('FILTER');
+export function FxStrip() {
+  const [bus, setBus] = useState<FxBus>('MST');
+  const [length, setLength] = useState<RmxLength>(1);
+  const [pressed, setPressed] = useState<readonly Held[]>([]);
+  const [error, setError] = useState('');
+  const pointers = useRef(new Map<number, Held>());
+  const initialized = useRef(false);
 
-  useEffect(() => {
-    const unsubscribe = projectController.subscribe((newState) => {
-      setProjectState(newState);
-    });
-    return () => unsubscribe();
+  const syncBus = (target: FxBus) => {
+    let active: MacroFx = 'off';
+    for (const held of pointers.current.values()) {
+      if (held.bus === target && held.effect !== 'rmx' && held.ready) active = held.effect;
+    }
+    if (initialized.current) audioEngine.setMacroFx(target, active);
+    setPressed([...pointers.current.values()]);
+  };
+
+  useEffect(() => () => {
+    pointers.current.clear();
+    trackerEngine.stopRmx();
+    if (initialized.current) buses.forEach((target) => audioEngine.setMacroFx(target, 'off'));
   }, []);
 
-  const stateRecord = projectState as unknown as Record<string, any>;
-  const masterVolume = stateRecord.effects?.master?.masterVolume ?? 0.8;
-  const filterCutoff = stateRecord.effects?.master?.filterCutoff ?? 20000;
-  const bitCrushDepth = stateRecord.effects?.master?.bitCrushDepth ?? 16;
-
-  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseFloat(e.target.value);
-    projectController.setMasterVolume(val);
-    fxEngine.setMasterVolume(val);
+  const end = (pointerId: number) => {
+    const held = pointers.current.get(pointerId);
+    if (!held) return;
+    pointers.current.delete(pointerId);
+    if (held.effect === 'rmx') trackerEngine.stopRmx();
+    syncBus(held.bus);
   };
 
-  const handleFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseFloat(e.target.value);
-    fxEngine.setFilterCutoff(val);
-  };
-
-  const handleBitCrushChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseInt(e.target.value, 10);
-    fxEngine.setBitCrushDepth(val);
-  };
-
-  return (
-    <div className="flex flex-col gap-4 p-4 bg-zinc-900/60 border border-zinc-800 rounded-xl font-mono select-none">
-      <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-        <h2 className="text-xs font-bold text-cyan-400">FX STRIP & MASTER MIXER</h2>
-        <div className="flex items-center gap-1">
-          {['FILTER', 'CRUSH', 'DELAY'].map((fx) => (
-            <button
-              key={fx}
-              type="button"
-              onPointerDown={() => setActiveEffect(fx)}
-              className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all active:scale-95 ${
-                activeEffect === fx
-                  ? 'bg-cyan-500 text-zinc-950 shadow-md shadow-cyan-500/20'
-                  : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
-              }`}
-            >
-              {fx}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Master Volume */}
-        <div className="flex flex-col gap-2 p-3 bg-zinc-950/60 border border-zinc-800/80 rounded-lg">
-          <div className="flex justify-between text-[10px] text-zinc-400">
-            <span>MASTER VOL</span>
-            <span className="text-cyan-400 font-bold">{Math.round(masterVolume * 100)}%</span>
-          </div>
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={masterVolume}
-            onChange={handleVolumeChange}
-            className="w-full accent-cyan-500 bg-zinc-800 rounded-lg h-2 cursor-pointer"
-          />
-        </div>
-
-        {/* Filter Cutoff */}
-        <div className="flex flex-col gap-2 p-3 bg-zinc-950/60 border border-zinc-800/80 rounded-lg">
-          <div className="flex justify-between text-[10px] text-zinc-400">
-            <span>FILTER CUTOFF</span>
-            <span className="text-cyan-400 font-bold">{Math.round(filterCutoff)} Hz</span>
-          </div>
-          <input
-            type="range"
-            min="100"
-            max="20000"
-            step="100"
-            value={filterCutoff}
-            onChange={handleFilterChange}
-            className="w-full accent-cyan-500 bg-zinc-800 rounded-lg h-2 cursor-pointer"
-          />
-        </div>
-
-        {/* Bitcrush Resolution */}
-        <div className="flex flex-col gap-2 p-3 bg-zinc-950/60 border border-zinc-800/80 rounded-lg">
-          <div className="flex justify-between text-[10px] text-zinc-400">
-            <span>BIT CRUSH</span>
-            <span className="text-cyan-400 font-bold">{bitCrushDepth} BIT</span>
-          </div>
-          <input
-            type="range"
-            min="4"
-            max="16"
-            step="1"
-            value={bitCrushDepth}
-            onChange={handleBitCrushChange}
-            className="w-full accent-cyan-500 bg-zinc-800 rounded-lg h-2 cursor-pointer"
-          />
-        </div>
+  return <div className="macro-dock" aria-label="Performance macro dock">
+    <div className="macro-presets-overlay">
+      <div className="macro-presets" aria-label="RMX repeat length">
+        {lengths.map((value, index) => <button type="button" key={value} aria-label={`RMX preset ${index + 1}: ${value} ${value === 1 ? 'row' : 'rows'}`}
+          aria-pressed={length === value} disabled={pressed.some((held) => held.effect === 'rmx')}
+          className={length === value ? 'is-selected' : ''} onClick={() => setLength(value)}>P{index + 1}</button>)}
       </div>
     </div>
-  );
-};
+    <div className="macro-row">
+      <div className="macro-bus-selector" aria-label="Macro bus">
+        {buses.map((target) => <button type="button" key={target} aria-label={`Macro bus ${target}`}
+          aria-pressed={bus === target} className={bus === target ? 'is-selected' : ''} onClick={() => setBus(target)}>{target}</button>)}
+      </div>
+      {triggers.map(({ effect, label }) => <button type="button" key={effect} aria-label={`${label} punch-in`}
+        aria-pressed={pressed.some((held) => held.bus === bus && held.effect === effect && held.ready)}
+        className="macro-trigger"
+        onPointerDown={(event) => {
+          event.preventDefault();
+          if (pointers.current.has(event.pointerId)) return;
+          if (effect === 'rmx' && [...pointers.current.values()].some((held) => held.effect === 'rmx')) return;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          const held: Held = { bus, effect, ready: false };
+          if (effect === 'rmx') {
+            if (!trackerEngine.startRmx(bus, length)) {
+              setError('START PLAYBACK BEFORE RMX');
+              return;
+            }
+            held.ready = true;
+            pointers.current.set(event.pointerId, held);
+            setPressed([...pointers.current.values()]);
+            setError('');
+            return;
+          }
+          const pointerId = event.pointerId;
+          pointers.current.set(pointerId, held);
+          setPressed([...pointers.current.values()]);
+          setError('');
+          void audioEngine.initialize().then(() => {
+            if (pointers.current.get(pointerId) !== held) return;
+            initialized.current = true;
+            held.ready = true;
+            syncBus(held.bus);
+          }).catch((failure: unknown) => {
+            console.error('[SP-M8x] Could not activate macro FX:', failure);
+            if (pointers.current.get(pointerId) === held) {
+              pointers.current.delete(pointerId);
+              setPressed([...pointers.current.values()]);
+              setError('MACRO FX UNAVAILABLE');
+            }
+          });
+        }}
+        onPointerUp={(event) => end(event.pointerId)}
+        onPointerCancel={(event) => end(event.pointerId)}
+        onLostPointerCapture={(event) => end(event.pointerId)}
+        onContextMenu={(event) => event.preventDefault()}>{label}</button>)}
+    </div>
+    {error && <span role="alert" className="text-[9px] text-rose-400">{error}</span>}
+  </div>;
+}
 
 export default FxStrip;

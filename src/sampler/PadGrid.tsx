@@ -79,7 +79,7 @@ export const PadGrid: React.FC<PadGridProps> = ({
       </div>
 
       {/* 4x4 Pad Grid Matrix */}
-      <div className="grid grid-cols-4 gap-2 flex-1">
+      <div className="pad-grid grid grid-cols-4 grid-rows-4 gap-2 flex-1 min-h-0 aspect-square w-full max-h-full">
         {padsToDisplay.map((pad, idx) => {
           const isTriggered = triggeredPad === idx;
           const isSelected = selectedPadId === idx;
@@ -90,7 +90,7 @@ export const PadGrid: React.FC<PadGridProps> = ({
             <div
               key={pad.id ?? idx}
               onClick={() => handlePadClick(idx)}
-              className={`relative flex flex-col items-center justify-between p-2 rounded-lg border cursor-pointer transition-all duration-75 select-none ${
+              className={`touch-none relative flex min-h-[44px] flex-col items-center justify-between p-2 rounded-lg border cursor-pointer transition-all duration-75 select-none ${
                 isTriggered
                   ? 'bg-[var(--accent-phrase)] border-[var(--accent-phrase)] text-zinc-950 scale-95 shadow-[0_0_12px_rgba(34,211,238,0.7)]'
                   : isSelected

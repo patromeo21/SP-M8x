@@ -5,6 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import { projectController, ProjectState } from '../project/projectController';
+import { padIdToInstrumentId } from '../sampler/padIds';
 
 export function useLivePhraseRecorder() {
   const [projectState, setProjectState] = useState<ProjectState>(() => projectController.getState());
@@ -24,9 +25,11 @@ export function useLivePhraseRecorder() {
     }
 
     // Update step via projectController method
+    const instrumentId = padIdToInstrumentId(sampleId);
+    if (instrumentId === null) throw new Error(`Invalid pad ID ${sampleId}.`);
     projectController.updateStep(patternIndex, stepIndex, {
       note,
-      sampleId,
+      instrumentId,
     });
   };
 

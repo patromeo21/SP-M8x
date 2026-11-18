@@ -14,7 +14,6 @@ export function applyTouchOptimizations(): void {
   style.innerHTML = `
     /* Disable default iOS touch gestures, rubber-banding, and text selection for tactile performance */
     html, body, #root {
-      touch-action: none;
       user-select: none;
       -webkit-user-select: none;
       -webkit-touch-callout: none;
@@ -25,14 +24,36 @@ export function applyTouchOptimizations(): void {
     }
 
     /* Ensure all interactive pads, buttons, and tracker grids capture pointer events instantly without tap highlights */
-    button, input, canvas, [role="button"], .pad-trigger, .tracker-cell {
+    button, input, canvas, [role="button"], .phrase-cell-control {
       touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
       user-select: none;
       -webkit-user-select: none;
     }
+
+    .app-shell, .app-shell *:not(input):not(textarea):not(select) {
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+    .pad-trigger, .sampler-waveform, .sampler-waveform * {
+      touch-action: none;
+    }
   `;
 
   document.head.appendChild(style);
+  const preventZoom = (event: Event) => event.preventDefault();
+  document.addEventListener('gesturestart', preventZoom, { passive: false });
+  document.addEventListener('gesturechange', preventZoom, { passive: false });
+  const preventPerformanceGesture = (event: Event) => {
+    const target = event.target;
+    if (!(target instanceof Element) || !target.closest('.pad-grid, .sampler-waveform, .macro-trigger, [data-performance-touch]')) return;
+    if (event.cancelable) event.preventDefault();
+  };
+  document.addEventListener('touchmove', preventPerformanceGesture, { passive: false });
+  document.addEventListener('dragstart', preventPerformanceGesture);
+  document.addEventListener('selectstart', preventPerformanceGesture);
+  document.addEventListener('contextmenu', preventPerformanceGesture);
   console.log('[TouchOptimizer] Applied mobile touch constraints for iPad 9th Gen.');
 }

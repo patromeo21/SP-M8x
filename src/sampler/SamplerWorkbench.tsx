@@ -1,171 +1,91 @@
-/**
- * SP-M8x Hybrid Music Production Suite
- * SamplerWorkbench.tsx — M8 Big Font Mode Waveform / Slicing Workbench
- */
-
 import React, { useState } from 'react';
+import { AudioSampleDropzone } from '../components/AudioSampleDropzone';
+import type { RecordingStatus } from '../audio/inputRecorder';
+import type { BankId } from '../project/projectController';
+import type { PadBankApi, PadSlot } from './usePadBank';
+import { WaveformEditor } from './WaveformEditor';
 
 export interface SamplerWorkbenchProps {
-  selectedPad?: { id?: string | number; sampleName?: string; sampleDuration?: number; sampleRate?: number; startPoint?: number; endPoint?: number; pitchShift?: number; [key: string]: any };
-  onUpdatePad?: (updatedPad: any) => void;
-  onTriggerPad?: (padId: number) => Promise<void> | void;
-  sampleName?: string;
-  sampleDuration?: number;
-  sampleRate?: number;
-  startPoint?: number;
-  endPoint?: number;
-  pitchShift?: number;
-  onParameterChange?: (param: string, value: number) => void;
+  pad: PadSlot;
+  onUpdatePad: PadBankApi['updatePad'];
+  onPreviewRange: PadBankApi['previewRange'];
+  onLoadSample: PadBankApi['loadSample'];
+  recordingStatus: RecordingStatus;
+  onRecord: (padId: string) => void;
+  storageReady: boolean;
+  activeBank: BankId;
+  onChop: PadBankApi['chopToBank'];
+  onGenerateSliceMarkers: PadBankApi['generateSliceMarkers'];
 }
 
 export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
-  selectedPad,
-  onUpdatePad,
-  onTriggerPad,
-  sampleName: externalName,
-  sampleDuration: externalDuration,
-  sampleRate: externalRate,
-  startPoint = 0,
-  endPoint = 100,
-  pitchShift = 0,
-  onParameterChange,
+  pad, onUpdatePad, onPreviewRange, onLoadSample, recordingStatus, onRecord, storageReady, activeBank, onChop, onGenerateSliceMarkers,
 }) => {
-  const currentName = selectedPad?.sampleName || externalName || 'NO SAMPLE LOADED';
-  const currentDuration = selectedPad?.sampleDuration ?? externalDuration ?? 0.0;
-  const currentRate = selectedPad?.sampleRate ?? externalRate ?? 44100;
-  
-  const [start, setStart] = useState<number>(selectedPad?.startPoint ?? startPoint);
-  const [end, setEnd] = useState<number>(selectedPad?.endPoint ?? endPoint);
-  const [pitch, setPitch] = useState<number>(selectedPad?.pitchShift ?? pitchShift);
-
-  const handleStartChange = (val: number) => {
-    setStart(val);
-    if (onParameterChange) onParameterChange('start', val);
-    if (selectedPad && onUpdatePad) {
-      onUpdatePad({ ...selectedPad, startPoint: val });
-    }
-  };
-
-  const handleEndChange = (val: number) => {
-    setEnd(val);
-    if (onParameterChange) onParameterChange('end', val);
-    if (selectedPad && onUpdatePad) {
-      onUpdatePad({ ...selectedPad, endPoint: val });
-    }
-  };
-
-  const handlePitchChange = (val: number) => {
-    setPitch(val);
-    if (onParameterChange) onParameterChange('pitch', val);
-    if (selectedPad && onUpdatePad) {
-      onUpdatePad({ ...selectedPad, pitchShift: val });
-    }
-  };
-
+  const [count, setCount] = useState<number | null>(null);
+  const [chopping, setChopping] = useState(false);
+  const [chopMessage, setChopMessage] = useState('');
+  const [chopError, setChopError] = useState(false);
   return (
-    <div className="flex flex-col h-full bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 font-mono select-none shadow-xl">
-      
-      {/* Workbench Header & Telemetry */}
-      <div className="flex items-center justify-between border-b border-[var(--border-grid)] pb-2 mb-3">
-        <div className="flex items-center space-x-2">
-          <span className="text-[10px] font-extrabold tracking-widest text-[var(--accent-table)] drop-shadow-[0_0_8px_rgba(192,132,252,0.3)]">
-            SAMPLER WORKBENCH
-          </span>
-          <span className="text-[9px] bg-purple-950 text-[var(--accent-table)] border border-purple-500/40 px-1.5 py-0.5 rounded font-bold">
-            EDIT & SLICE
-          </span>
-        </div>
-        <div className="text-[9px] text-zinc-400">
-          RATE: <strong className="text-zinc-200">{currentRate}HZ</strong>
-        </div>
-      </div>
-
-      {/* Waveform Display Canvas Scaffold */}
-      <div className="relative flex flex-col items-center justify-center h-28 bg-zinc-950 border border-zinc-800 rounded-lg p-2 mb-3 overflow-hidden group">
-        {/* Simulated Waveform Grid Lines */}
-        <div className="absolute inset-0 grid grid-cols-8 grid-rows-4 pointer-events-none opacity-20">
-          {Array.from({ length: 32 }).map((_, i) => (
-            <div key={i} className="border-[0.5px] border-zinc-700/40" />
-          ))}
-        </div>
-
-        {/* Center Sample Name / Status */}
-        <span className="text-xs font-black tracking-wider text-zinc-300 z-10 truncate max-w-[220px]">
-          {currentName}
-        </span>
-
-        {/* Waveform Visualizer Placeholder Bars */}
-        <div className="absolute bottom-2 left-3 right-3 flex items-end justify-between h-10 gap-0.5 pointer-events-none">
-          {Array.from({ length: 36 }).map((_, i) => {
-            const heightFactor = Math.sin(i * 0.4) * 50 + 50;
-            return (
-              <div 
-                key={i} 
-                className="w-1 bg-[var(--accent-table)] opacity-70 rounded-t"
-                style={{ height: `${Math.max(15, heightFactor)}%` }}
-              />
-            );
-          })}
-        </div>
-
-        {/* Duration / Telemetry Footer inside screen */}
-        <div className="absolute top-1.5 left-2 text-[8px] text-purple-400 font-bold">
-          DUR: {currentDuration.toFixed(2)}S
-        </div>
-      </div>
-
-      {/* Parameter Control Sliders (Start, End, Pitch) */}
-      <div className="grid grid-cols-3 gap-2 mt-auto">
-        {/* Start Point */}
-        <div className="flex flex-col bg-zinc-900/60 border border-zinc-800 rounded p-1.5">
-          <div className="flex justify-between text-[8px] mb-1">
-            <span className="text-zinc-400 font-bold">START</span>
-            <span className="text-[var(--accent-table)]">{start}%</span>
-          </div>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            value={start}
-            onChange={(e) => handleStartChange(Number(e.target.value))}
-            className="w-full accent-[var(--accent-table)] cursor-pointer h-1 bg-zinc-800 rounded"
-          />
-        </div>
-
-        {/* End Point */}
-        <div className="flex flex-col bg-zinc-900/60 border border-zinc-800 rounded p-1.5">
-          <div className="flex justify-between text-[8px] mb-1">
-            <span className="text-zinc-400 font-bold">END</span>
-            <span className="text-[var(--accent-table)]">{end}%</span>
-          </div>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            value={end}
-            onChange={(e) => handleEndChange(Number(e.target.value))}
-            className="w-full accent-[var(--accent-table)] cursor-pointer h-1 bg-zinc-800 rounded"
-          />
-        </div>
-
-        {/* Pitch Shift */}
-        <div className="flex flex-col bg-zinc-900/60 border border-zinc-800 rounded p-1.5">
-          <div className="flex justify-between text-[8px] mb-1">
-            <span className="text-zinc-400 font-bold">PITCH</span>
-            <span className="text-[var(--accent-table)]">{pitch > 0 ? `+${pitch}` : pitch}ST</span>
-          </div>
-          <input
-            type="range"
-            min={-12}
-            max={12}
-            value={pitch}
-            onChange={(e) => handlePitchChange(Number(e.target.value))}
-            className="w-full accent-[var(--accent-table)] cursor-pointer h-1 bg-zinc-800 rounded"
-          />
-        </div>
-      </div>
-
+  <div className="sampler-workbench bg-[var(--bg-canvas)] flex flex-col shrink-0 font-mono select-none">
+    <WaveformEditor pad={pad} onUpdatePad={onUpdatePad} onPreviewRange={onPreviewRange} sliceCount={count ?? 0} />
+    <div className="sampler-toolbar">
+      <button type="button" disabled={!pad.buffer} onClick={() => onUpdatePad(pad.id, {
+        playbackMode: pad.playbackMode === 'one-shot' ? 'gate' : pad.playbackMode === 'gate' ? 'loop' : 'one-shot',
+      })}
+        aria-label={`Playback mode ${pad.playbackMode}`}
+        className={`sampler-mode chop-action text-[9px] font-bold disabled:opacity-40 ${
+          pad.playbackMode !== 'one-shot' ? 'text-purple-300' : 'text-zinc-400'
+        }`}>
+        {pad.playbackMode.toUpperCase()}
+      </button>
+      <AudioSampleDropzone padId={pad.id} onSampleLoaded={onLoadSample} disabled={!storageReady} />
+      <button type="button" disabled={!storageReady || recordingStatus.phase === 'processing'} onClick={() => onRecord(pad.id)}
+        className="sampler-record chop-action px-1 text-[9px] font-bold text-rose-300 disabled:opacity-40">
+        {recordingStatus.phase === 'recording' ? 'STOP' : recordingStatus.phase === 'requesting' ? 'CANCEL' : recordingStatus.phase === 'processing' ? 'WAIT' : 'REC'}
+      </button>
+      <select id={`slice-count-${pad.id}`} aria-label="Number of slices" value={count ?? ''}
+        disabled={!storageReady || !pad.sampleKey || chopping}
+        onChange={(event) => {
+          const nextCount = event.target.value ? Number(event.target.value) : null;
+          setCount(nextCount);
+          setChopMessage('');
+          if (nextCount === null) return;
+          setChopping(true);
+          void onGenerateSliceMarkers(pad.id, nextCount).then(() => {
+            setChopError(false);
+            setChopMessage(`SAVED ${nextCount} SLI MARKERS`);
+          }).catch((error: unknown) => {
+            setChopError(true);
+            setChopMessage(error instanceof Error ? error.message : 'Could not save markers.');
+          }).finally(() => setChopping(false));
+        }}
+        className="sampler-count bg-zinc-900 border border-zinc-700 rounded text-[9px] text-zinc-200">
+        <option value="">CHOP</option>
+        {Array.from({ length: 31 }, (_, index) => index + 2).map((number) => <option key={number} value={number}>{number}</option>)}
+      </select>
+      {count !== null && <button type="button" disabled={!storageReady || !pad.sampleKey || chopping} onClick={() => {
+        setChopping(true);
+        setChopMessage('');
+        void onChop(pad.id, activeBank, count).then((ids) => {
+          setChopError(false);
+          setChopMessage(`ASSIGNED ${ids.length}: ${ids[0]} → ${ids[ids.length - 1]}`);
+        }).catch((error: unknown) => {
+          setChopError(true);
+          setChopMessage(error instanceof Error ? error.message : 'Could not assign slices.');
+        }).finally(() => setChopping(false));
+      }} className="sampler-chop rounded border border-cyan-800 bg-cyan-950/30 font-bold text-[9px] text-cyan-300 disabled:opacity-40">
+        {chopping ? 'SAVING…' : `TO EMPTY ${activeBank}`}
+      </button>}
     </div>
+    {chopMessage && <div role={chopError ? 'alert' : 'status'} className={`sampler-chop-status mb-2 text-[9px] break-words ${chopError ? 'text-rose-300' : 'text-cyan-300'}`}>{chopMessage}</div>}
+    {recordingStatus.phase !== 'idle' || recordingStatus.message ? (
+      <div role={recordingStatus.phase === 'error' ? 'alert' : 'status'} className="sampler-record-status text-[9px] text-rose-300">
+        {recordingStatus.phase === 'recording' ? `REC ${recordingStatus.padId} · MAX 60S` :
+          recordingStatus.phase === 'requesting' ? `REQUESTING INPUT FOR ${recordingStatus.padId}` :
+          recordingStatus.phase === 'processing' ? `PROCESSING ${recordingStatus.padId}` : recordingStatus.message}
+      </div>
+    ) : null}
+  </div>
   );
 };
 

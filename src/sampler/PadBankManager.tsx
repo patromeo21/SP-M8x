@@ -1,135 +1,239 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * PadBankManager.tsx — 4x4 Pad Bank Manager (Banks A-D)
+ * PadBankManager.tsx — 4x4 live pad grid for the active bank (A-D)
  */
 
-import React, { useState, useEffect } from 'react';
-import { audioEngine } from '../audio/audioEngine';
-import { projectController } from '../project/projectController';
-import { BankId, PadAssignment } from '../project/projectTypes';
-import { AudioSampleDropzone } from '../components/AudioSampleDropzone';
+import React, { useEffect, useRef, useState } from 'react';
+import { PADS_PER_BANK, formatPadLabel, type PadBankApi } from './usePadBank';
+import { chromaticNote, chromaticOffset } from './chromatic';
 
-const BANKS: BankId[] = ['A', 'B', 'C', 'D'];
+export type PadBankManagerProps = Pick<
+  PadBankApi,
+  'slots' | 'activeBank' | 'selectedPadId' | 'padPlayMode' | 'chromaticRootOffset' | 'setPadPlayMode' | 'setChromaticRootOffset' | 'triggerPad' | 'deletePads' | 'copyPad' | 'storageReady'
+> & { sliActive: boolean; setSliActive: (active: boolean) => void };
 
-export const PadBankManager: React.FC = () => {
-  const [projectState, setProjectState] = useState(() => projectController.getState());
-  const [activeBank, setActiveBank] = useState<BankId>('A');
-  const [selectedPadId, setSelectedPadId] = useState<string>('A1');
-  const [padBuffers, setPadBuffers] = useState<Record<string, AudioBuffer>>({});
+export const PadBankManager: React.FC<PadBankManagerProps> = ({
+  slots,
+  activeBank,
+  selectedPadId,
+  padPlayMode,
+  chromaticRootOffset,
+  setPadPlayMode,
+  setChromaticRootOffset,
+  triggerPad,
+  deletePads,
+  copyPad,
+  storageReady,
+  sliActive,
+  setSliActive,
+}) => {
+  // Each finger is tracked by pointerId so simultaneous touches light and release independently.
+  const activePointers = useRef(new Map<number, { padId: string; release: (pointerTime?: number) => void }>());
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [pressedPads, setPressedPads] = useState<ReadonlySet<string>>(new Set());
+  const [selecting, setSelecting] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const [copySource, setCopySource] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState('');
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState('');
+
+  const syncPressed = () => setPressedPads(new Set(Array.from(activePointers.current.values(), ({ padId }) => padId)));
 
   useEffect(() => {
-    const unsubscribe = projectController.subscribe((newState) => {
-      setProjectState(newState);
-    });
-    return () => unsubscribe();
+    const pointers = activePointers.current;
+    setPressedPads(new Set());
+    return () => {
+      for (const { release } of pointers.values()) release();
+      pointers.clear();
+    };
+  }, [activeBank, padPlayMode]);
+
+  useEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+    const preventDrag = (event: Event) => { if (event.cancelable) event.preventDefault(); };
+    grid.addEventListener('touchmove', preventDrag, { passive: false });
+    grid.addEventListener('dragstart', preventDrag);
+    grid.addEventListener('selectstart', preventDrag);
+    return () => {
+      grid.removeEventListener('touchmove', preventDrag);
+      grid.removeEventListener('dragstart', preventDrag);
+      grid.removeEventListener('selectstart', preventDrag);
+    };
   }, []);
 
-  // Safely extract sampler assignments from project state without strict interface collisions
-  const stateRecord = projectState as unknown as Record<string, any>;
-  const assignments: PadAssignment[] = stateRecord.sampler?.assignments || [];
-
-  const parsePadId = (padId: string): { bank: BankId; slot: number } => {
-    const bank = padId[0] as BankId;
-    const slot = parseInt(padId.slice(1), 10) - 1;
-    return { bank, slot };
+  const toggleSelection = (padId: string) => {
+    if (!slots[padId].sampleKey || deleting || confirming) return;
+    setSelected((previous) => {
+      const next = new Set(previous);
+      if (next.has(padId)) next.delete(padId); else next.add(padId);
+      return next;
+    });
   };
 
-  const getAssignment = (bank: BankId, slot: number): PadAssignment | undefined => {
-    return assignments.find((a: PadAssignment) => a.bank === bank && a.slot === slot);
-  };
-
-  const { bank: selBank, slot: selSlot } = parsePadId(selectedPadId);
-  const selectedAssignment = getAssignment(selBank, selSlot);
-
-  const handleSampleLoaded = (padId: string, buffer: AudioBuffer, fileName: string) => {
-    setPadBuffers((prev) => ({
-      ...prev,
-      [padId]: buffer,
-    }));
-    console.log(`[PadBankManager] Loaded "${fileName}" into Pad ${padId}`);
-  };
-
-  const handleTriggerPad = (padId: string) => {
-    setSelectedPadId(padId);
-    const buffer = padBuffers[padId];
-
-    if (buffer) {
-      audioEngine.triggerVoice(padId, buffer);
-    } else {
-      console.log(`[PadBankManager] Pad ${padId} has no audio buffer loaded.`);
+  const handlePointerDown = (event: React.PointerEvent<HTMLButtonElement>, padId: string, index: number) => {
+    if (activePointers.current.has(event.pointerId)) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    if (copying) {
+      if (!copySource) {
+        if (slots[padId].sampleKey) setCopySource(padId);
+      } else if (padId === copySource) {
+        setCopySource(null);
+      } else if (!slots[padId].sampleKey) {
+        setCopyError('');
+        void copyPad(copySource, padId).then(() => setCopySource(null)).catch((failure: unknown) => {
+          setCopyError(failure instanceof Error ? failure.message : 'Could not copy pad.');
+        });
+      }
+      return;
     }
+    if (selecting) {
+      toggleSelection(padId);
+      return;
+    }
+    const slice = sliActive && padPlayMode === 'BANK_64' && index < 10
+      ? Math.min(index + 1, slots[selectedPadId].sliceMarkers.length - 1) : undefined;
+    const source = slice !== undefined ? selectedPadId : padPlayMode === 'CHROMATIC_16' ? selectedPadId : padId;
+    const pitch = padPlayMode === 'CHROMATIC_16' ? chromaticOffset(index, chromaticRootOffset) : 0;
+    activePointers.current.set(event.pointerId, { padId, release: triggerPad(source, undefined, pitch, event.timeStamp, slice, sliActive) });
+    syncPressed();
+  };
+
+  const handlePointerEnd = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const active = activePointers.current.get(event.pointerId);
+    if (!active) return;
+    active.release(event.timeStamp);
+    activePointers.current.delete(event.pointerId);
+    syncPressed();
   };
 
   return (
-    <div className="flex flex-col gap-4 p-4 bg-zinc-900/60 border border-zinc-800 rounded-xl font-mono select-none">
-      {/* Bank Selector Tabs */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 pb-3">
-        <div className="flex items-center gap-1">
-          {BANKS.map((bank) => (
-            <button
-              key={bank}
-              type="button"
-              onPointerDown={() => setActiveBank(bank)}
-              className={`px-4 py-2 text-xs font-bold rounded-lg transition-all active:scale-95 ${
-                activeBank === bank
-                  ? 'bg-cyan-500 text-zinc-950 shadow-md shadow-cyan-500/20'
-                  : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+    <div className="flex flex-col flex-1 min-h-0 gap-1">
+      <div className="flex items-center justify-between gap-1 text-[9px]">
+        <button type="button" aria-label="Toggle chromatic pad mode" aria-pressed={padPlayMode === 'CHROMATIC_16'}
+          className="touch-none rounded border border-zinc-700 px-2 py-1 text-zinc-300"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.currentTarget.setPointerCapture(event.pointerId);
+            setSelecting(false); setConfirming(false); setCopying(false); setCopySource(null);
+            setPadPlayMode(padPlayMode === 'BANK_64' ? 'CHROMATIC_16' : 'BANK_64');
+          }}>
+          {padPlayMode === 'CHROMATIC_16' ? 'CHROMATIC' : 'BANK'}
+        </button>
+        <button type="button" aria-label="Toggle slice mode" aria-pressed={sliActive}
+          disabled={padPlayMode !== 'BANK_64' || slots[selectedPadId].sliceMarkers.length < 2}
+          className={`touch-none rounded border px-2 py-1 disabled:opacity-40 ${sliActive ? 'sli-active' : 'border-zinc-700 text-zinc-300'}`}
+          onClick={() => { setSelecting(false); setConfirming(false); setCopying(false); setCopySource(null); setSliActive(!sliActive); }}>
+          SLI
+        </button>
+        {padPlayMode === 'CHROMATIC_16' && <label>ROOT
+          <select aria-label="Chromatic root offset" value={chromaticRootOffset}
+            className="bg-zinc-950 text-zinc-300" onChange={(event) => setChromaticRootOffset(Number(event.target.value))}>
+            {Array.from({ length: 49 }, (_, i) => i - 24).map((value) =>
+              <option key={value} value={value}>{value > 0 ? `+${value}` : value}</option>)}
+          </select>
+        </label>}
+        <button type="button" disabled={padPlayMode === 'CHROMATIC_16' || !storageReady || deleting} onClick={() => {
+          setSelecting(!selecting); setCopying(false); setCopyError(''); setSelected(new Set()); setConfirming(false); setError('');
+        }} className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-300 disabled:opacity-40">
+          {selecting ? 'CANCEL' : 'DEL'}
+        </button>
+        {!selecting &&         <button type="button" disabled={padPlayMode === 'CHROMATIC_16' || !storageReady} aria-pressed={copying} onPointerDown={(event) => {
+          event.preventDefault();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          setCopying(!copying); setCopySource(null); setCopyError('');
+        }} className={`rounded border px-2 py-1 disabled:opacity-40 ${copying ? 'border-cyan-600 text-cyan-300' : 'border-zinc-700 text-zinc-300'}`}>
+          {copying ? 'CANCEL COPY' : 'COPY'}
+        </button>}
+        {selecting && <button type="button" disabled={!selected.size || deleting} onClick={() => setConfirming(true)}
+          className="rounded border border-rose-800 bg-rose-950 px-2 py-1 text-rose-300 disabled:opacity-40">
+          DELETE {selected.size}
+        </button>}
+      </div>
+      {padPlayMode === 'CHROMATIC_16' && <div role="status" className="text-[9px] text-zinc-400">
+        SOURCE {formatPadLabel(selectedPadId)}{slots[selectedPadId].sampleKey ? '' : ' — SELECT A LOADED PAD IN BANK MODE'}
+      </div>}
+      {copying && <div role={copyError ? 'alert' : 'status'} className={`text-[9px] ${copyError ? 'text-rose-300' : 'text-zinc-400'}`}>
+        {copyError || (copySource ? `SOURCE ${formatPadLabel(copySource)} · SWITCH BANK, THEN TAP AN EMPTY DESTINATION` : 'TAP A LOADED SOURCE PAD')}
+      </div>}
+      {confirming && <div role="dialog" aria-label="Confirm pad deletion" className="pad-delete-dialog">
+        <div className="pad-delete-dialog-panel">
+          <strong>DELETE {selected.size} PAD{selected.size === 1 ? '' : 'S'}?</strong>
+          <span>{Array.from(selected).map(formatPadLabel).join(', ')}</span>
+          <span>This cannot be undone.</span>
+          {error && <span role="alert" className="text-rose-300">{error}</span>}
+          <div className="flex justify-end gap-2">
+            <button type="button" disabled={deleting} onClick={() => { setConfirming(false); setError(''); }}
+              className="rounded border border-zinc-700 px-3 py-2">CANCEL</button>
+            <button type="button" disabled={deleting} onClick={() => {
+              setDeleting(true); setError('');
+              void deletePads(Array.from(selected)).then(() => {
+                setSelected(new Set()); setConfirming(false); setSelecting(false);
+              }).catch((failure: unknown) => {
+                setError(failure instanceof Error ? failure.message : 'Could not delete pads.');
+              }).finally(() => setDeleting(false));
+            }} className="rounded border border-rose-700 bg-rose-950 px-3 py-2 text-rose-200">
+              {deleting ? 'DELETING' : 'CONFIRM DELETE'}
+            </button>
+          </div>
+        </div>
+      </div>}
+      <div ref={gridRef} className="pad-grid grid grid-cols-4 gap-1.5 flex-1 min-h-0 aspect-square w-full max-h-full">
+      {Array.from({ length: PADS_PER_BANK }, (_, i) => {
+        const padId = `${activeBank}${i + 1}`;
+        const isSlice = sliActive && padPlayMode === 'BANK_64' && i < 10 && !copying && !selecting;
+        const slot = slots[padPlayMode === 'CHROMATIC_16' || isSlice ? selectedPadId : padId];
+        const hasSample = slot.sampleKey !== null;
+        const isSelected = selecting ? selected.has(padId) : padPlayMode === 'BANK_64' && padId === selectedPadId;
+        const isPressed = pressedPads.has(padId);
+
+        return (
+          <button
+            key={padId}
+            data-pad-id={padId}
+            data-pressed={isPressed || undefined}
+            type="button"
+            aria-pressed={selecting ? isSelected : undefined}
+            onClick={(event) => {
+              if (selecting && event.detail === 0) toggleSelection(padId);
+            }}
+            onPointerDown={(event) => handlePointerDown(event, padId, i)}
+            onPointerUp={handlePointerEnd}
+            onPointerCancel={handlePointerEnd}
+            onLostPointerCapture={handlePointerEnd}
+            onContextMenu={(event) => event.preventDefault()}
+            className={`pad-trigger touch-none select-none min-h-[44px] border rounded p-1.5 flex flex-col justify-between text-left text-[9px] transition-all duration-75 ${
+              isPressed
+                ? 'bg-[var(--accent-phrase)] border-[var(--accent-phrase)] text-zinc-950 scale-95 shadow-[0_0_12px_rgba(34,211,238,0.7)]'
+                : copying && copySource === padId
+                ? 'bg-cyan-950 border-cyan-400 text-cyan-200'
+                : isSelected
+                ? 'bg-zinc-900 border-[var(--accent-phrase)] shadow-[0_0_8px_rgba(34,211,238,0.3)]'
+                : 'bg-zinc-950 border-zinc-800 hover:border-cyan-500/50'
+            }`}
+          >
+            <span className="flex w-full items-center justify-between font-bold">
+              <span className={isPressed ? 'text-zinc-900' : 'text-zinc-500'}>{isSlice ? `SLI ${String(Math.min(i + 1, slot.sliceMarkers.length - 1)).padStart(2, '0')}` : padPlayMode === 'CHROMATIC_16' ? chromaticNote(chromaticOffset(i, chromaticRootOffset)) : formatPadLabel(padId)}</span>
+              {hasSample && (
+                <span className={`text-[8px] ${isPressed ? 'text-zinc-900' : 'text-[var(--accent-phrase)]'}`}>
+                  {selecting && isSelected ? 'SELECTED' : slot.playbackMode === 'one-shot' ? 'ONE' : slot.playbackMode.toUpperCase()}
+                </span>
+              )}
+            </span>
+            <span
+              className={`text-[8px] truncate max-w-full ${
+                isPressed ? 'text-zinc-900' : hasSample ? 'text-zinc-200' : 'text-zinc-600'
               }`}
             >
-              BANK {bank}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-3 text-xs">
-          <span className="text-zinc-400">
-            SEL: <strong className="text-cyan-400">{selectedPadId}</strong>
-          </span>
-          <span className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-cyan-300">
-            {selectedAssignment?.loop ? 'LOOP' : 'ONESHOT'}
-          </span>
-        </div>
-      </div>
-
-      {/* 4x4 Grid for Active Bank */}
-      <div className="grid grid-cols-4 gap-2">
-        {Array.from({ length: 16 }, (_, slotIndex) => {
-          const padId = `${activeBank}${slotIndex + 1}`;
-          const assignment = getAssignment(activeBank, slotIndex);
-          const hasBuffer = !!padBuffers[padId];
-          const isSelected = padId === selectedPadId;
-
-          return (
-            <button
-              key={padId}
-              type="button"
-              onPointerDown={() => handleTriggerPad(padId)}
-              className={`h-20 flex flex-col items-center justify-between p-2 rounded-xl border transition-all active:scale-95 touch-none ${
-                isSelected ? 'border-cyan-400 shadow-md shadow-cyan-500/10' : 'border-zinc-800'
-              } ${
-                hasBuffer
-                  ? 'bg-zinc-800/80 text-zinc-100 hover:bg-zinc-700'
-                  : 'bg-zinc-950/60 text-zinc-600 hover:bg-zinc-900'
-              }`}
-            >
-              <div className="w-full flex justify-between text-[10px] font-bold">
-                <span className={hasBuffer ? 'text-cyan-400' : 'text-zinc-600'}>{padId}</span>
-                {hasBuffer && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />}
-              </div>
-              <span className="text-[10px] font-medium truncate max-w-full px-1">
-                {assignment?.name || `EMPTY ${padId}`}
-              </span>
-              <span className="text-[9px] text-zinc-500">
-                {assignment?.loop ? 'LOOP' : 'ONE'}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Sample Dropzone */}
-      <div className="mt-2 pt-3 border-t border-zinc-800/80">
-        <AudioSampleDropzone padId={selectedPadId} onSampleLoaded={handleSampleLoaded} />
+              {slot.loading ? 'LOADING...' : slot.name}
+            </span>
+          </button>
+        );
+      })}
       </div>
     </div>
   );

@@ -1,199 +1,249 @@
-/**
- * SP-M8x Hybrid Music Production Suite
- * SPM8xDashboard.tsx — Main Hardware Layout Shell (iPad Optimized)
- */
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { SamplerWorkspace } from '../sampler/SamplerWorkspace';
+import { usePadBank, useEngineStatus } from '../sampler/usePadBank';
+import { useInputRecorder } from '../sampler/useInputRecorder';
+import { audioEngine } from '../audio/audioEngine';
+import { MasterOutput } from '../audio/MasterOutput';
+import { trackerEngine } from '../tracker/trackerEngine';
+import { trackerBridge } from '../tracker/trackerBridge';
+import { projectController } from '../project/projectController';
+import { PhraseTableEditor } from '../tracker/PhraseTableEditor';
+import { SongArrangementView } from '../tracker/SongArrangementView';
+import { chromaticNote } from '../sampler/chromatic';
+import { instrumentIdToPadId, padIdToInstrumentId } from '../sampler/padIds';
 
-import React, { useState } from 'react';
-import { TrackerGrid } from '../tracker/TrackerGrid';
-
-export type WorkspaceTab = 'workspace' | 'song' | 'phrase/table' | 'sampler';
+export type WorkspaceTab = 'phrase' | 'table' | 'song' | 'mixer' | 'sampler';
 
 export interface SPM8xDashboardProps {
   initialTab?: WorkspaceTab;
   activeStep?: number;
 }
 
-export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({
-  initialTab = 'workspace',
-  activeStep = 0,
-}) => {
+export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'phrase', activeStep = -1 }) => {
   const [currentTab, setCurrentTab] = useState<WorkspaceTab>(initialTab);
-  const [deckMode, setDeckMode] = useState<'pads' | 'm8'>('pads');
-  const [activeBank, setActiveBank] = useState<'A' | 'B' | 'C' | 'D'>('A');
+  const padBank = usePadBank();
+  const recorder = useInputRecorder(padBank.loadSample);
+  const engineStatus = useEngineStatus();
+  const [audioError, setAudioError] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [armed, setArmed] = useState(false);
+  const [playhead, setPlayhead] = useState(-1);
+  const [transportMessage, setTransportMessage] = useState('');
+  const [queuedPatternIndex, setQueuedPatternIndex] = useState<number | null>(null);
+  const [, refreshProject] = useState(0);
+  const startGeneration = useRef(0);
+  const queueGeneration = useRef(0);
+  const recordingRef = useRef(false);
+  recordingRef.current = armed && playing;
+  const stopTransport = useCallback(() => {
+    startGeneration.current++;
+    queueGeneration.current++;
+    trackerEngine.stop();
+    setQueuedPatternIndex(null);
+    padBank.stopGatedVoices();
+    setStarting(false);
+    setPlaying(false);
+    setPlayhead(-1);
+  }, [padBank.stopGatedVoices]);
+
+  useEffect(() => {
+    (projectController.getState().settings.trackVolumes ?? Array.from({ length: 8 }, () => 1))
+      .forEach((volume, index) => audioEngine.setTrackVolume(index, volume));
+    trackerBridge.setPadSettingsProvider(padBank.getPadSettings);
+    trackerEngine.setCallbacks(setPlayhead, (reason) => {
+      queueGeneration.current++;
+      setQueuedPatternIndex(null);
+      setPlaying(false);
+      setPlayhead(-1);
+      if (reason) setTransportMessage(reason);
+    }, (index) => {
+      projectController.setActivePattern(index);
+      setQueuedPatternIndex((queued) => queued === index ? null : queued);
+    });
+    const unsubscribe = projectController.subscribe(() => refreshProject((value) => value + 1));
+    const unsubscribeOverload = audioEngine.subscribeOverload(setTransportMessage);
+    return () => {
+      startGeneration.current++;
+      trackerEngine.stop();
+      trackerBridge.setPadSettingsProvider(null);
+      unsubscribe();
+      unsubscribeOverload();
+    };
+  }, [padBank.getPadSettings]);
+
+  const toggleTransport = useCallback(() => {
+    if (playing || starting) {
+      stopTransport();
+      return;
+    }
+    const generation = ++startGeneration.current;
+    setStarting(true);
+    setTransportMessage('');
+    void (async () => {
+      try {
+        await audioEngine.initialize();
+        const state = projectController.getState();
+        const pattern = state.tracker.patterns[state.settings.activePatternIndex];
+        if (!pattern) throw new Error('Active phrase is unavailable.');
+        const ids = pattern.tracks.flatMap((track) => track.steps.slice(0, pattern.length).map((step) => instrumentIdToPadId(step.instrumentId)))
+          .filter((id): id is string => id !== null);
+        await padBank.preparePads(ids);
+        if (generation !== startGeneration.current) return;
+        await trackerEngine.start(state.settings.bpm);
+        if (generation !== startGeneration.current) return;
+        setPlaying(true);
+      } catch (error) {
+        if (generation !== startGeneration.current) return;
+        console.error('[SP-M8x] Could not start transport:', error);
+        setTransportMessage(error instanceof Error ? error.message : 'Could not start transport.');
+      } finally {
+        if (generation === startGeneration.current) setStarting(false);
+      }
+    })();
+  }, [padBank.preparePads, playing, starting, stopTransport]);
+
+  const selectPattern = useCallback((index: number) => {
+    const request = ++queueGeneration.current;
+    if (starting) {
+      setTransportMessage('Wait for playback to start before cueing a phrase.');
+      return;
+    }
+    if (!playing) {
+      projectController.setActivePattern(index);
+      setQueuedPatternIndex(null);
+      return;
+    }
+    const pattern = projectController.getState().tracker.patterns[index];
+    if (!pattern) { setTransportMessage('Phrase is unavailable.'); return; }
+    trackerEngine.queuePattern(null);
+    setQueuedPatternIndex(index);
+    setTransportMessage('PREPARING QUEUED PHRASE');
+    const ids = pattern.tracks.flatMap((track) => track.steps.slice(0, pattern.length).map((step) => instrumentIdToPadId(step.instrumentId)))
+      .filter((id): id is string => id !== null);
+    void padBank.preparePads(ids).then(() => {
+      if (request !== queueGeneration.current) return;
+      const queued = trackerEngine.queuePattern(index);
+      setTransportMessage('');
+      if (!queued) setQueuedPatternIndex(null);
+    }).catch((error: unknown) => {
+      if (request !== queueGeneration.current) return;
+      console.error('[SP-M8x] Could not cue phrase:', error);
+      setQueuedPatternIndex(null);
+      setTransportMessage(error instanceof Error ? error.message : 'Could not cue phrase.');
+    });
+  }, [padBank.preparePads, playing, starting]);
+
+  const triggerPad = useCallback((padId: string, _onTriggered?: (time: number) => number | void, semitoneOffset = 0, pointerTime?: number, sliceIndex?: number, playThrough = false) => {
+    const context = audioEngine.getContext();
+    const captureTime = context && pointerTime !== undefined && Number.isFinite(pointerTime)
+      ? context.currentTime + (pointerTime - performance.now()) / 1000 : undefined;
+    let captured: { patternIndex: number; track: number; instrumentId: number; generation: number } | null = null;
+    const gated = padBank.getPadSettings(padId)?.playbackMode === 'gate';
+    const release = padBank.triggerPad(padId, (time) => {
+      if (!recordingRef.current) return;
+      const position = trackerEngine.recordPosition(captureTime ?? time);
+      if (!position) return;
+      const state = projectController.getState();
+      const instrumentId = padIdToInstrumentId(padId);
+      if (instrumentId === null) return;
+      const track = projectController.recordHit(position.patternIndex, position.step,
+        state.sampler.pads[padId]?.targetTrack ?? 0, {
+          note: chromaticNote(semitoneOffset), instrumentId, subTickOffset: position.subTickOffset, velocity: 127,
+          ...(sliceIndex === undefined ? {} : { sliceIndex }),
+        });
+      if (track === null) {
+        setTransportMessage(`Step ${position.step + 1} full — hit not recorded.`);
+        return;
+      }
+      setTransportMessage('');
+      if (gated) captured = { patternIndex: position.patternIndex, track, instrumentId, generation: startGeneration.current };
+      return track;
+    }, semitoneOffset, pointerTime, sliceIndex, playThrough);
+    return (releasePointerTime?: number) => {
+      release(releasePointerTime);
+      if (!captured || !recordingRef.current || captured.generation !== startGeneration.current) return;
+      const currentContext = audioEngine.getContext();
+      const time = currentContext && releasePointerTime !== undefined && Number.isFinite(releasePointerTime)
+        ? currentContext.currentTime + (releasePointerTime - performance.now()) / 1000 : currentContext?.currentTime;
+      if (time === undefined) return;
+      const position = trackerEngine.recordPosition(time);
+      if (!position) return;
+      if (position.patternIndex !== captured.patternIndex) {
+        setTransportMessage('Gate crossed a phrase boundary — release not recorded.');
+        return;
+      }
+      if (!projectController.recordRelease(captured.patternIndex, position.step, captured.track, captured.instrumentId, position.subTickOffset)) {
+        setTransportMessage(`Step ${position.step + 1} occupied — gate release not recorded.`);
+      }
+    };
+  }, [padBank.triggerPad, padBank.getPadSettings]);
+
+  if (projectController.isReadOnly()) {
+    return <main className="app-shell bg-black text-rose-300 p-6 font-mono" role="alert">
+      PROJECT COULD NOT BE LOADED — EDITING DISABLED. EXISTING DATA WAS NOT OVERWRITTEN.
+      CHECK BROWSER STORAGE AND RELOAD.
+    </main>;
+  }
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-[var(--bg-shell-deep)] text-[var(--text-primary)] font-mono overflow-hidden select-none">
-      
-      {/* 1. Persistent Top Navigation Bar */}
+    <div className="app-shell flex flex-col w-full bg-[var(--bg-shell-deep)] text-[var(--text-primary)] font-mono overflow-hidden select-none">
       <header className="flex items-center justify-between px-4 py-2 bg-[var(--bg-canvas)] border-b border-[var(--border-grid)] shrink-0">
-        <div className="flex items-center space-x-3">
-          <h1 className="text-xs font-black tracking-widest text-[var(--accent-phrase)] drop-shadow-[0_0_8px_rgba(34,211,238,0.4)]">
-            SP-M8x <span className="text-zinc-500 font-normal">v0.9.2</span>
-          </h1>
-          <span className="text-[10px] bg-zinc-900 text-zinc-400 px-2 py-0.5 rounded border border-zinc-800">
-            IPAD 9TH GEN TARGET
-          </span>
-        </div>
-
-        {/* Workspace Tab Switcher */}
+        <h1 className="text-xs font-black tracking-widest text-[var(--accent-phrase)]">SP-M8x <span className="text-zinc-500 font-normal">v0.9.2</span></h1>
         <nav className="flex items-center space-x-1 bg-zinc-950 p-1 rounded-lg border border-[var(--border-grid)]">
-          {(['workspace', 'song', 'phrase/table', 'sampler'] as WorkspaceTab[]).map((tab) => {
-            const isActive = currentTab === tab;
-            let activeColorClass = 'text-[var(--accent-phrase)] border-[var(--accent-phrase)] bg-cyan-950/40';
-            if (tab === 'phrase/table') activeColorClass = 'text-[var(--accent-table)] border-[var(--accent-table)] bg-purple-950/40';
-            if (tab === 'song') activeColorClass = 'text-[var(--accent-song)] border-[var(--accent-song)] bg-green-950/40';
-
-            return (
-              <button
-                key={tab}
-                onClick={() => setCurrentTab(tab)}
-                className={`px-3 py-1 text-[10px] font-bold tracking-wider rounded transition-all uppercase border ${
-                  isActive
-                    ? `${activeColorClass} shadow-[0_0_10px_rgba(0,0,0,0.5)]`
-                    : 'text-zinc-500 border-transparent hover:text-zinc-300'
-                }`}
-              >
-                [ {tab} ]
-              </button>
-            );
-          })}
+          {(['phrase', 'table', 'song', 'mixer', 'sampler'] as const).map((tab) => <button key={tab} type="button" aria-current={currentTab === tab ? 'page' : undefined} onClick={() => setCurrentTab(tab)}
+            className={`px-3 py-1 text-[10px] font-bold tracking-wider rounded uppercase border ${currentTab === tab ? 'text-[var(--accent-phrase)] border-[var(--accent-phrase)] bg-cyan-950/40' : 'text-zinc-500 border-transparent'}`}>[ {tab} ]</button>)}
         </nav>
       </header>
-
-      {/* 2. Main Viewport Container */}
       <main className="flex-1 flex overflow-hidden p-3 gap-3 bg-[var(--bg-shell-deep)]">
-        {currentTab === 'workspace' ? (
-          /* 60 / 40 Split Workspace Frame */
-          <>
-            {/* Left Pane: Tracker Matrix (60%) */}
-            <section className="w-[60%] flex flex-col bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 overflow-hidden shadow-xl">
-              <div className="flex items-center justify-between mb-2 pb-2 border-b border-[var(--border-grid)]">
-                <span className="text-[10px] font-bold text-zinc-400 tracking-wider">
-                  TRACKER SEQUENCER (64 STEPS)
-                </span>
-                <span className="text-[10px] text-[var(--accent-phrase)] font-bold">
-                  STEP: {String(activeStep).padStart(2, '0')} / 63
-                </span>
-              </div>
-              <div className="flex-1 overflow-hidden flex flex-col">
-                <TrackerGrid patternId={0} activeStep={activeStep} />
-              </div>
-            </section>
-
-            {/* Right Pane: Module Vertical Stack (40%) */}
-            <section className="w-[40%] flex flex-col gap-3 overflow-y-auto">
-              {/* Sampler Workbench Scaffold */}
-              <div className="bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col min-h-[160px]">
-                <div className="flex items-center justify-between border-b border-[var(--border-grid)] pb-2 mb-2">
-                  <span className="text-[10px] font-bold text-purple-400 tracking-wider">
-                    SAMPLER WORKBENCH
-                  </span>
-                  <span className="text-[9px] bg-zinc-900 text-zinc-400 px-1.5 py-0.5 rounded cursor-pointer hover:bg-zinc-800">
-                    SLICER
-                  </span>
-                </div>
-                <div className="flex-1 flex flex-col items-center justify-center border border-dashed border-zinc-800 rounded bg-zinc-950/50 text-zinc-500 text-[11px] p-4">
-                  <div className="text-zinc-400 font-bold mb-1">NO SAMPLE LOADED</div>
-                  <div className="w-full h-8 bg-zinc-900/80 rounded flex items-center justify-center border border-zinc-800 text-[9px] text-zinc-600 tracking-widest">
-                    Waveform View / Slicing Grid
-                  </div>
-                </div>
-              </div>
-
-              {/* Sampler Pads / M8 Deck Matrix Container */}
-              <div className="bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col flex-1">
-                <div className="flex items-center justify-between border-b border-[var(--border-grid)] pb-2 mb-2">
-                  <div className="flex items-center space-x-2">
-                    <span className="text-[10px] font-bold text-[var(--accent-phrase)] tracking-wider">
-                      PAD BANKS & M8 DECKS
-                    </span>
-                  </div>
-                  <div className="flex space-x-1">
-                    <button
-                      onClick={() => setDeckMode('pads')}
-                      className={`text-[9px] px-2 py-0.5 rounded font-bold transition-all ${
-                        deckMode === 'pads' ? 'bg-cyan-950 text-[var(--accent-phrase)] border border-cyan-800' : 'bg-zinc-900 text-zinc-500'
-                      }`}
-                    >
-                      PADS
-                    </button>
-                    <button
-                      onClick={() => setDeckMode('m8')}
-                      className={`text-[9px] px-2 py-0.5 rounded font-bold transition-all ${
-                        deckMode === 'm8' ? 'bg-purple-950 text-purple-300 border border-purple-800' : 'bg-zinc-900 text-zinc-500'
-                      }`}
-                    >
-                      M8 DECK
-                    </button>
-                  </div>
-                </div>
-
-                {deckMode === 'pads' ? (
-                  <div className="flex flex-col flex-1 gap-2">
-                    <div className="flex justify-between items-center bg-zinc-950 px-2 py-1 rounded text-[9px]">
-                      <span className="text-zinc-400">BANK: <strong className="text-cyan-400">{activeBank}</strong></span>
-                      <div className="flex space-x-1">
-                        {(['A', 'B', 'C', 'D'] as const).map((b) => (
-                          <button
-                            key={b}
-                            onClick={() => setActiveBank(b)}
-                            className={`px-2 py-0.5 rounded ${activeBank === b ? 'bg-cyan-900 text-cyan-200' : 'bg-zinc-900 text-zinc-400'}`}
-                          >
-                            {b}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-4 gap-1.5 flex-1">
-                      {Array.from({ length: 16 }).map((_, i) => (
-                        <div key={i} className="bg-zinc-950 border border-zinc-800 rounded p-1.5 flex flex-col justify-between text-[9px] hover:border-cyan-500/50 transition-all cursor-pointer">
-                          <span className="text-zinc-500 font-bold">{activeBank}{String(i + 1).padStart(2, '0')}</span>
-                          <span className="text-zinc-600 text-[8px] truncate">EMPTY</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-4 gap-2 flex-1 items-center p-2 bg-zinc-950/40 rounded border border-zinc-800/60">
-                    {['UP', 'DOWN', 'LEFT', 'RIGHT', 'EDIT', 'PLAY', 'SHIFT', 'BND'].map((btn) => (
-                      <button key={btn} className="bg-zinc-900 border border-zinc-700 rounded py-3 text-[10px] font-bold text-zinc-300 hover:bg-cyan-950 hover:text-cyan-300 transition-all">
-                        {btn}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </section>
-          </>
-        ) : (
-          /* Visual Scaffolds for Unselected Tabs matching video */
-          <div className="flex-1 flex items-center justify-center bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl">
-            <div className="text-center">
-              <h2 className="text-sm font-bold text-[var(--accent-phrase)] uppercase tracking-widest mb-1">
-                -- {currentTab} VIEW --
-              </h2>
-              <p className="text-[11px] text-zinc-500">
-                {currentTab === 'song' && '6-track arrangement view is planned. current grid in wired yet.'}
-                {currentTab === 'phrase/table' && 'Unified tracker columns are planned. current project does not expose all requested fields.'}
-                {currentTab === 'sampler' && 'Advanced sample workbench and slice editor.'}
-              </p>
+        {currentTab === 'phrase'
+          ? <div className="phrase-workspace">
+              <PhraseTableEditor slots={padBank.slots} activeStep={playing ? playhead : activeStep} transportBusy={playing || starting} mode="phrase" queuedPatternIndex={queuedPatternIndex} onSelectPattern={selectPattern} />
+              <SamplerWorkspace padBank={padBank} recorder={recorder} triggerPad={triggerPad} compact />
             </div>
-          </div>
-        )}
+          : currentTab === 'table'
+            ? <PhraseTableEditor slots={padBank.slots} activeStep={playing ? playhead : activeStep} transportBusy={playing || starting} mode="table" queuedPatternIndex={queuedPatternIndex} onSelectPattern={selectPattern} />
+          : currentTab === 'sampler'
+            ? <SamplerWorkspace padBank={padBank} recorder={recorder} triggerPad={triggerPad} />
+            : <section className="flex-1 p-4 bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl">
+                <h2 className="text-sm text-cyan-300 uppercase">{currentTab}</h2>
+                {currentTab === 'song' ? <SongArrangementView isPlaying={playing} currentStep={playing ? playhead : activeStep} /> :
+                  <div className="flex gap-4 mt-4">
+                    {(projectController.getState().settings.trackVolumes ?? Array.from({ length: 8 }, () => 1)).map((volume, index) =>
+                      <label key={index} className="flex flex-col gap-2 text-xs">TRACK {index + 1}
+                        <input aria-label={`Track ${index + 1} volume`} type="range" min="0" max="1" step="0.01" value={volume}
+                          onChange={(event) => {
+                            const value = Number(event.target.value);
+                            projectController.setTrackVolume(index, value);
+                            audioEngine.setTrackVolume(index, value);
+                          }} />
+                        <span>{Math.round(volume * 100)}%</span>
+                      </label>)}
+                  </div>}
+              </section>}
       </main>
-
-      {/* 3. Footer Transport / Status Bar */}
       <footer className="flex items-center justify-between px-4 py-2 bg-[var(--bg-canvas)] border-t border-[var(--border-grid)] text-[10px] text-zinc-400 shrink-0">
         <div className="flex items-center space-x-4">
           <span className="flex items-center space-x-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span className="text-zinc-300 font-bold">ENGINE READY</span>
+            <span className={`w-2 h-2 rounded-full ${engineStatus.state === 'running' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+            {engineStatus.state === 'running' ? <span className="text-zinc-300 font-bold">ENGINE READY</span> :
+              engineStatus.state === 'closed' ? <span role="alert" className="text-rose-300 font-bold">AUDIO CLOSED — RELOAD</span> :
+              <button type="button" className="text-amber-300 font-bold" onClick={() => {
+                setAudioError(false);
+                void audioEngine.initialize().catch((error: unknown) => {
+                  console.error('[SP-M8x] Could not resume audio:', error);
+                  setAudioError(true);
+                });
+              }}>{audioError ? 'AUDIO BLOCKED — TAP TO RETRY' : engineStatus.state === 'idle' ? 'TAP TO START AUDIO' : 'AUDIO PAUSED — TAP TO RESUME'}</button>}
           </span>
-          <span>BPM: <strong className="text-zinc-200">120.0</strong></span>
-          <span>CLOCK: <strong className="text-zinc-200">INTERNAL</strong></span>
-        </div>
-        <div className="text-[9px] text-zinc-600">
-          SP-M8x HARDWARE INTERFACE SHELL
+          <span>VOICES: <strong className="text-zinc-200">{engineStatus.voices}</strong></span>
+          <button type="button" aria-pressed={playing} onClick={toggleTransport} className="transport-control text-cyan-300">{starting ? 'CANCEL' : playing ? 'STOP' : 'PLAY'}</button>
+          <button type="button" aria-pressed={armed} onClick={() => setArmed(!armed)} className={`transport-control ${armed ? 'text-rose-300' : 'text-zinc-400'}`}>{armed ? 'PHRASE REC ARMED' : 'PHRASE REC'}</button>
+          <span>BPM: <strong className="text-zinc-200">{projectController.getState().settings.bpm.toFixed(1)}</strong></span>
+          <MasterOutput savedLocally={padBank.storageReady && !padBank.storageError && !projectController.hasSaveError() && !['SAVING', 'DELETING'].includes(padBank.storageStatus)} />
+          {padBank.storageError && <span role="alert" className="text-rose-400">{padBank.storageStatus}</span>}
+          {projectController.hasSaveError() && <span role="alert" className="text-rose-400">PHRASE SAVE FAILED</span>}
+          {transportMessage && <span role="alert" className="text-rose-400">{transportMessage}</span>}
         </div>
       </footer>
     </div>
