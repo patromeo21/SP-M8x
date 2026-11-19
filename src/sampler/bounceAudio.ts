@@ -1,5 +1,33 @@
 export type BounceBars = 1 | 2 | 4 | 8;
 
+export function assignBounceToPad(
+  padId: string,
+  buffer: AudioBuffer,
+  wav: Blob,
+  onSample: (padId: string, buffer: AudioBuffer, name: string, audio: Blob) => void,
+  getPad: (padId: string) => { buffer: AudioBuffer | null } | undefined,
+): void {
+  if (!getPad(padId)) throw new Error(`Pad ${padId} is unavailable.`);
+  onSample(padId, buffer, `BOUNCE ${padId}`, wav);
+  if (getPad(padId)?.buffer !== buffer) {
+    throw new Error(`Bounce was not assigned to ${padId}; the pad may be reserved.`);
+  }
+}
+
+export function releaseBounceCapture(
+  node: AudioWorkletNode,
+  silence: GainNode,
+  disconnectMaster: (() => void) | null,
+): void {
+  disconnectMaster?.();
+  node.port.onmessage = null;
+  node.onprocessorerror = null;
+  node.port.postMessage({ type: 'cancel' });
+  node.port.close();
+  node.disconnect();
+  silence.disconnect();
+}
+
 export function bounceFrameCount(sampleRate: number, bpm: number, bars: BounceBars): number {
   if (!Number.isSafeInteger(sampleRate) || sampleRate <= 0) throw new RangeError('Invalid sample rate.');
   if (!Number.isFinite(bpm) || bpm <= 0) throw new RangeError('Invalid tempo.');

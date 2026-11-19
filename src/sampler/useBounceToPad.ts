@@ -1,10 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { audioEngine } from '../audio/audioEngine';
 import { trackerEngine } from '../tracker/trackerEngine';
-import { bounceFrameCount, encodeBounceWav, type BounceBars } from './bounceAudio';
+import { assignBounceToPad, bounceFrameCount, encodeBounceWav, releaseBounceCapture, type BounceBars } from './bounceAudio';
 import type { PadBankApi } from './usePadBank';
 
-export function useBounceToPad(onSample: PadBankApi['loadSample']) {
+type BounceWorkletMessage =
+  | { type: 'complete'; left: Float32Array; right: Float32Array; length: number }
+  | { type: 'error'; message: string }
+  | { type: 'pending' };
+
+export function useBounceToPad(onSample: PadBankApi['loadSample'], getPadSettings: PadBankApi['getPadSettings']) {
   const [status, setStatus] = useState<{ busy: boolean; message: string; error: boolean }>({ busy: false, message: '', error: false });
   const generation = useRef(0);
   const cleanup = useRef<(() => void) | null>(null);
@@ -48,6 +53,11 @@ export function useBounceToPad(onSample: PadBankApi['loadSample']) {
       };
       await context.audioWorklet.addModule(new URL('./resamplingWorklet.js', import.meta.url).href);
       if (id !== generation.current) return;
+      bounceFrameCount(context.sampleRate, trackerEngine.nextBar(context.currentTime).bpm, bars);
+      const leftBuffer = new ArrayBuffer(context.sampleRate * 30 * Float32Array.BYTES_PER_ELEMENT);
+      const rightBuffer = new ArrayBuffer(context.sampleRate * 30 * Float32Array.BYTES_PER_ELEMENT);
+      const left = new Float32Array(leftBuffer);
+      const right = new Float32Array(rightBuffer);
       const bar = trackerEngine.nextBar(context.currentTime + 0.1);
       const frameCount = bounceFrameCount(context.sampleRate, bar.bpm, bars);
       const silence = context.createGain();
@@ -58,19 +68,14 @@ export function useBounceToPad(onSample: PadBankApi['loadSample']) {
         outputChannelCount: [2],
         channelCount: 2,
         channelCountMode: 'explicit',
-        processorOptions: { startFrame: Math.round(bar.time * context.sampleRate), frameCount },
       });
       let disconnectMaster: (() => void) | null = null;
+      let pollTimer: number | null = null;
       cleanup.current = () => {
         unsubscribeStop();
         context.removeEventListener('statechange', onStateChange);
-        disconnectMaster?.();
-        node.port.onmessage = null;
-        node.onprocessorerror = null;
-        node.port.postMessage({ type: 'cancel' });
-        node.port.close();
-        node.disconnect();
-        silence.disconnect();
+        if (pollTimer !== null) window.clearTimeout(pollTimer);
+        releaseBounceCapture(node, silence, disconnectMaster);
       };
       disconnectMaster = audioEngine.connectMasterCapture(node);
       node.connect(silence);
@@ -83,11 +88,23 @@ export function useBounceToPad(onSample: PadBankApi['loadSample']) {
         busy.current = false;
         setStatus({ busy: false, message: 'Bounce audio processor failed.', error: true });
       };
-      node.port.onmessage = (event: MessageEvent<{ left: Float32Array; right: Float32Array; length: number; error?: string }>) => {
+      const pollMessage = { type: 'poll' };
+      const schedulePoll = (delay: number) => {
+        pollTimer = window.setTimeout(() => {
+          pollTimer = null;
+          node.port.postMessage(pollMessage);
+        }, delay);
+      };
+      node.port.onmessage = (event: MessageEvent<BounceWorkletMessage>) => {
         if (id !== generation.current) return;
         try {
-          const { left, right, length, error } = event.data;
-          if (error) throw new Error(error);
+          if (event.data.type === 'error') throw new Error(event.data.message);
+          if (event.data.type === 'pending') {
+            const remaining = bar.time + frameCount / context.sampleRate - context.currentTime;
+            schedulePoll(Math.max(25, remaining * 1000 + 25));
+            return;
+          }
+          const { left, right, length } = event.data;
           if (length !== frameCount || left.length < length || right.length < length) throw new Error('Bounce capture was incomplete.');
           const buffer = context.createBuffer(2, length, context.sampleRate);
           buffer.getChannelData(0).set(left.subarray(0, length));
@@ -95,7 +112,7 @@ export function useBounceToPad(onSample: PadBankApi['loadSample']) {
           const wav = encodeBounceWav(buffer);
           cleanup.current?.();
           cleanup.current = null;
-          onSample(padId, buffer, `BOUNCE ${padId}`, wav);
+          assignBounceToPad(padId, buffer, wav, onSample, getPadSettings);
           busy.current = false;
           setStatus({ busy: false, message: `Bounce sent to ${padId} (${bars} bar${bars === 1 ? '' : 's'}).`, error: false });
         } catch (error) {
@@ -105,6 +122,19 @@ export function useBounceToPad(onSample: PadBankApi['loadSample']) {
           setStatus({ busy: false, message: error instanceof Error ? error.message : 'Bounce failed.', error: true });
         }
       };
+      const transfers = [leftBuffer, rightBuffer];
+      node.port.postMessage({
+        type: 'capture',
+        startFrame: Math.round(bar.time * context.sampleRate),
+        length: frameCount,
+        left,
+        right,
+        result: { type: 'complete', left, right, length: frameCount },
+        missed: { type: 'error', message: 'Bounce missed the bar boundary. Try again.' },
+        pending: { type: 'pending' },
+        transfers,
+      }, transfers);
+      schedulePoll(Math.max(0, (bar.time - context.currentTime) * 1000 + 50));
       setStatus({ busy: true, message: `Waiting for next bar · ${bars} bar${bars === 1 ? '' : 's'} to ${padId}`, error: false });
     } catch (error) {
       if (id !== generation.current) return;

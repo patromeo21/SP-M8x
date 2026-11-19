@@ -15,6 +15,7 @@ export interface SamplerWorkbenchProps {
   onUpdatePad: PadBankApi['updatePad'];
   onPreviewRange: PadBankApi['previewRange'];
   onLoadSample: PadBankApi['loadSample'];
+  getPadSettings: PadBankApi['getPadSettings'];
   recordingStatus: RecordingStatus;
   onRecord: (padId: string) => void;
   storageReady: boolean;
@@ -25,14 +26,14 @@ export interface SamplerWorkbenchProps {
 }
 
 export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
-  pad, onUpdatePad, onPreviewRange, onLoadSample, recordingStatus, onRecord, storageReady, activeBank, onChop, onGenerateSliceMarkers, renderWaveform,
+  pad, onUpdatePad, onPreviewRange, onLoadSample, getPadSettings, recordingStatus, onRecord, storageReady, activeBank, onChop, onGenerateSliceMarkers, renderWaveform,
 }) => {
   const [count, setCount] = useState<number | null>(null);
   const [chopping, setChopping] = useState(false);
   const [chopMessage, setChopMessage] = useState('');
   const [chopError, setChopError] = useState(false);
   const [bounceBars, setBounceBars] = useState<BounceBars>(1);
-  const bounce = useBounceToPad(onLoadSample);
+  const bounce = useBounceToPad(onLoadSample, getPadSettings);
   return (
   <div className="sampler-workbench bg-[var(--bg-canvas)] flex flex-col shrink-0 font-mono select-none">
     <WaveformEditor pad={pad} onUpdatePad={onUpdatePad} onPreviewRange={onPreviewRange}
