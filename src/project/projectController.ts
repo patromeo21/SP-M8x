@@ -603,8 +603,8 @@ class ProjectController {
     let changed = false;
     for (const index of new Set(stepIndices)) {
       const step = track.steps[index];
-      if ((!step.note || step.note === '---') && step.instrumentId === null) continue;
-      track.steps[index] = { ...step, note: '---', instrumentId: null, subTickOffset: 0, velocity: undefined, tableId: null, sliceIndex: undefined };
+      if ((!step.note || step.note === '---') && step.instrumentId === null && step.events === undefined) continue;
+      track.steps[index] = { ...step, note: '---', instrumentId: null, subTickOffset: 0, velocity: undefined, tableId: null, sliceIndex: undefined, events: undefined };
       changed = true;
     }
     if (changed) this.notify();
