@@ -8,7 +8,7 @@ export interface WebKitCanvasSurface {
   height: number;
   getContext?: (
     contextId: '2d',
-    options?: unknown
+    options?: CanvasRenderingContext2DSettings
   ) => {
     clearRect?: (x: number, y: number, width: number, height: number) => void;
   } | null;
@@ -29,11 +29,7 @@ export function releaseWebKitCanvasSurface(
     const width = typeof surface.width === 'number' ? surface.width : 0;
     const height = typeof surface.height === 'number' ? surface.height : 0;
     if (width > 0 && height > 0 && typeof surface.getContext === 'function') {
-      const get2dContext = surface.getContext as (
-        contextId: string,
-        options?: Record<string, unknown>
-      ) => { clearRect?: (x: number, y: number, width: number, height: number) => void } | null;
-      const ctx = get2dContext('2d');
+      const ctx = surface.getContext('2d');
       if (ctx && typeof ctx.clearRect === 'function') {
         ctx.clearRect(0, 0, width, height);
       }
