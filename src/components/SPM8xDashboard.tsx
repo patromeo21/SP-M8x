@@ -24,7 +24,10 @@ export interface SPM8xDashboardProps {
 
 export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'phrase', activeStep = -1 }) => {
   const [currentTab, setCurrentTab] = useState<WorkspaceTab>(initialTab);
+  const [contextLock, setContextLock] = useState(false);
   const padBank = usePadBank();
+  const linkedPad = padBank.selectedPad ?
+    { padId: padBank.selectedPadId, name: padBank.selectedPad.name, playMode: padBank.selectedPad.playbackMode } : undefined;
   const recorder = useInputRecorder(padBank.loadSample);
   const engineStatus = useEngineStatus();
   const [audioError, setAudioError] = useState(false);
@@ -313,7 +316,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
               <SamplerWorkspace padBank={padBank} recorder={recorder} triggerPad={triggerPad} compact />
             </div>
           : currentTab === 'table'
-            ? <PhraseTableEditor slots={padBank.slots} activeStep={playing ? playhead : activeStep} transportBusy={playing || starting} mode="table" queuedPatternIndex={queuedPatternIndex} onSelectPattern={selectPattern} />
+            ? <PhraseTableEditor slots={padBank.slots} activeStep={playing ? playhead : activeStep} transportBusy={playing || starting} mode="table" queuedPatternIndex={queuedPatternIndex} onSelectPattern={selectPattern} linkedPad={linkedPad} contextLock={contextLock} />
           : currentTab === 'sampler'
             ? <SamplerWorkspace padBank={padBank} recorder={recorder} triggerPad={triggerPad} />
             : <section className="flex-1 p-4 bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl">

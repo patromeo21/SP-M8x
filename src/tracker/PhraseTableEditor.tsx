@@ -18,6 +18,8 @@ interface EditorProps {
   mode: 'phrase' | 'table';
   queuedPatternIndex: number | null;
   onSelectPattern: (index: number) => void;
+  linkedPad?: { padId: string; name: string; playMode: string; sliActive?: boolean; sliceMarkers?: number[] };
+  contextLock?: boolean;
 }
 
 export function PhraseTableEditor({ slots, activeStep, transportBusy, mode, queuedPatternIndex, onSelectPattern }: EditorProps) {
