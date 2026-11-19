@@ -150,3 +150,50 @@ test('polyphonic recording appends events and Euclidean generation populates phr
     delete globalThis.localStorage;
   }
 });
+
+test('control-all offsets, punch replacement, and pad polyphony helpers validate and persist', async () => {
+  const store = new Map();
+  globalThis.window = {};
+  globalThis.localStorage = {
+    getItem: (key) => store.get(key) ?? null,
+    setItem: (key, value) => store.set(key, value),
+  };
+  try {
+    const source = inlineProjectModules(ts.transpileModule(
+      await readFile(new URL('../src/project/projectController.ts', import.meta.url), 'utf8'),
+      { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } },
+    ).outputText);
+    const url = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
+    const { projectController: controller } = await import(url);
+    const event = {
+      id: 'poly-a1', note: 'E-4', instrumentId: 0, padId: 0, velocity: 90, subTickOffset: 1,
+      playMode: 'one-shot', sliceStartFrame: 0, sliceEndFrame: 10, isReversed: false,
+    };
+
+    controller.setPadVolume('A1', 0.5);
+    controller.setTrackVolume(0, 0.4);
+    controller.applyControlAll({ padVolumeOffset: 0.2, trackVolumeOffset: -0.1 });
+    assert.ok(Math.abs(controller.getState().sampler.pads.A1.volume - 0.7) < 1e-12);
+    assert.ok(Math.abs(controller.getState().settings.trackVolumes[0] - 0.3) < 1e-12);
+    assert.throws(() => controller.applyControlAll({ padVolumeOffset: NaN }), /finite/);
+
+    controller.updateStep(0, 0, { note: 'C-4', instrumentId: 0, fx: 'FL', tableId: 2 });
+    controller.punchReplaceLane(0, 0, 0, { note: 'D-4', instrumentId: 1, velocity: 80, subTickOffset: -2 });
+    assert.deepEqual(controller.getState().tracker.patterns[0].tracks[0].steps[0], {
+      note: 'D-4', instrumentId: 1, velocity: 80, subTickOffset: -2,
+    });
+
+    controller.setPadPolyphonic('A1', false);
+    assert.equal(controller.isPadPolyphonic('A1'), false);
+    assert.throws(() => controller.recordPolyphonicHit(0, 1, 0, event), /not configured for polyphonic/);
+    assert.equal(controller.recordPadHit(0, 1, 0, event), 0);
+    controller.setPadPolyphonic('A1', true);
+    assert.equal(controller.isPadPolyphonic('A1'), true);
+    assert.equal(controller.recordPadHit(0, 2, 0, event), 0);
+    assert.deepEqual(controller.getState().tracker.patterns[0].tracks[0].steps[2].events, [event]);
+    assert.throws(() => controller.setPadPolyphonic('Z1', true), /pad ID/i);
+  } finally {
+    delete globalThis.window;
+    delete globalThis.localStorage;
+  }
+});

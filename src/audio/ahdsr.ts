@@ -22,6 +22,15 @@ export function validateAHDSR(params: AHDSRParams): void {
   }
 }
 
+export function oscillationValue(timeSeconds: number, frequencyHz: number, phaseRadians = 0): number {
+  if (!Number.isFinite(timeSeconds) || timeSeconds < 0 ||
+      !Number.isFinite(frequencyHz) || frequencyHz < 0 ||
+      !Number.isFinite(phaseRadians)) {
+    throw new RangeError('Oscillation time, frequency, and phase must be finite and non-negative where applicable.');
+  }
+  return Math.sin(2 * Math.PI * frequencyHz * timeSeconds + phaseRadians);
+}
+
 /**
  * Schedules Attack/Hold/Decay/Sustain onto a gain param using AudioParam automation.
  * Peak is scaled by `peak`; the release stage is applied later when the voice is stopped.

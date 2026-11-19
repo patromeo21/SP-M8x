@@ -5,6 +5,8 @@ export interface VoiceFxCommand {
   value?: number;
 }
 
+export type TableOpcode = VoiceFxCommand;
+
 export interface VoiceFxSlot {
   voiceGain: GainNode;
   padGain: GainNode;
@@ -70,10 +72,15 @@ export class VoiceFxPool {
   public prepare(slot: VoiceFxSlot, time: number, padId: string): void {
     slot.generationId++;
     slot.padId = padId;
-    for (const param of [slot.voiceGain.gain, slot.padGain.gain, slot.panner.pan, slot.dryGain.gain,
-      slot.wetGain.gain, slot.filter.frequency, slot.drive.gain, slot.delay.delayTime, slot.feedbackGain.gain]) {
-      holdAudioParam(param, time);
-    }
+    holdAudioParam(slot.voiceGain.gain, time);
+    holdAudioParam(slot.padGain.gain, time);
+    holdAudioParam(slot.panner.pan, time);
+    holdAudioParam(slot.dryGain.gain, time);
+    holdAudioParam(slot.wetGain.gain, time);
+    holdAudioParam(slot.filter.frequency, time);
+    holdAudioParam(slot.drive.gain, time);
+    holdAudioParam(slot.delay.delayTime, time);
+    holdAudioParam(slot.feedbackGain.gain, time);
     slot.voiceGain.gain.setValueAtTime(1, time);
     slot.padGain.gain.setValueAtTime(1, time);
     slot.panner.pan.setValueAtTime(0, time);
@@ -83,21 +90,28 @@ export class VoiceFxPool {
   }
 
   public reset(slot: VoiceFxSlot, time: number): void {
-    for (const param of [slot.wetGain.gain, slot.feedbackGain.gain]) {
-      holdAudioParam(param, time);
-      param.exponentialRampToValueAtTime(0.0001, time + 0.008);
-    }
+    holdAudioParam(slot.wetGain.gain, time);
+    holdAudioParam(slot.feedbackGain.gain, time);
+    slot.wetGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.008);
+    slot.feedbackGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.008);
   }
 
   public apply(slot: VoiceFxSlot, command: VoiceFxCommand, time: number): void {
+    this.applyTableOpcode(slot, command, time);
+  }
+
+  public applyTableOpcode(slot: VoiceFxSlot, command: TableOpcode, time: number): void {
+    if (!Number.isFinite(time) || time < 0) throw new RangeError('Table opcode time must be finite and non-negative.');
     if (command.code === 'OFF') {
       this.reset(slot, time);
       return;
     }
     const value = Number.isFinite(command.value) ? Math.max(0, Math.min(127, command.value ?? 0)) / 127 : 0.5;
-    for (const param of [slot.wetGain.gain, slot.filter.frequency, slot.drive.gain, slot.delay.delayTime, slot.feedbackGain.gain]) {
-      holdAudioParam(param, time);
-    }
+    holdAudioParam(slot.wetGain.gain, time);
+    holdAudioParam(slot.filter.frequency, time);
+    holdAudioParam(slot.drive.gain, time);
+    holdAudioParam(slot.delay.delayTime, time);
+    holdAudioParam(slot.feedbackGain.gain, time);
     slot.filter.frequency.setTargetAtTime(command.code === 'FL' ? 18000 * Math.pow(0.01, value) : 20000, time, 0.005);
     slot.drive.gain.setTargetAtTime(command.code === 'DR' ? 1 + value * 8 : 1, time, 0.005);
     slot.delay.delayTime.setValueAtTime(command.code === 'DL' ? 0.375 : 0, time);

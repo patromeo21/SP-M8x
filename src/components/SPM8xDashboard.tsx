@@ -7,7 +7,7 @@ import { MasterOutput } from '../audio/MasterOutput';
 import { trackerEngine } from '../tracker/trackerEngine';
 import { trackerBridge } from '../tracker/trackerBridge';
 import { projectController } from '../project/projectController';
-import { PhraseTableEditor } from '../tracker/PhraseTableEditor';
+import { PhraseTableEditor, type EditorProps } from '../tracker/PhraseTableEditor';
 import { SongArrangementView } from '../tracker/SongArrangementView';
 import { chromaticNote } from '../sampler/chromatic';
 import { instrumentIdToPadId, padIdToInstrumentId } from '../sampler/padIds';
@@ -26,8 +26,24 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
   const [currentTab, setCurrentTab] = useState<WorkspaceTab>(initialTab);
   const [contextLock, setContextLock] = useState(false);
   const padBank = usePadBank();
-  const linkedPad = padBank.selectedPad ?
-    { padId: padBank.selectedPadId, name: padBank.selectedPad.name, playMode: padBank.selectedPad.playbackMode } : undefined;
+  const selectedPadContext: EditorProps['linkedPad'] = padBank.selectedPad ? {
+    padId: padBank.selectedPadId,
+    name: padBank.selectedPad.name,
+    playMode: padBank.selectedPad.playbackMode,
+    sliActive: projectController.getState().sampler.pads[padBank.selectedPadId]?.sliActive,
+    sliceMarkers: padBank.selectedPad.sliceMarkers,
+  } : undefined;
+  const [lockedPadContext, setLockedPadContext] = useState<EditorProps['linkedPad']>();
+  const linkedPad = contextLock ? lockedPadContext : selectedPadContext;
+  const toggleContextLock = useCallback(() => {
+    if (contextLock) {
+      setLockedPadContext(undefined);
+      setContextLock(false);
+    } else {
+      setLockedPadContext(selectedPadContext);
+      setContextLock(true);
+    }
+  }, [contextLock, selectedPadContext]);
   const recorder = useInputRecorder(padBank.loadSample);
   const engineStatus = useEngineStatus();
   const [audioError, setAudioError] = useState(false);
@@ -312,11 +328,11 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
       <main className="flex-1 flex overflow-hidden p-3 gap-3 bg-[var(--bg-shell-deep)]">
         {currentTab === 'phrase'
           ? <div className="phrase-workspace">
-              <PhraseTableEditor slots={padBank.slots} activeStep={playing ? playhead : activeStep} transportBusy={playing || starting} mode="phrase" queuedPatternIndex={queuedPatternIndex} onSelectPattern={selectPattern} />
+              <PhraseTableEditor slots={padBank.slots} activeStep={playing ? playhead : activeStep} transportBusy={playing || starting} mode="phrase" queuedPatternIndex={queuedPatternIndex} onSelectPattern={selectPattern} linkedPad={linkedPad} contextLock={contextLock} onToggleContextLock={toggleContextLock} />
               <SamplerWorkspace padBank={padBank} recorder={recorder} triggerPad={triggerPad} compact />
             </div>
           : currentTab === 'table'
-            ? <PhraseTableEditor slots={padBank.slots} activeStep={playing ? playhead : activeStep} transportBusy={playing || starting} mode="table" queuedPatternIndex={queuedPatternIndex} onSelectPattern={selectPattern} linkedPad={linkedPad} contextLock={contextLock} />
+            ? <PhraseTableEditor slots={padBank.slots} activeStep={playing ? playhead : activeStep} transportBusy={playing || starting} mode="table" queuedPatternIndex={queuedPatternIndex} onSelectPattern={selectPattern} linkedPad={linkedPad} contextLock={contextLock} onToggleContextLock={toggleContextLock} />
           : currentTab === 'sampler'
             ? <SamplerWorkspace padBank={padBank} recorder={recorder} triggerPad={triggerPad} />
             : <section className="flex-1 p-4 bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl">

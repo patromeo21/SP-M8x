@@ -70,6 +70,11 @@ export interface ProjectSettings {
   trackVolumes?: number[];
 }
 
+export interface ControlAll {
+  padVolumeOffset?: number;
+  trackVolumeOffset?: number;
+}
+
 export interface ProjectState {
   settings: ProjectSettings;
   sampler: {
@@ -163,6 +168,8 @@ function migrateProject(state: ProjectState): boolean {
         changed = true;
       } else {
         if (!pad || typeof pad !== 'object' || Array.isArray(pad)) throw new Error(`Invalid pad ${id}.`);
+        if (pad.isPolyphonic === undefined) { pad.isPolyphonic = true; changed = true; }
+        else if (typeof pad.isPolyphonic !== 'boolean') throw new Error(`Invalid polyphonic state for ${id}.`);
         if (pad.sliActive === undefined) { pad.sliActive = false; changed = true; }
         else if (typeof pad.sliActive !== 'boolean') throw new Error(`Invalid SLI state for ${id}.`);
         if (pad.targetTrack === undefined) {
@@ -520,6 +527,53 @@ class ProjectController {
     this.notify();
   }
 
+  public setPadPolyphonic(padId: string, isPolyphonic: boolean): void {
+    this.assertWritable();
+    const pad = this.state.sampler.pads[padId];
+    if (!pad) throw new Error('Invalid pad ID.');
+    if (typeof isPolyphonic !== 'boolean') throw new Error('Polyphonic state must be a boolean.');
+    if (pad.isPolyphonic === isPolyphonic) return;
+    pad.isPolyphonic = isPolyphonic;
+    this.notify();
+  }
+
+  public isPadPolyphonic(padId: string): boolean {
+    const pad = this.state.sampler.pads[padId];
+    if (!pad) throw new Error('Invalid pad ID.');
+    return pad.isPolyphonic;
+  }
+
+  public applyControlAll(offsets: ControlAll): void {
+    this.assertWritable();
+    if (!offsets || typeof offsets !== 'object') throw new Error('Invalid control-all offsets.');
+    const padOffset = offsets.padVolumeOffset ?? 0;
+    const trackOffset = offsets.trackVolumeOffset ?? 0;
+    if (!Number.isFinite(padOffset) || !Number.isFinite(trackOffset)) {
+      throw new Error('Control-all offsets must be finite.');
+    }
+
+    let changed = false;
+    for (const padId of Object.keys(this.state.sampler.pads)) {
+      const pad = this.state.sampler.pads[padId];
+      const volume = Math.max(0, Math.min(1, pad.volume + padOffset));
+      if (volume !== pad.volume) {
+        pad.volume = volume;
+        changed = true;
+      }
+    }
+    if (trackOffset !== 0) {
+      const volumes = this.state.settings.trackVolumes ?? (this.state.settings.trackVolumes = Array(TRACK_COUNT).fill(1));
+      for (let index = 0; index < TRACK_COUNT; index++) {
+        const volume = Math.max(0, Math.min(1, volumes[index] + trackOffset));
+        if (volume !== volumes[index]) {
+          volumes[index] = volume;
+          changed = true;
+        }
+      }
+    }
+    if (changed) this.notify();
+  }
+
   private getTrack(patternIndex: number, trackIndex: number): PhraseTrack {
     if (!Number.isInteger(patternIndex) || !this.state.tracker.patterns[patternIndex]) throw new Error('Invalid pattern index.');
     if (!validTrack(trackIndex)) throw new Error('Invalid track index.');
@@ -554,6 +608,20 @@ class ProjectController {
       changed = true;
     }
     if (changed) this.notify();
+  }
+
+  public punchReplaceLane(patternIndex: number, stepIndex: number, trackIndex: number, stepData: TrackerStepItem): void {
+    this.assertWritable();
+    const track = this.getTrack(patternIndex, trackIndex);
+    this.validateStepIndex(patternIndex, stepIndex);
+    if (!stepData || typeof stepData !== 'object' || Array.isArray(stepData)) throw new Error('Invalid phrase step.');
+    if ('sampleId' in stepData) throw new Error('Legacy sample ID in phrase track.');
+    const replacement = migrateStep(stepData);
+    track.steps[stepIndex] = {
+      ...replacement,
+      ...(replacement.events ? { events: [...replacement.events] } : {}),
+    };
+    this.notify();
   }
 
   public recordHit(patternIndex: number, stepIndex: number, preferredTrack: number, event: TrackerStepItem): number | null {
@@ -593,6 +661,8 @@ class ProjectController {
     this.getTrack(patternIndex, preferredTrack);
     this.validateStepIndex(patternIndex, stepIndex);
     validateStepEvent(event);
+    const padId = `${String.fromCharCode(65 + Math.floor(event.padId / 16))}${event.padId % 16 + 1}`;
+    if (!this.isPadPolyphonic(padId)) throw new Error(`Pad ${padId} is not configured for polyphonic recording.`);
     const pattern = this.state.tracker.patterns[patternIndex];
     for (let offset = 0; offset < TRACK_COUNT; offset++) {
       const trackIndex = (preferredTrack + offset) % TRACK_COUNT;
@@ -620,6 +690,22 @@ class ProjectController {
       }
     }
     return null;
+  }
+
+  public recordPadHit(patternIndex: number, stepIndex: number, preferredTrack: number, event: StepEvent): number | null {
+    validateStepEvent(event);
+    const padId = `${String.fromCharCode(65 + Math.floor(event.padId / 16))}${event.padId % 16 + 1}`;
+    if (this.isPadPolyphonic(padId)) {
+      return this.recordPolyphonicHit(patternIndex, stepIndex, preferredTrack, event);
+    }
+    return this.recordHit(patternIndex, stepIndex, preferredTrack, {
+      note: event.note,
+      instrumentId: event.instrumentId ?? event.padId,
+      subTickOffset: event.subTickOffset,
+      velocity: event.velocity,
+      fx: event.fx,
+      fxValue: event.fxValue,
+    });
   }
 
   public applyEuclideanPattern(

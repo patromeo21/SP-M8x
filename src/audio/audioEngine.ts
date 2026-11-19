@@ -327,11 +327,11 @@ class AudioEngine {
       voiceGain.gain.setValueAtTime(volume, targetGainTime);
     }
     const rateChanges: { time: number; rate: number }[] = [];
-    if (options.fx) this.fxPool.apply(slot, options.fx, targetGainTime);
+    if (options.fx) this.fxPool.applyTableOpcode(slot, options.fx, targetGainTime);
     for (const change of [...(options.modulation ?? [])].sort((a, b) => a.offset - b.offset)) {
       if (!Number.isFinite(change.offset) || change.offset < 0) continue;
       const time = targetGainTime + change.offset;
-      if (change.fx) this.fxPool.apply(slot, change.fx, time);
+      if (change.fx) this.fxPool.applyTableOpcode(slot, change.fx, time);
       if (change.semitoneOffset !== undefined && Number.isFinite(change.semitoneOffset)) {
         const rate = Math.pow(2, clamp(semitones + change.semitoneOffset, -48, 48) / 12);
         source.playbackRate.setValueAtTime(rate, time);

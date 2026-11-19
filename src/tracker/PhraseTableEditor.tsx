@@ -11,7 +11,7 @@ const notes = ['C-', 'C#', 'D-', 'D#', 'E-', 'F-', 'F#', 'G-', 'G#', 'A-', 'A#',
 const noteName = (midi: number) => `${notes[midi % 12]}${Math.floor(midi / 12) - 1}`;
 const hexStep = (step: number) => step.toString(16).toUpperCase().padStart(2, '0');
 
-interface EditorProps {
+export interface EditorProps {
   slots: Record<string, PadSlot>;
   activeStep: number;
   transportBusy: boolean;
@@ -20,9 +20,13 @@ interface EditorProps {
   onSelectPattern: (index: number) => void;
   linkedPad?: { padId: string; name: string; playMode: string; sliActive?: boolean; sliceMarkers?: number[] };
   contextLock?: boolean;
+  onToggleContextLock?: () => void;
 }
 
-export function PhraseTableEditor({ slots, activeStep, transportBusy, mode, queuedPatternIndex, onSelectPattern }: EditorProps) {
+export function PhraseTableEditor({
+  slots, activeStep, transportBusy, mode, queuedPatternIndex, onSelectPattern,
+  linkedPad, contextLock = false, onToggleContextLock,
+}: EditorProps) {
   const [tableId, setTableId] = useState<number | null>(null);
   const [trackIndex, setTrackIndex] = useState(0);
   const state = projectController.getState();
@@ -60,12 +64,21 @@ export function PhraseTableEditor({ slots, activeStep, transportBusy, mode, queu
               {tables.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select></label>
             <button type="button" aria-label="New table" className={buttonClass} onClick={() => setTableId(projectController.createTable())}>＋</button>
+            <button type="button" className={buttonClass} aria-label="Toggle table context lock"
+              aria-pressed={contextLock} disabled={!linkedPad} onClick={onToggleContextLock}>
+              {contextLock ? 'PAD LOCK' : 'LINK PAD'}
+            </button>
+            {linkedPad && <span role="status" className="text-cyan-300">
+              {linkedPad.padId} · {linkedPad.name} · {linkedPad.playMode.toUpperCase()}
+              {linkedPad.sliActive ? ` · SLI ${linkedPad.sliceMarkers?.length ?? 0}` : ''}
+              {contextLock ? ' · PINNED' : ''}
+            </span>}
           </>
         )}
       </div>
       {mode === 'phrase'
         ? <PhraseRows key={`${pattern.id}-${trackIndex}-${pattern.length}`} pattern={pattern} patternIndex={patternIndex}
-            trackIndex={trackIndex} slots={slots} activeStep={activeStep} transportBusy={transportBusy} />
+            trackIndex={trackIndex} slots={slots} activeStep={activeStep} transportBusy={transportBusy} contextLock={contextLock} />
         : table
           ? <TableRows key={table.id} table={table} playing={activeStep >= 0} />
           : <p className="text-zinc-400">Create a reusable table, then assign it to a phrase step.</p>}
@@ -73,8 +86,8 @@ export function PhraseTableEditor({ slots, activeStep, transportBusy, mode, queu
   );
 }
 
-function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, transportBusy }: {
-  pattern: Pattern; patternIndex: number; trackIndex: number; slots: Record<string, PadSlot>; activeStep: number; transportBusy: boolean;
+function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, transportBusy, contextLock }: {
+  pattern: Pattern; patternIndex: number; trackIndex: number; slots: Record<string, PadSlot>; activeStep: number; transportBusy: boolean; contextLock: boolean;
 }) {
   const [page, setPage] = useState(0);
   const [euclideanOpen, setEuclideanOpen] = useState(false);
@@ -87,6 +100,7 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, tran
   const pageCount = pattern.length / 16;
 
   const toggleStep = (index: number) => {
+    if (contextLock) return;
     const step = steps[index];
     const active = step && step.instrumentId !== null && step.note !== '---' && step.note !== 'OFF';
     if (active) {
@@ -116,7 +130,7 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, tran
           <div className={`phrase-row phrase-sequencer-grid ${activeStep === index ? 'is-playing' : ''}`}
             key={index} data-step={hexStep(index)}>
             <button type="button" aria-label={`Phrase step ${index + 1}`} aria-pressed={active}
-              disabled={transportBusy && !occupied}
+              disabled={contextLock || (transportBusy && !occupied)}
               onClick={() => toggleStep(index)}
               className={`phrase-step-toggle ${active ? 'is-active' : ''}`}>
               {hexStep(index)}

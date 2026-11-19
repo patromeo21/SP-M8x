@@ -548,7 +548,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 .slice-handle-start span { top: 12px; }
 .slice-handle-end span { top: -12px; }
 
-.wave-precision, .wave-pitch {
+.wave-precision {
   position: absolute;
   z-index: 3;
   bottom: 0;
@@ -562,8 +562,6 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 }
 
 .wave-precision { left: 48px; }
-.wave-pitch { right: 48px; touch-action: none; }
-.wave-pitch-active { width: 130px; }
 .wave-zoom {
   position: absolute;
   z-index: 3;
@@ -583,19 +581,21 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   font-size: 14px;
 }
 .wave-zoom button:disabled { opacity: 0.35; }
-.pitch-scale {
-  position: relative;
-  display: block;
-  height: 5px;
-  margin: 2px 3px 0;
-  background: repeating-linear-gradient(to right, #52525b 0 1px, transparent 1px 4.16%);
+.pad-pitch-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #a1a1aa;
 }
-.pitch-scale span {
-  position: absolute;
-  top: -1px;
-  height: 7px;
-  width: 3px;
-  background: #00e6c3;
+.pad-pitch-control input {
+  width: 58px;
+  min-width: 48px;
+  touch-action: pan-x;
+}
+.pad-pitch-control output {
+  min-width: 34px;
+  color: #67e8f9;
+  font-variant-numeric: tabular-nums;
 }
 
 .wave-frame-editor {

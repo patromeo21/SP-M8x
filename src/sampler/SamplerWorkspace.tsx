@@ -99,6 +99,7 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({ padBank, rec
         deletePads={padBank.deletePads}
         copyPad={padBank.copyPad}
         storageReady={padBank.storageReady}
+        updatePad={padBank.updatePad}
         sliActive={selectedPad.sliActive && padBank.selectedPad.sliceMarkers.length >= 2 && padBank.padPlayMode === 'BANK_64'}
         setSliActive={(active) => projectController.updatePadMetadata(padBank.selectedPadId, { sliActive: active })}
       />

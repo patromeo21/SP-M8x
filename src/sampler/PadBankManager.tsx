@@ -9,7 +9,7 @@ import { chromaticNote, chromaticOffset } from './chromatic';
 
 export type PadBankManagerProps = Pick<
   PadBankApi,
-  'slots' | 'activeBank' | 'selectedPadId' | 'padPlayMode' | 'chromaticRootOffset' | 'setPadPlayMode' | 'setChromaticRootOffset' | 'triggerPad' | 'deletePads' | 'copyPad' | 'storageReady'
+  'slots' | 'activeBank' | 'selectedPadId' | 'padPlayMode' | 'chromaticRootOffset' | 'setPadPlayMode' | 'setChromaticRootOffset' | 'triggerPad' | 'deletePads' | 'copyPad' | 'storageReady' | 'updatePad'
 > & { sliActive: boolean; setSliActive: (active: boolean) => void };
 
 export const PadBankManager: React.FC<PadBankManagerProps> = ({
@@ -24,6 +24,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
   deletePads,
   copyPad,
   storageReady,
+  updatePad,
   sliActive,
   setSliActive,
 }) => {
@@ -137,6 +138,12 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
               <option key={value} value={value}>{value > 0 ? `+${value}` : value}</option>)}
           </select>
         </label>}
+        <label className="pad-pitch-control">PITCH
+          <input aria-label="Selected pad pitch in semitones" type="range" min="-12" max="12" step="1"
+            value={slots[selectedPadId].pitch} disabled={!slots[selectedPadId].sampleKey || deleting}
+            onChange={(event) => updatePad(selectedPadId, { pitch: Number(event.target.value) })} />
+          <output>{slots[selectedPadId].pitch > 0 ? '+' : ''}{slots[selectedPadId].pitch} ST</output>
+        </label>
         <button type="button" disabled={padPlayMode === 'CHROMATIC_16' || !storageReady || deleting} onClick={() => {
           setSelecting(!selecting); setCopying(false); setCopyError(''); setSelected(new Set()); setConfirming(false); setError('');
         }} className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-300 disabled:opacity-40">

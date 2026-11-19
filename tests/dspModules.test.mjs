@@ -49,7 +49,7 @@ test('DSP curves and math helpers stay within their stated bounds', async () => 
 });
 
 test('AHDSR schedules attack/hold/decay/sustain and rejects invalid input', async () => {
-  const { scheduleAHDSR, validateAHDSR } = await import(dataUrl(await compile('../src/audio/ahdsr.ts')));
+  const { scheduleAHDSR, validateAHDSR, oscillationValue } = await import(dataUrl(await compile('../src/audio/ahdsr.ts')));
   const param = fakeParam();
   scheduleAHDSR(param, 10, 0.8, { attackTime: 0.01, holdTime: 0.02, decayTime: 0.1, sustainLevel: 0.5, releaseTime: 0.05 });
   assert.deepEqual(param.events, [
@@ -76,4 +76,9 @@ test('AHDSR schedules attack/hold/decay/sustain and rejects invalid input', asyn
   assert.throws(() => scheduleAHDSR(fakeParam(), 0, 1, { ...valid, releaseTime: NaN }), /Invalid AHDSR/);
   assert.throws(() => scheduleAHDSR(fakeParam(), -1, 1, valid), /start time or peak/);
   assert.throws(() => scheduleAHDSR(fakeParam(), 0, 1.1, valid), /start time or peak/);
+  assert.equal(oscillationValue(0, 1), 0);
+  assert.equal(oscillationValue(0.25, 1), 1);
+  assert.equal(oscillationValue(0, 0, Math.PI / 2), 1);
+  assert.throws(() => oscillationValue(-1, 1), /Oscillation/);
+  assert.throws(() => oscillationValue(0, Infinity), /Oscillation/);
 });

@@ -15,13 +15,11 @@ interface Props {
 export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRange, sliceCount, renderWaveform }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ pointerId: number; edge: 'start' | 'end'; range: SampleRange; original: SampleRange; x: number; origin: number } | null>(null);
-  const pitchDrag = useRef<{ pointerId: number; y: number; initial: number; value: number } | null>(null);
   const waveformPointers = useRef(new Map<number, { x: number; y: number }>());
   const pinch = useRef<{ ids: [number, number]; distance: number; zoom: number; centerFrame: number } | null>(null);
   const scrubPointer = useRef<number | null>(null);
   const [preview, setPreview] = useState<SampleRange | null>(null);
   const [scrubPosition, setScrubPosition] = useState<number | null>(null);
-  const [pitchPreview, setPitchPreview] = useState<number | null>(null);
   const [precision, setPrecision] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [waveformPlaying, setWaveformPlaying] = useState(false);
@@ -39,9 +37,7 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
 
   useEffect(() => {
     drag.current = null;
-    pitchDrag.current = null;
     setPreview(null);
-    setPitchPreview(null);
     setPrecision(false);
     setError(null);
     setZoom(1);
@@ -269,53 +265,6 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
         </button>}
         <button type="button" className="wave-precision" onClick={() => { setPrecision(!precision); setError(null); }}>
           {precision ? 'DONE' : 'FRAMES'}
-        </button>
-        <button
-          type="button"
-          className={`wave-pitch${pitchPreview !== null ? ' wave-pitch-active' : ''}`}
-          aria-label={`Pitch ${pad.pitch} semitones. Hold and slide up or down to adjust.`}
-          onPointerDown={(event) => {
-            if (pitchDrag.current) return;
-            event.preventDefault();
-            event.currentTarget.setPointerCapture(event.pointerId);
-            pitchDrag.current = { pointerId: event.pointerId, y: event.clientY, initial: pad.pitch, value: pad.pitch };
-            setPitchPreview(pad.pitch);
-          }}
-          onPointerMove={(event) => {
-            const active = pitchDrag.current;
-            if (!active || active.pointerId !== event.pointerId) return;
-            active.value = Math.max(-12, Math.min(12, active.initial + Math.round((active.y - event.clientY) / 8)));
-            setPitchPreview(active.value);
-          }}
-          onPointerUp={(event) => {
-            const active = pitchDrag.current;
-            if (!active || active.pointerId !== event.pointerId) return;
-            pitchDrag.current = null;
-            setPitchPreview(null);
-            onUpdatePad(pad.id, { pitch: active.value });
-          }}
-          onPointerCancel={(event) => {
-            if (pitchDrag.current?.pointerId !== event.pointerId) return;
-            pitchDrag.current = null;
-            setPitchPreview(null);
-          }}
-          onLostPointerCapture={(event) => {
-            if (pitchDrag.current?.pointerId !== event.pointerId) return;
-            pitchDrag.current = null;
-            setPitchPreview(null);
-          }}
-          onKeyDown={(event) => {
-            if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
-            event.preventDefault();
-            onUpdatePad(pad.id, { pitch: Math.max(-12, Math.min(12, pad.pitch + (event.key === 'ArrowUp' ? 1 : -1))) });
-          }}
-        >
-          {pitchPreview === null ? `P ${pad.pitch > 0 ? '+' : ''}${pad.pitch}` : (
-            <>
-              <span>{`↕ ${pitchPreview > 0 ? '+' : ''}${pitchPreview} ST`}</span>
-              <span className="pitch-scale"><span style={{ left: `${(pitchPreview + 12) * 100 / 24}%` }} /></span>
-            </>
-          )}
         </button>
         {precision && (
           <div className="wave-frame-editor">
