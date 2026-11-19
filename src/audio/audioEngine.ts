@@ -51,6 +51,7 @@ const clamp = (value: number, min: number, max: number): number =>
 class AudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
+  private masterOutput: AudioNode | null = null;
   private outputMeters: [AnalyserNode, AnalyserNode] | null = null;
   private meterSamples = new Float32Array(2048);
   private masterVolume = 0.8;
@@ -93,6 +94,7 @@ class AudioEngine {
       const safetyShaper = createSafetySaturationNode(this.ctx);
       limiter.connect(safetyShaper);
       safetyShaper.connect(this.ctx.destination);
+      this.masterOutput = safetyShaper;
       const splitter = this.ctx.createChannelSplitter(2);
       const left = this.ctx.createAnalyser();
       const right = this.ctx.createAnalyser();
@@ -124,6 +126,13 @@ class AudioEngine {
 
   public getContext(): AudioContext | null {
     return this.ctx;
+  }
+
+  public connectMasterCapture(node: AudioNode): () => void {
+    if (!this.masterOutput) throw new Error('Audio output is unavailable.');
+    const output = this.masterOutput;
+    output.connect(node);
+    return () => output.disconnect(node);
   }
 
   public getActiveVoiceCount(): number {

@@ -5,6 +5,10 @@ import type { BankId } from '../project/projectController';
 import type { PadBankApi, PadSlot } from './usePadBank';
 import type { AudioWaveformCanvasProps } from './AudioWaveformCanvas';
 import { WaveformEditor } from './WaveformEditor';
+import { useBounceToPad } from './useBounceToPad';
+import type { BounceBars } from './bounceAudio';
+
+const BOUNCE_BARS: readonly BounceBars[] = [1, 2, 4, 8];
 
 export interface SamplerWorkbenchProps {
   pad: PadSlot;
@@ -27,6 +31,8 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
   const [chopping, setChopping] = useState(false);
   const [chopMessage, setChopMessage] = useState('');
   const [chopError, setChopError] = useState(false);
+  const [bounceBars, setBounceBars] = useState<BounceBars>(1);
+  const bounce = useBounceToPad(onLoadSample);
   return (
   <div className="sampler-workbench bg-[var(--bg-canvas)] flex flex-col shrink-0 font-mono select-none">
     <WaveformEditor pad={pad} onUpdatePad={onUpdatePad} onPreviewRange={onPreviewRange}
@@ -45,6 +51,19 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
       <button type="button" disabled={!storageReady || recordingStatus.phase === 'processing'} onClick={() => onRecord(pad.id)}
         className="sampler-record chop-action px-1 text-[9px] font-bold text-rose-300 disabled:opacity-40">
         {recordingStatus.phase === 'recording' ? 'STOP' : recordingStatus.phase === 'requesting' ? 'CANCEL' : recordingStatus.phase === 'processing' ? 'WAIT' : 'REC'}
+      </button>
+      <select aria-label="Bounce length in bars" value={bounceBars} disabled={bounce.status.busy}
+        onChange={(event) => {
+          const bars = BOUNCE_BARS.find((value) => String(value) === event.target.value);
+          if (bars !== undefined) setBounceBars(bars);
+        }}
+        className="bg-zinc-900 border border-zinc-700 rounded text-[9px] text-zinc-200">
+        {BOUNCE_BARS.map((bars) => <option key={bars} value={bars}>{bars} BAR{bars === 1 ? '' : 'S'}</option>)}
+      </select>
+      <button type="button" disabled={!storageReady && !bounce.status.busy}
+        onClick={() => bounce.status.busy ? bounce.cancel() : void bounce.start(pad.id, bounceBars)}
+        className="chop-action px-1 text-[9px] font-bold text-cyan-300 disabled:opacity-40">
+        {bounce.status.busy ? 'CANCEL BOUNCE' : `BOUNCE TO ${pad.id}`}
       </button>
       <select id={`slice-count-${pad.id}`} aria-label="Number of slices" value={count ?? ''}
         disabled={!storageReady || !pad.sampleKey || chopping}
@@ -81,6 +100,7 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
       </button>}
     </div>
     {chopMessage && <div role={chopError ? 'alert' : 'status'} className={`sampler-chop-status mb-2 text-[9px] break-words ${chopError ? 'text-rose-300' : 'text-cyan-300'}`}>{chopMessage}</div>}
+    {bounce.status.message && <div role={bounce.status.error ? 'alert' : 'status'} className={`text-[9px] ${bounce.status.error ? 'text-rose-300' : 'text-cyan-300'}`}>{bounce.status.message}</div>}
     {recordingStatus.phase !== 'idle' || recordingStatus.message ? (
       <div role={recordingStatus.phase === 'error' ? 'alert' : 'status'} className="sampler-record-status text-[9px] text-rose-300">
         {recordingStatus.phase === 'recording' ? `REC ${recordingStatus.padId} · MAX 60S` :

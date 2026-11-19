@@ -3,6 +3,7 @@ import { audioEngine } from '../audio/audioEngine';
 import { rmxStepIndex, type FxBus, type RmxLength } from '../fx/fxEngine';
 import { projectController } from '../project/projectController';
 import { evaluateTrig } from './trigEvaluator';
+import { nextBarTime } from './barTiming';
 
 const LOOKAHEAD_SECONDS = 0.1;
 const TIMER_MS = 25;
@@ -25,6 +26,7 @@ export class TrackerEngine {
   private fillActive = false;
   private displayedPattern: number | null = null;
   private onPattern?: (index: number) => void;
+  private stopListeners = new Set<() => void>();
 
   constructor(bpm = 120) {
     this.bpm = bpm;
@@ -69,7 +71,18 @@ export class TrackerEngine {
       this.timerId = null;
     }
     trackerBridge.cancelPending();
+    if (wasPlaying) this.stopListeners.forEach((listener) => listener());
     if (wasPlaying) this.onStopped?.(reason);
+  }
+
+  public subscribeStop(listener: () => void): () => void {
+    this.stopListeners.add(listener);
+    return () => { this.stopListeners.delete(listener); };
+  }
+
+  public nextBar(afterTime: number): { time: number; bpm: number } {
+    if (!this.playing) throw new Error('Start the transport before bouncing.');
+    return { time: nextBarTime(this.startTime, this.bpm, afterTime), bpm: this.bpm };
   }
 
   public setFillActive(active: boolean): void {
