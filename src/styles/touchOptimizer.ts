@@ -31,11 +31,19 @@ export function applyTouchOptimizations(): void {
       -webkit-user-select: none;
     }
 
-    .app-shell, .app-shell *:not(input):not(textarea):not(select) {
+    .app-shell, .app-shell * {
       -webkit-touch-callout: none;
       -webkit-user-select: none;
       user-select: none;
       -webkit-user-drag: none;
+    }
+    .app-shell input:not([type]), .app-shell input[type="text"],
+    .app-shell input[type="number"], .app-shell input[type="search"],
+    .app-shell input[type="email"], .app-shell input[type="url"],
+    .app-shell input[type="password"], .app-shell textarea,
+    .app-shell [contenteditable="true"] {
+      -webkit-user-select: text;
+      user-select: text;
     }
     .pad-trigger, .sampler-waveform, .sampler-waveform * {
       touch-action: none;
@@ -53,8 +61,14 @@ export function applyTouchOptimizations(): void {
     if (event.cancelable) event.preventDefault();
   };
   document.addEventListener('touchmove', preventPerformanceGesture, { passive: false });
-  document.addEventListener('dragstart', preventPerformanceGesture);
-  document.addEventListener('selectstart', preventPerformanceGesture);
-  document.addEventListener('contextmenu', preventPerformanceGesture);
+  const preventCallout = (event: Event) => {
+    const target = event.target;
+    if (!(target instanceof Element) || !target.closest('.app-shell')) return;
+    if (target.closest('input:not([type]), input[type="text"], input[type="number"], input[type="search"], input[type="email"], input[type="url"], input[type="password"], textarea, [contenteditable="true"]')) return;
+    if (event.cancelable) event.preventDefault();
+  };
+  document.addEventListener('dragstart', preventCallout);
+  document.addEventListener('selectstart', preventCallout);
+  document.addEventListener('contextmenu', preventCallout);
   console.log('[TouchOptimizer] Applied mobile touch constraints for iPad 9th Gen.');
 }

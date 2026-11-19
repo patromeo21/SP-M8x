@@ -61,6 +61,18 @@
   overflow-x: hidden;
 }
 
+.sampler-workbench {
+  align-self: start;
+  height: auto;
+  min-height: 0;
+}
+
+.sampler-workbench .sampler-waveform {
+  box-sizing: border-box;
+  height: 96px;
+  flex: none;
+}
+
 .phrase-panel,
 .table-panel {
   overflow: hidden;
@@ -184,5 +196,24 @@
   .phrase-workspace {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
+  }
+
+  .sampler-compact .performance-decks {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .sampler-compact .performance-deck-row {
+    min-width: 0;
+  }
+
+  .sampler-compact .performance-deck-row > strong {
+    flex: none;
+    white-space: nowrap;
+  }
+
+  .sampler-compact .performance-deck-row > button {
+    min-width: 0;
   }
 }

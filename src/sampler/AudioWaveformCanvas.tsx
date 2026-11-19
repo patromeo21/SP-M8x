@@ -182,7 +182,7 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
   return (
     <div
       className={`relative w-full rounded border border-[#222832] bg-[#13171d] overflow-hidden ${className}`}
-      style={{ ...style, height, touchAction: 'none' }}
+      style={{ height, ...style, touchAction: 'none' }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}

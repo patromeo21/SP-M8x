@@ -237,6 +237,7 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
           viewStartNorm: length ? viewStart / length : 0,
           viewEndNorm: length ? viewEnd / length : 1,
           height: 96,
+          style: { height: '100%' },
           className: 'pointer-events-none border-0 rounded-none',
         })}
       </div>

@@ -22,8 +22,8 @@ export function PerformanceDeckControls() {
     }
   }, []);
 
-  return <div className="flex flex-col gap-1">
-    {([0, 1] as const).map((deck) => <div key={deck} className="flex items-center gap-1">
+  return <div className="performance-decks flex flex-col gap-1">
+    {([0, 1] as const).map((deck) => <div key={deck} className="performance-deck-row flex items-center gap-1">
       <strong className="text-[9px] text-zinc-400">DECK {deck === 0 ? 'A' : 'B'}</strong>
       {effects.map((effect) => <button key={effect} type="button" aria-label={`Deck ${deck === 0 ? 'A' : 'B'} ${effect}`}
         data-performance-touch
