@@ -3,6 +3,56 @@ export interface WaveformPeaks {
   max: Float32Array;
 }
 
+export interface WebKitCanvasSurface {
+  width: number;
+  height: number;
+  getContext?: (
+    contextId: string,
+    options?: Record<string, unknown>
+  ) => {
+    clearRect?: (x: number, y: number, width: number, height: number) => void;
+  } | null;
+}
+
+/**
+ * Releases WebKit / iPad Safari GPU backing-store memory for a canvas or
+ * OffscreenCanvas on unmount. Safe in Node and non-DOM test environments.
+ */
+export function releaseWebKitCanvasSurface(
+  surface: WebKitCanvasSurface | null | undefined
+): void {
+  if (!surface) {
+    return;
+  }
+
+  try {
+    const width = typeof surface.width === 'number' ? surface.width : 0;
+    const height = typeof surface.height === 'number' ? surface.height : 0;
+    if (width > 0 && height > 0 && typeof surface.getContext === 'function') {
+      const ctx = surface.getContext('2d');
+      if (ctx && typeof ctx.clearRect === 'function') {
+        ctx.clearRect(0, 0, width, height);
+      }
+    }
+  } catch {
+    // Ignore context teardown errors during unmount
+  }
+
+  surface.width = 0;
+  surface.height = 0;
+}
+
+/**
+ * Releases a batch of canvas or OffscreenCanvas surfaces in order.
+ */
+export function releaseWebKitCanvasSurfaces(
+  surfaces: ReadonlyArray<WebKitCanvasSurface | null | undefined>
+): void {
+  for (let i = 0; i < surfaces.length; i += 1) {
+    releaseWebKitCanvasSurface(surfaces[i]);
+  }
+}
+
 /** Builds signed, channel-combined extrema in bounded batches. */
 export function createWaveformPeakBuilder(buffer: AudioBuffer, columns: number, start = 0, end = buffer.length) {
   const length = end - start;

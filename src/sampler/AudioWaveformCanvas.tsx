@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { releaseWebKitCanvasSurfaces } from './waveformPeaks';
 
 export interface AudioWaveformCanvasProps {
   /** Audio buffer from the loaded sample */
@@ -188,14 +189,10 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
   // 4. Strict GPU Memory Cleanup on Unmount (WebKit Guardrail)
   useEffect(() => {
     return () => {
-      if (staticCanvasRef.current) {
-        staticCanvasRef.current.width = 0;
-        staticCanvasRef.current.height = 0;
-      }
-      if (overlayCanvasRef.current) {
-        overlayCanvasRef.current.width = 0;
-        overlayCanvasRef.current.height = 0;
-      }
+      releaseWebKitCanvasSurfaces([
+        staticCanvasRef.current,
+        overlayCanvasRef.current,
+      ]);
     };
   }, []);
 

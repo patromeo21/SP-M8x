@@ -832,6 +832,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 .table-grid-scroll::-webkit-scrollbar-thumb {
   background: var(--m8-border-strong);
   border-radius: 3px;
+}
 
 /* ==========================================================================
    SONG-STYLE RECESSED HARDWARE CELLS FOR PHRASE & TABLE VIEWS
@@ -911,4 +912,42 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   color: var(--m8-accent-green);
   border-color: #2a9d63;
 }
+
+/* ==========================================================================
+   SP-M8x m1: DS-Style Dual-Screen Phrase Layout & Full-Bleed Table Page
+   ========================================================================== */
+.spm8x-phrase-dual-screen {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  gap: 0.75rem;
+  width: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  touch-action: pan-y;
+}
+
+.spm8x-phrase-pane {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.spm8x-table-page-fullbleed {
+  width: 100%;
+  min-height: 100%;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+  box-sizing: border-box;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
+}
+
+@media (max-width: 900px) and (orientation: portrait) {
+  .spm8x-phrase-dual-screen {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

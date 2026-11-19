@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { audioEngine } from '../audio/audioEngine';
 import { percentFromFrame, rangeFromPercent, type SampleRange } from './sampleRange';
-import { createWaveformPeakBuilder, type WaveformPeaks } from './waveformPeaks';
+import { createWaveformPeakBuilder, releaseWebKitCanvasSurfaces, type WaveformPeaks } from './waveformPeaks';
 import type { PadBankApi, PadSlot } from './usePadBank';
 
 const peakCache = new WeakMap<AudioBuffer, { width: number; start: number; end: number; peaks: WaveformPeaks }>();
@@ -71,6 +71,12 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
     observer.observe(canvas);
     resize();
     return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      releaseWebKitCanvasSurfaces([canvasRef.current]);
+    };
   }, []);
 
   useEffect(() => {
