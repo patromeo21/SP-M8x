@@ -216,4 +216,36 @@
   .sampler-compact .performance-deck-row > button {
     min-width: 0;
   }
+
+  .sampler-compact > .sampler-full-pads,
+  .sampler-full > .sampler-full-pads {
+    box-sizing: border-box;
+    align-self: stretch;
+    height: 100%;
+  }
+
+  .sampler-compact > .sampler-full-pads > .pad-bank-manager,
+  .sampler-full > .sampler-full-pads > .pad-bank-manager {
+    flex: 1 1 0;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .sampler-compact .sampler-full-pads .pad-bank-manager > :not(.pad-grid-with-pitch),
+  .sampler-full .sampler-full-pads .pad-bank-manager > :not(.pad-grid-with-pitch) {
+    flex-shrink: 0;
+  }
+
+  .sampler-compact .sampler-full-pads .pad-grid-with-pitch,
+  .sampler-full .sampler-full-pads .pad-grid-with-pitch {
+    flex: 1 1 0;
+    width: 100%;
+    height: 0;
+    min-height: 0;
+    max-height: none;
+    max-width: none;
+    aspect-ratio: auto;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-rows: repeat(4, minmax(44px, 1fr)) auto;
+  }
 }

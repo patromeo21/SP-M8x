@@ -116,7 +116,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
   };
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 gap-1">
+    <div className="pad-bank-manager flex flex-col flex-1 min-h-0 gap-1">
       <div className="flex items-center justify-between gap-1 text-[9px]">
         <button type="button" aria-label="Toggle chromatic pad mode" aria-pressed={padPlayMode === 'CHROMATIC_16'}
           className="touch-none rounded border border-zinc-700 px-2 py-1 text-zinc-300"
