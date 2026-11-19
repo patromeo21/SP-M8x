@@ -55,7 +55,10 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
   useEffect(() => {
     const grid = gridRef.current;
     if (!grid) return;
-    const preventDrag = (event: Event) => { if (event.cancelable) event.preventDefault(); };
+    const preventDrag = (event: Event) => {
+      if (event.type === 'touchmove' && event.target instanceof Element && event.target.closest('.pad-pitch-control')) return;
+      if (event.cancelable) event.preventDefault();
+    };
     grid.addEventListener('touchmove', preventDrag, { passive: false });
     grid.addEventListener('dragstart', preventDrag);
     grid.addEventListener('selectstart', preventDrag);
@@ -138,12 +141,6 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
               <option key={value} value={value}>{value > 0 ? `+${value}` : value}</option>)}
           </select>
         </label>}
-        <label className="pad-pitch-control">PITCH
-          <input aria-label="Selected pad pitch in semitones" type="range" min="-12" max="12" step="1"
-            value={slots[selectedPadId].pitch} disabled={!slots[selectedPadId].sampleKey || deleting}
-            onChange={(event) => updatePad(selectedPadId, { pitch: Number(event.target.value) })} />
-          <output>{slots[selectedPadId].pitch > 0 ? '+' : ''}{slots[selectedPadId].pitch} ST</output>
-        </label>
         <button type="button" disabled={padPlayMode === 'CHROMATIC_16' || !storageReady || deleting} onClick={() => {
           setSelecting(!selecting); setCopying(false); setCopyError(''); setSelected(new Set()); setConfirming(false); setError('');
         }} className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-300 disabled:opacity-40">
@@ -189,7 +186,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
           </div>
         </div>
       </div>}
-      <div ref={gridRef} className="pad-grid grid grid-cols-4 gap-1.5 flex-1 min-h-0 aspect-square w-full max-h-full">
+      <div ref={gridRef} className="pad-grid pad-grid-with-pitch grid grid-cols-4 gap-1.5 flex-1 min-h-0 aspect-square w-full max-h-full">
       {Array.from({ length: PADS_PER_BANK }, (_, i) => {
         const padId = `${activeBank}${i + 1}`;
         const isSlice = sliActive && padPlayMode === 'BANK_64' && i < 10 && !copying && !selecting;
@@ -241,6 +238,12 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
           </button>
         );
       })}
+      <label className="pad-pitch-control">PITCH
+        <input aria-label="Selected pad pitch in semitones" type="range" min="-12" max="12" step="1"
+          value={slots[selectedPadId].pitch} disabled={!slots[selectedPadId].sampleKey || deleting}
+          onChange={(event) => updatePad(selectedPadId, { pitch: Number(event.target.value) })} />
+        <output>{slots[selectedPadId].pitch > 0 ? '+' : ''}{slots[selectedPadId].pitch} ST</output>
+      </label>
       </div>
     </div>
   );

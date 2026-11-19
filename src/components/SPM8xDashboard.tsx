@@ -325,7 +325,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
           {bundleStatus && <span role={bundleStatus.includes('FAILED') ? 'alert' : 'status'} className="text-[9px] text-cyan-300">{bundleStatus}</span>}
         </div>
       </header>
-      <main className="flex-1 flex overflow-hidden p-3 gap-3 bg-[var(--bg-shell-deep)]">
+      <main className={`workspace-main ${currentTab === 'table' ? 'workspace-main-table' : ''} flex-1 flex overflow-hidden p-3 gap-3 bg-[var(--bg-shell-deep)]`}>
         {currentTab === 'phrase'
           ? <div className="phrase-workspace">
               <PhraseTableEditor slots={padBank.slots} activeStep={playing ? playhead : activeStep} transportBusy={playing || starting} mode="phrase" queuedPatternIndex={queuedPatternIndex} onSelectPattern={selectPattern} linkedPad={linkedPad} contextLock={contextLock} onToggleContextLock={toggleContextLock} />

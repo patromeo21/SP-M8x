@@ -48,6 +48,7 @@ export function applyTouchOptimizations(): void {
   document.addEventListener('gesturechange', preventZoom, { passive: false });
   const preventPerformanceGesture = (event: Event) => {
     const target = event.target;
+    if (event.type === 'touchmove' && target instanceof Element && target.closest('.pad-pitch-control')) return;
     if (!(target instanceof Element) || !target.closest('.pad-grid, .sampler-waveform, .macro-trigger, [data-performance-touch]')) return;
     if (event.cancelable) event.preventDefault();
   };
