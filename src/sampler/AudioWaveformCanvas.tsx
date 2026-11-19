@@ -1,8 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  createWaveformCanvasLayer,
   drawStaticWaveform,
   drawWaveformOverlay,
   pointerXToNormalized,
+  releaseWaveformResources,
+  startDemandGatedRender,
+  type WaveformCanvasLayer,
+  type Waveform2DContext,
   type WaveformMipmapLevels,
 } from './waveformCanvasRendering';
 
@@ -42,6 +47,8 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
 }) => {
   const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const staticLayerRef = useRef<WaveformCanvasLayer | null>(null);
+  const overlayLayerRef = useRef<WaveformCanvasLayer | null>(null);
   const activeSliceHandleRef = useRef<'start' | 'end' | null>(null);
   const [mipmapResult, setMipmapResult] = useState<{ buffer: AudioBuffer; mipmaps: WaveformMipmapLevels } | null>(null);
   const workerRef = useRef<Worker | null>(null);
@@ -109,54 +116,54 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
     worker.postMessage({ id: workerId, channels }, channels.map((channel) => channel.buffer));
 
     return () => {
-      worker.terminate();
+      releaseWaveformResources([], [], worker);
       if (workerRef.current === worker) workerRef.current = null;
     };
   }, [audioBuffer]);
 
   // Reset dimensions on setup as well, so Strict Mode's effect replay restores the canvases.
   useEffect(() => {
-    const canvases = [staticCanvasRef.current, overlayCanvasRef.current];
+    const staticCanvas = staticCanvasRef.current;
+    const overlayCanvas = overlayCanvasRef.current;
+    const canvases = [staticCanvas, overlayCanvas];
     for (const canvas of canvases) {
       if (canvas) {
         canvas.width = 600;
         canvas.height = height;
       }
     }
+    const staticLayer = staticCanvas ? createWaveformCanvasLayer(staticCanvas, false) : null;
+    const overlayLayer = overlayCanvas ? createWaveformCanvasLayer(overlayCanvas, true) : null;
+    staticLayerRef.current = staticLayer;
+    overlayLayerRef.current = overlayLayer;
 
     return () => {
-      for (const canvas of canvases) {
-        if (canvas) {
-          canvas.width = 0;
-          canvas.height = 0;
-        }
-      }
+      releaseWaveformResources(canvases, [staticLayer, overlayLayer]);
+      if (staticLayerRef.current === staticLayer) staticLayerRef.current = null;
+      if (overlayLayerRef.current === overlayLayer) overlayLayerRef.current = null;
     };
   }, [height]);
 
   // 2. Render Static Waveform Layer (Layer 1 - Runs ONCE per load/zoom change)
   useEffect(() => {
     const canvas = staticCanvasRef.current;
-    if (!canvas) return;
+    const layer = staticLayerRef.current;
+    if (!canvas || !layer) return;
 
-    const ctx = canvas.getContext('2d', { alpha: false });
-    if (!ctx) return;
-
-    drawStaticWaveform(ctx, canvas.width, canvas.height, mipmaps, viewStart, viewEnd);
+    layer.render((context) => {
+      drawStaticWaveform(context, canvas.width, canvas.height, mipmaps, viewStart, viewEnd);
+    });
   }, [mipmaps, height, viewStart, viewEnd]);
 
   // 3. Demand-Gated Overlay Layer (Layer 2 - RAF active ONLY during playback)
   useEffect(() => {
     const canvas = overlayCanvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const layer = overlayLayerRef.current;
+    if (!canvas || !layer) return;
 
-    let animId: number | null = null;
-
-    const renderOverlay = () => {
+    const drawOverlay = (context: Waveform2DContext) => {
       drawWaveformOverlay(
-        ctx,
+        context,
         canvas.width,
         canvas.height,
         viewStart,
@@ -166,21 +173,10 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
         sliceMarkers,
         isPlaying ? playheadRef.current : null,
       );
-
-      if (isPlaying) {
-        animId = requestAnimationFrame(renderOverlay);
-      }
     };
+    const renderOverlay = () => layer.render(drawOverlay);
 
-    if (isPlaying) {
-      animId = requestAnimationFrame(renderOverlay);
-    } else {
-      renderOverlay();
-    }
-
-    return () => {
-      if (animId !== null) cancelAnimationFrame(animId);
-    };
+    return startDemandGatedRender(renderOverlay, isPlaying);
   }, [isPlaying, sliceStart, sliceEnd, sliceMarkers, height, viewStart, viewEnd]);
 
   return (

@@ -5,7 +5,116 @@ export interface WaveformMipmapLevels {
   };
 }
 
+export type Waveform2DContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+
+export interface WaveformCanvasLayer {
+  render(draw: (context: Waveform2DContext) => void): void;
+  release(): void;
+}
+
 export const WAVEFORM_MIPMAP_RESOLUTIONS = [64, 512, 4096] as const;
+
+function isOffscreenUnavailable(error: unknown): boolean {
+  return error instanceof TypeError ||
+    (error instanceof Error && ['NotSupportedError', 'InvalidStateError', 'SecurityError'].includes(error.name));
+}
+
+export function createWaveformCanvasLayer(canvas: HTMLCanvasElement, alpha: boolean): WaveformCanvasLayer | null {
+  const visibleContext = canvas.getContext('2d', { alpha });
+  if (!visibleContext) return null;
+
+  let offscreen: OffscreenCanvas | null = null;
+  let context: Waveform2DContext = visibleContext;
+  if (typeof OffscreenCanvas !== 'undefined') {
+    let candidate: OffscreenCanvas | null = null;
+    try {
+      candidate = new OffscreenCanvas(canvas.width, canvas.height);
+      const candidateContext = candidate.getContext('2d', { alpha });
+      if (candidateContext) {
+        offscreen = candidate;
+        context = candidateContext;
+      } else {
+        candidate.width = 0;
+        candidate.height = 0;
+      }
+    } catch (error) {
+      if (candidate) {
+        candidate.width = 0;
+        candidate.height = 0;
+      }
+      if (!isOffscreenUnavailable(error)) throw error;
+    }
+  }
+
+  return {
+    render(draw) {
+      if (!offscreen) {
+        draw(visibleContext);
+        return;
+      }
+
+      if (offscreen.width !== canvas.width) offscreen.width = canvas.width;
+      if (offscreen.height !== canvas.height) offscreen.height = canvas.height;
+      draw(context);
+      try {
+        visibleContext.clearRect(0, 0, canvas.width, canvas.height);
+        visibleContext.drawImage(offscreen, 0, 0, canvas.width, canvas.height);
+      } catch (error) {
+        if (!isOffscreenUnavailable(error)) throw error;
+        offscreen.width = 0;
+        offscreen.height = 0;
+        offscreen = null;
+        context = visibleContext;
+        visibleContext.clearRect(0, 0, canvas.width, canvas.height);
+        draw(visibleContext);
+      }
+    },
+    release() {
+      if (offscreen) {
+        offscreen.width = 0;
+        offscreen.height = 0;
+        offscreen = null;
+        context = visibleContext;
+      }
+    },
+  };
+}
+
+export function releaseWaveformResources(
+  canvases: readonly (HTMLCanvasElement | null)[],
+  layers: readonly (WaveformCanvasLayer | null)[],
+  worker?: Pick<Worker, 'terminate'> | null,
+): void {
+  worker?.terminate();
+  for (const layer of layers) layer?.release();
+  for (const canvas of canvases) {
+    if (!canvas) continue;
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+}
+
+export function startDemandGatedRender(draw: () => void, isPlaying: boolean): () => void {
+  if (!isPlaying) {
+    draw();
+    return () => {};
+  }
+
+  let active = true;
+  let frame: number | null = null;
+  const render = () => {
+    if (!active) return;
+    draw();
+    frame = requestAnimationFrame(render);
+  };
+  frame = requestAnimationFrame(render);
+
+  return () => {
+    active = false;
+    if (frame !== null) cancelAnimationFrame(frame);
+    frame = null;
+  };
+}
 
 export function selectWaveformResolution(width: number, viewStart: number, viewEnd: number): number {
   const visibleRange = Math.max(0, viewEnd - viewStart);
@@ -30,7 +139,7 @@ export function pointerXToNormalized(
 }
 
 export function drawStaticWaveform(
-  ctx: CanvasRenderingContext2D,
+  ctx: Waveform2DContext,
   width: number,
   height: number,
   mipmaps: WaveformMipmapLevels | null,
@@ -63,7 +172,7 @@ export function drawStaticWaveform(
 }
 
 export function drawWaveformOverlay(
-  ctx: CanvasRenderingContext2D,
+  ctx: Waveform2DContext,
   width: number,
   height: number,
   viewStart: number,
