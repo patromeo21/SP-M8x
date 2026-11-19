@@ -5,7 +5,7 @@
 
 interface WaveformWorkerRequest {
   id: string;
-  channelData: Float32Array;
+  channels: Float32Array[];
 }
 
 interface WaveformWorkerResponse {
@@ -19,10 +19,11 @@ interface WaveformWorkerResponse {
 }
 
 self.onmessage = (e: MessageEvent<WaveformWorkerRequest>) => {
-  const { id, channelData } = e.data;
-  if (!channelData || channelData.length === 0) return;
+  const { id, channels } = e.data;
+  if (!channels?.length || channels[0].length === 0) return;
 
   const resolutions = [64, 512, 4096];
+  const sampleLength = channels[0].length;
   const mipmaps: WaveformWorkerResponse['mipmaps'] = {};
 
   for (const res of resolutions) {
@@ -32,14 +33,16 @@ self.onmessage = (e: MessageEvent<WaveformWorkerRequest>) => {
     for (let i = 0; i < res; i++) {
       let min = Number.POSITIVE_INFINITY;
       let max = Number.NEGATIVE_INFINITY;
-      const start = Math.floor(i * channelData.length / res);
-      const end = Math.floor((i + 1) * channelData.length / res);
+      const start = Math.floor(i * sampleLength / res);
+      const end = Math.floor((i + 1) * sampleLength / res);
 
-      for (let j = start; j < end; j++) {
-        const val = channelData[j];
-        if (Number.isFinite(val)) {
-          if (val < min) min = val;
-          if (val > max) max = val;
+      for (const channelData of channels) {
+        for (let j = start; j < Math.min(end, channelData.length); j++) {
+          const val = channelData[j];
+          if (Number.isFinite(val)) {
+            if (val < min) min = val;
+            if (val > max) max = val;
+          }
         }
       }
 

@@ -1,4 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
+import {
+  drawStaticWaveform,
+  drawWaveformOverlay,
+  pointerXToNormalized,
+  type WaveformMipmapLevels,
+} from './waveformCanvasRendering';
 
 export interface AudioWaveformCanvasProps {
   /** Audio buffer from the loaded sample */
@@ -9,6 +15,8 @@ export interface AudioWaveformCanvasProps {
   playheadNorm: number;
   /** Optional slice points (startNorm, endNorm) in 0-1 range */
   slicePoints?: { startNorm: number; endNorm: number };
+  /** Optional normalized positions for interior slice markers */
+  sliceMarkers?: readonly number[];
   /** Callback when slice points change via drag */
   onSliceChange?: (startNorm: number, endNorm: number) => void;
   /** Canvas height in pixels */
@@ -24,6 +32,7 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
   isPlaying,
   playheadNorm,
   slicePoints,
+  sliceMarkers,
   onSliceChange,
   height = 128,
   viewStartNorm = 0,
@@ -34,10 +43,11 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
   const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const activeSliceHandleRef = useRef<'start' | 'end' | null>(null);
-  const [mipmaps, setMipmaps] = useState<{ [res: number]: { min: Float32Array; max: Float32Array } } | null>(null);
+  const [mipmapResult, setMipmapResult] = useState<{ buffer: AudioBuffer; mipmaps: WaveformMipmapLevels } | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const playheadRef = useRef(playheadNorm);
   playheadRef.current = playheadNorm;
+  const mipmaps = mipmapResult?.buffer === audioBuffer ? mipmapResult.mipmaps : null;
   const viewStart = Math.max(0, Math.min(1 - 1e-6, viewStartNorm));
   const viewEnd = Math.max(viewStart + 1e-6, Math.min(1, viewEndNorm));
   const sliceStart = slicePoints?.startNorm;
@@ -45,8 +55,7 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
 
   const getPointerPosition = (event: React.PointerEvent<HTMLDivElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect();
-    if (bounds.width <= 0) return 0;
-    return Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
+    return pointerXToNormalized(event.clientX, bounds.left, bounds.width, viewStart, viewEnd);
   };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -76,35 +85,32 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
   // 1. Initialize Worker & Compute Mipmaps on Buffer Load
   useEffect(() => {
     if (!audioBuffer) {
-      setMipmaps(null);
+      setMipmapResult(null);
       return;
     }
-    setMipmaps(null);
+    setMipmapResult(null);
 
     // Instantiate worker via Vite worker import syntax
-    workerRef.current = new Worker(
+    const worker = new Worker(
       new URL('../workers/waveformWorker.ts', import.meta.url),
       { type: 'module' }
     );
+    workerRef.current = worker;
 
-    const channelData = audioBuffer.getChannelData(0);
-    const channelDataCopy = channelData.slice();
+    const channels = Array.from({ length: audioBuffer.numberOfChannels }, (_, index) => audioBuffer.getChannelData(index).slice());
     const workerId = Math.random().toString(36).substring(7);
 
-    workerRef.current.onmessage = (e) => {
+    worker.onmessage = (e: MessageEvent<{ id: string; mipmaps: WaveformMipmapLevels }>) => {
       if (e.data.id === workerId) {
-        setMipmaps(e.data.mipmaps);
+        setMipmapResult({ buffer: audioBuffer, mipmaps: e.data.mipmaps });
       }
     };
 
-    workerRef.current.postMessage(
-      { id: workerId, channelData: channelDataCopy },
-      [channelDataCopy.buffer],
-    );
+    worker.postMessage({ id: workerId, channels }, channels.map((channel) => channel.buffer));
 
     return () => {
-      workerRef.current?.terminate();
-      workerRef.current = null;
+      worker.terminate();
+      if (workerRef.current === worker) workerRef.current = null;
     };
   }, [audioBuffer]);
 
@@ -131,42 +137,12 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
   // 2. Render Static Waveform Layer (Layer 1 - Runs ONCE per load/zoom change)
   useEffect(() => {
     const canvas = staticCanvasRef.current;
-    if (!canvas || !mipmaps) return;
+    if (!canvas) return;
 
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return;
 
-    const width = canvas.width;
-    const hHeight = canvas.height;
-    const mid = hHeight / 2;
-
-    // Clear background (M8 hardware theme chassis color)
-    ctx.fillStyle = '#13171d';
-    ctx.fillRect(0, 0, width, height);
-
-    // Pick mipmap resolution closest to canvas width
-    const targetRes = width <= 128 ? 64 : width <= 1024 ? 512 : 4096;
-    const peakData = mipmaps[targetRes] || mipmaps[512];
-    if (!peakData) return;
-
-    ctx.strokeStyle = '#38bdf8'; // M8 Accent Cyan
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-
-    const firstBin = Math.min(peakData.min.length - 1, Math.floor(viewStart * peakData.min.length));
-    const lastBin = Math.max(firstBin + 1, Math.min(peakData.min.length, Math.ceil(viewEnd * peakData.min.length)));
-    const visibleBins = lastBin - firstBin;
-    const step = width / visibleBins;
-    for (let i = firstBin; i < lastBin; i++) {
-      const x = (i - firstBin) * step;
-      const yMin = mid + peakData.min[i] * mid * 0.85;
-      const yMax = mid + peakData.max[i] * mid * 0.85;
-
-      ctx.moveTo(x, yMin);
-      ctx.lineTo(x, yMax);
-    }
-    ctx.stroke();
-
+    drawStaticWaveform(ctx, canvas.width, canvas.height, mipmaps, viewStart, viewEnd);
   }, [mipmaps, height, viewStart, viewEnd]);
 
   // 3. Demand-Gated Overlay Layer (Layer 2 - RAF active ONLY during playback)
@@ -179,41 +155,17 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
     let animId: number | null = null;
 
     const renderOverlay = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      if (sliceStart !== undefined && sliceEnd !== undefined) {
-        const range = viewEnd - viewStart;
-        const visibleStart = Math.max(viewStart, sliceStart);
-        const visibleEnd = Math.min(viewEnd, sliceEnd);
-        const startX = (visibleStart - viewStart) / range * canvas.width;
-        const endX = (visibleEnd - viewStart) / range * canvas.width;
-
-        ctx.fillStyle = 'rgba(56, 189, 248, 0.15)';
-        if (endX > startX) ctx.fillRect(startX, 0, endX - startX, canvas.height);
-
-        ctx.strokeStyle = '#f59e0b';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        if (sliceStart >= viewStart && sliceStart <= viewEnd) {
-          ctx.moveTo(startX, 0);
-          ctx.lineTo(startX, canvas.height);
-        }
-        if (sliceEnd >= viewStart && sliceEnd <= viewEnd) {
-          ctx.moveTo(endX, 0);
-          ctx.lineTo(endX, canvas.height);
-        }
-        ctx.stroke();
-      }
-
-      if (isPlaying) {
-        const x = (playheadRef.current - viewStart) / (viewEnd - viewStart) * canvas.width;
-        ctx.strokeStyle = '#38e58c'; // Phosphor Green Playhead
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, canvas.height);
-        ctx.stroke();
-      }
+      drawWaveformOverlay(
+        ctx,
+        canvas.width,
+        canvas.height,
+        viewStart,
+        viewEnd,
+        sliceStart,
+        sliceEnd,
+        sliceMarkers,
+        isPlaying ? playheadRef.current : null,
+      );
 
       if (isPlaying) {
         animId = requestAnimationFrame(renderOverlay);
@@ -229,7 +181,7 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
     return () => {
       if (animId !== null) cancelAnimationFrame(animId);
     };
-  }, [isPlaying, sliceStart, sliceEnd, height, viewStart, viewEnd]);
+  }, [isPlaying, sliceStart, sliceEnd, sliceMarkers, height, viewStart, viewEnd]);
 
   return (
     <div

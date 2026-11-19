@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { audioEngine } from '../audio/audioEngine';
 import { percentFromFrame, rangeFromPercent, type SampleRange } from './sampleRange';
 import type { PadBankApi, PadSlot } from './usePadBank';
@@ -31,9 +31,12 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
   const viewStart = Math.max(0, Math.min(length - viewLength, Math.round(position * length)));
   const viewEnd = Math.min(length, viewStart + viewLength);
   const range = preview ?? (length ? rangeFromPercent(pad.startPct, pad.endPct, length) : { start: 0, end: 0 });
-  const sliceMarkerFrames = sliceCount > 0
+  const sliceMarkerFrames = useMemo(() => sliceCount > 0
     ? Array.from({ length: sliceCount - 1 }, (_, index) => range.start + Math.floor((index + 1) * (range.end - range.start) / sliceCount))
-    : pad.sliceMarkers.slice(1, -1);
+    : pad.sliceMarkers.slice(1, -1),
+  [sliceCount, range.start, range.end, pad.sliceMarkers]);
+  const sliceMarkerNorms = useMemo(() => length ? sliceMarkerFrames.map((frame) => frame / length) : [],
+    [sliceMarkerFrames, length]);
 
   useEffect(() => {
     drag.current = null;
@@ -230,16 +233,13 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
           isPlaying: waveformPlaying,
           playheadNorm,
           slicePoints: length ? { startNorm: range.start / length, endNorm: range.end / length } : undefined,
+          sliceMarkers: sliceMarkerNorms,
           viewStartNorm: length ? viewStart / length : 0,
           viewEndNorm: length ? viewEnd / length : 1,
           height: 96,
           className: 'pointer-events-none border-0 rounded-none',
         })}
       </div>
-      {length > 0 && sliceMarkerFrames.filter((frame) => frame >= viewStart && frame <= viewEnd).map((frame) => (
-        <div key={frame} aria-hidden="true" className="absolute top-0 bottom-0 w-px bg-white/40 pointer-events-none z-[1]"
-          style={{ left: `${(frame - viewStart) * 100 / viewLength}%` }} />
-      ))}
       <div aria-hidden="true"
         style={scrubPosition !== null && scrubPosition >= viewStart && scrubPosition <= viewEnd
           ? { left: `${(scrubPosition - viewStart) * 100 / viewLength}%` }
