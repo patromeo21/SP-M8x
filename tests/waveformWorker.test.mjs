@@ -24,10 +24,16 @@ test('waveform mipmaps cover every sample, including exact full-scale peaks', as
     assert.equal(posted.length, 1);
     const response = posted[0];
     assert.equal(response.id, 'waveform-1');
-    const mipmap = response.mipmaps[64];
-    assert.ok(Array.from(mipmap.min).includes(-0.25));
-    assert.ok(Array.from(mipmap.max).includes(1));
-    assert.ok(Array.from(mipmap.max).includes(0.5));
+    assert.deepEqual(Object.keys(response.mipmaps).map(Number).sort((a, b) => a - b), [64, 512, 4096]);
+    for (const resolution of [64, 512, 4096]) {
+      const mipmap = response.mipmaps[resolution];
+      assert.equal(mipmap.min.length, resolution);
+      assert.equal(mipmap.max.length, resolution);
+      assert.ok(Array.from(mipmap.min).includes(-0.25));
+      assert.ok(Array.from(mipmap.max).includes(1));
+      assert.ok(Array.from(mipmap.max).includes(0.5));
+      assert.ok(mipmap.min.every((value, index) => value <= mipmap.max[index]));
+    }
   } finally {
     if (previousSelf === undefined) delete globalThis.self;
     else globalThis.self = previousSelf;

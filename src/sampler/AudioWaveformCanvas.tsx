@@ -40,6 +40,8 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
   playheadRef.current = playheadNorm;
   const viewStart = Math.max(0, Math.min(1 - 1e-6, viewStartNorm));
   const viewEnd = Math.max(viewStart + 1e-6, Math.min(1, viewEndNorm));
+  const sliceStart = slicePoints?.startNorm;
+  const sliceEnd = slicePoints?.endNorm;
 
   const getPointerPosition = (event: React.PointerEvent<HTMLDivElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect();
@@ -106,6 +108,26 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
     };
   }, [audioBuffer]);
 
+  // Reset dimensions on setup as well, so Strict Mode's effect replay restores the canvases.
+  useEffect(() => {
+    const canvases = [staticCanvasRef.current, overlayCanvasRef.current];
+    for (const canvas of canvases) {
+      if (canvas) {
+        canvas.width = 600;
+        canvas.height = height;
+      }
+    }
+
+    return () => {
+      for (const canvas of canvases) {
+        if (canvas) {
+          canvas.width = 0;
+          canvas.height = 0;
+        }
+      }
+    };
+  }, [height]);
+
   // 2. Render Static Waveform Layer (Layer 1 - Runs ONCE per load/zoom change)
   useEffect(() => {
     const canvas = staticCanvasRef.current;
@@ -145,28 +167,7 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
     }
     ctx.stroke();
 
-    // Draw Slice Regions if present
-    if (slicePoints) {
-      ctx.fillStyle = 'rgba(56, 189, 248, 0.15)';
-      const range = viewEnd - viewStart;
-      const visibleStart = Math.max(viewStart, slicePoints.startNorm);
-      const visibleEnd = Math.min(viewEnd, slicePoints.endNorm);
-      const startX = (visibleStart - viewStart) / range * width;
-      const endX = (visibleEnd - viewStart) / range * width;
-      if (endX > startX) ctx.fillRect(startX, 0, endX - startX, height);
-
-      ctx.strokeStyle = '#f59e0b'; // Amber slice handles
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      if (slicePoints.startNorm >= viewStart && slicePoints.startNorm <= viewEnd) {
-        ctx.moveTo(startX, 0); ctx.lineTo(startX, height);
-      }
-      if (slicePoints.endNorm >= viewStart && slicePoints.endNorm <= viewEnd) {
-        ctx.moveTo(endX, 0); ctx.lineTo(endX, height);
-      }
-      ctx.stroke();
-    }
-  }, [mipmaps, slicePoints, height, viewStart, viewEnd]);
+  }, [mipmaps, height, viewStart, viewEnd]);
 
   // 3. Demand-Gated Overlay Layer (Layer 2 - RAF active ONLY during playback)
   useEffect(() => {
@@ -175,10 +176,34 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    let animId: number;
+    let animId: number | null = null;
 
     const renderOverlay = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (sliceStart !== undefined && sliceEnd !== undefined) {
+        const range = viewEnd - viewStart;
+        const visibleStart = Math.max(viewStart, sliceStart);
+        const visibleEnd = Math.min(viewEnd, sliceEnd);
+        const startX = (visibleStart - viewStart) / range * canvas.width;
+        const endX = (visibleEnd - viewStart) / range * canvas.width;
+
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.15)';
+        if (endX > startX) ctx.fillRect(startX, 0, endX - startX, canvas.height);
+
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        if (sliceStart >= viewStart && sliceStart <= viewEnd) {
+          ctx.moveTo(startX, 0);
+          ctx.lineTo(startX, canvas.height);
+        }
+        if (sliceEnd >= viewStart && sliceEnd <= viewEnd) {
+          ctx.moveTo(endX, 0);
+          ctx.lineTo(endX, canvas.height);
+        }
+        ctx.stroke();
+      }
 
       if (isPlaying) {
         const x = (playheadRef.current - viewStart) / (viewEnd - viewStart) * canvas.width;
@@ -198,28 +223,13 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
     if (isPlaying) {
       animId = requestAnimationFrame(renderOverlay);
     } else {
-      // Render once to clear
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      renderOverlay();
     }
 
     return () => {
-      cancelAnimationFrame(animId);
+      if (animId !== null) cancelAnimationFrame(animId);
     };
-  }, [isPlaying, viewStart, viewEnd]);
-
-  // 4. Strict GPU Memory Cleanup on Unmount (WebKit Guardrail)
-  useEffect(() => {
-    return () => {
-      if (staticCanvasRef.current) {
-        staticCanvasRef.current.width = 0;
-        staticCanvasRef.current.height = 0;
-      }
-      if (overlayCanvasRef.current) {
-        overlayCanvasRef.current.width = 0;
-        overlayCanvasRef.current.height = 0;
-      }
-    };
-  }, []);
+  }, [isPlaying, sliceStart, sliceEnd, height, viewStart, viewEnd]);
 
   return (
     <div
