@@ -231,6 +231,27 @@
     min-width: 0;
   }
 
+  .sampler-compact > .sampler-full-pads,
+  .sampler-full > .sampler-full-pads {
+    padding: 4px;
+    gap: 2px;
+  }
+
+  .sampler-compact > .sampler-full-pads > :first-child,
+  .sampler-full > .sampler-full-pads > :first-child {
+    padding-bottom: 2px;
+  }
+
+  .sampler-compact .sampler-full-pads .pad-bank-manager,
+  .sampler-full .sampler-full-pads .pad-bank-manager {
+    gap: 2px;
+  }
+
+  .sampler-compact .sampler-full-pads .pad-grid-with-pitch,
+  .sampler-full .sampler-full-pads .pad-grid-with-pitch {
+    gap: 4px;
+  }
+
   .sampler-compact .sampler-full-pads .pad-bank-manager > :not(.pad-grid-with-pitch),
   .sampler-full .sampler-full-pads .pad-bank-manager > :not(.pad-grid-with-pitch) {
     flex-shrink: 0;
