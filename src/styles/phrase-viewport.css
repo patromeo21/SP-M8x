@@ -10,6 +10,28 @@
   min-height: 0;
 }
 
+.workspace-nav {
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.workspace-secondary {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overflow-x: hidden;
+}
+
+.mixer-tracks {
+  flex-wrap: wrap;
+}
+
+.mixer-tracks > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .app-shell > header,
 .app-shell > footer,
 .app-shell > footer > div {

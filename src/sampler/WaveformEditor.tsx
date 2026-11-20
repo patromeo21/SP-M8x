@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { audioEngine } from '../audio/audioEngine';
 import { percentFromFrame, rangeFromPercent, type SampleRange } from './sampleRange';
+import { markerRangeAtPointer } from './waveformGesture';
 import type { PadBankApi, PadSlot } from './usePadBank';
 import type { AudioWaveformCanvasProps } from './AudioWaveformCanvas';
 
@@ -103,11 +104,8 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
   const moveMarker = (event: React.PointerEvent<HTMLButtonElement>) => {
     const active = drag.current;
     const bounds = containerRef.current?.getBoundingClientRect();
-    if (!active || active.pointerId !== event.pointerId || !bounds || !length) return;
-    const frame = Math.max(0, Math.min(length, active.origin + Math.round((event.clientX - active.x) * viewLength / bounds.width)));
-    const next = active.edge === 'start'
-      ? { ...active.range, start: Math.min(frame, active.range.end - 1) }
-      : { ...active.range, end: Math.max(frame, active.range.start + 1) };
+    if (!active || active.pointerId !== event.pointerId || !bounds || bounds.width <= 0 || !length) return;
+    const next = markerRangeAtPointer(active.original, active.edge, active.origin, active.x, event.clientX, viewLength, bounds.width, length);
     active.range = next;
     setPreview(next);
     onPreviewRange(pad.id, percentFromFrame(next.start, length), percentFromFrame(next.end, length));
@@ -115,7 +113,7 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
 
   const scrubAt = (clientX: number) => {
     const bounds = containerRef.current?.getBoundingClientRect();
-    if (!bounds || !length) return;
+    if (!bounds || bounds.width <= 0 || !length) return;
     const ratio = Math.max(0, Math.min(1, (clientX - bounds.left) / bounds.width));
     const frame = Math.max(range.start, Math.min(range.end - 1, viewStart + Math.round(ratio * viewLength)));
     setScrubPosition(frame);
@@ -134,19 +132,19 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
       aria-label={`${edge === 'start' ? 'Start' : 'End'} marker`}
       disabled={!pad.buffer}
       className={`slice-handle slice-handle-${edge}`}
-      style={{ left: `clamp(22px, ${length ? (range[edge] - viewStart) * 100 / viewLength : 0}%, calc(100% - 22px))` }}
+      style={{ left: `clamp(22px, ${length ? (range[edge] - viewStart) * 100 / viewLength : 0}%, calc(100% - 22px))`, touchAction: 'none' }}
       onPointerDown={(event) => {
         if (drag.current) return;
         event.preventDefault();
         event.currentTarget.setPointerCapture(event.pointerId);
         const visible = Math.max(viewStart, Math.min(viewEnd, range[edge]));
         const origin = edge === 'start' ? Math.min(visible, range.end - 1) : Math.max(visible, range.start + 1);
-        const next = { ...range, [edge]: origin };
-        drag.current = { pointerId: event.pointerId, edge, range: next, original: range, x: event.clientX, origin };
+        drag.current = { pointerId: event.pointerId, edge, range, original: range, x: event.clientX, origin };
       }}
       onPointerMove={moveMarker}
       onPointerUp={(event) => {
         if (drag.current?.pointerId !== event.pointerId) return;
+        moveMarker(event);
         const next = drag.current.range;
         drag.current = null;
         setPreview(null);
@@ -189,7 +187,7 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
           if (waveformPointers.current.size >= 2) {
             const [first, second] = [...waveformPointers.current.entries()].slice(-2);
             const bounds = containerRef.current?.getBoundingClientRect();
-            if (!bounds) return;
+            if (!bounds || bounds.width <= 0) return;
             const distance = Math.hypot(first[1].x - second[1].x, first[1].y - second[1].y);
             const centerX = (first[1].x + second[1].x) / 2;
             const centerRatio = Math.max(0, Math.min(1, (centerX - bounds.left) / bounds.width));
@@ -212,7 +210,7 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
             const first = waveformPointers.current.get(gesture.ids[0]);
             const second = waveformPointers.current.get(gesture.ids[1]);
             const bounds = containerRef.current?.getBoundingClientRect();
-            if (!first || !second || !bounds) return;
+            if (!first || !second || !bounds || bounds.width <= 0) return;
             const distance = Math.hypot(first.x - second.x, first.y - second.y);
             const nextZoom = Math.max(1, Math.min(32, gesture.zoom * distance / gesture.distance));
             const centerX = (first.x + second.x) / 2;
