@@ -6,20 +6,40 @@ import { audioEngine } from '../audio/audioEngine';
 import { MasterOutput } from '../audio/MasterOutput';
 import { trackerEngine } from '../tracker/trackerEngine';
 import { trackerBridge } from '../tracker/trackerBridge';
-import { projectController } from '../project/projectController';
+import { projectController, type Pattern } from '../project/projectController';
 import { PhraseTableEditor, type EditorProps } from '../tracker/PhraseTableEditor';
 import { SongArrangementView } from '../tracker/SongArrangementView';
 import { chromaticNote } from '../sampler/chromatic';
 import { instrumentIdToPadId, padIdToInstrumentId } from '../sampler/padIds';
+import { rangeFromPercent } from '../sampler/sampleRange';
+import { sliceRange } from '../sampler/gridSlices';
 import { exportSp8Bundle, importSp8Bundle } from '../project/sp8Bundle';
 import { readStoredAudio } from '../sampler/padStorage';
 import type { StoredPad } from '../sampler/padStorage';
+import { createRecordedStepEvent } from '../project/stepModel';
 
 export type WorkspaceTab = 'phrase' | 'table' | 'song' | 'mixer' | 'sampler';
 
 export interface SPM8xDashboardProps {
   initialTab?: WorkspaceTab;
   activeStep?: number;
+}
+
+function collectPatternPadIds(pattern: Pattern): string[] {
+  const padIds = new Set<string>();
+  for (const track of pattern.tracks) {
+    for (let stepIndex = 0; stepIndex < pattern.length; stepIndex++) {
+      const step = track.steps[stepIndex];
+      if (!step) continue;
+      const primaryPadId = instrumentIdToPadId(step.instrumentId);
+      if (primaryPadId) padIds.add(primaryPadId);
+      for (const event of step.events ?? []) {
+        const eventPadId = instrumentIdToPadId(event.instrumentId ?? event.padId);
+        if (eventPadId) padIds.add(eventPadId);
+      }
+    }
+  }
+  return [...padIds];
 }
 
 export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'phrase', activeStep = -1 }) => {
@@ -199,8 +219,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
         const state = projectController.getState();
         const pattern = state.tracker.patterns[state.settings.activePatternIndex];
         if (!pattern) throw new Error('Active phrase is unavailable.');
-        const ids = pattern.tracks.flatMap((track) => track.steps.slice(0, pattern.length).map((step) => instrumentIdToPadId(step.instrumentId)))
-          .filter((id): id is string => id !== null);
+        const ids = collectPatternPadIds(pattern);
         await padBank.preparePads(ids);
         if (generation !== startGeneration.current) return;
         await trackerEngine.start(state.settings.bpm);
@@ -232,8 +251,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
     trackerEngine.queuePattern(null);
     setQueuedPatternIndex(index);
     setTransportMessage('PREPARING QUEUED PHRASE');
-    const ids = pattern.tracks.flatMap((track) => track.steps.slice(0, pattern.length).map((step) => instrumentIdToPadId(step.instrumentId)))
-      .filter((id): id is string => id !== null);
+    const ids = collectPatternPadIds(pattern);
     void padBank.preparePads(ids).then(() => {
       if (request !== queueGeneration.current) return;
       const queued = trackerEngine.queuePattern(index);
@@ -257,18 +275,40 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
       if (!recordingRef.current) return;
       const position = trackerEngine.recordPosition(captureTime ?? time);
       if (!position) return;
-      const state = projectController.getState();
       const instrumentId = padIdToInstrumentId(padId);
       if (instrumentId === null) return;
-      const track = projectController.recordHit(position.patternIndex, position.step,
-        state.sampler.pads[padId]?.targetTrack ?? 0, {
-          note: chromaticNote(semitoneOffset), instrumentId, subTickOffset: position.subTickOffset, velocity: 127,
-          ...(sliceIndex === undefined ? {} : { sliceIndex }),
-        });
-      if (track === null) {
-        setTransportMessage(`Step ${position.step + 1} full — hit not recorded.`);
+      const padSettings = padBank.getPadSettings(padId);
+      const buffer = padSettings?.buffer;
+      if (!padSettings || !buffer) {
+        setTransportMessage(`Pad ${padId} is unavailable — hit not recorded.`);
         return;
       }
+      const resolvedSlice = sliceIndex === undefined ? undefined : Math.min(sliceIndex, padSettings.sliceMarkers.length - 1);
+      const range = resolvedSlice === undefined
+        ? rangeFromPercent(padSettings.startPct, padSettings.endPct, buffer.length)
+        : sliceRange(padSettings.sliceMarkers, resolvedSlice, buffer.length);
+      if (!range) {
+        setTransportMessage(`Pad ${padId} has no valid slice — hit not recorded.`);
+        return;
+      }
+      const recordedEvent = createRecordedStepEvent({
+        note: chromaticNote(semitoneOffset),
+        instrumentId,
+        padId: instrumentId,
+        velocity: 127,
+        subTickOffset: position.subTickOffset,
+        playMode: padSettings.playbackMode,
+        sliceStartFrame: range.start,
+        sliceEndFrame: playThrough && resolvedSlice !== undefined ? buffer.length : range.end,
+        isReversed: false,
+      });
+      const track = projectController.recordLiveHit(position.patternIndex, position.step, {
+        note: recordedEvent.note,
+        instrumentId,
+        subTickOffset: position.subTickOffset,
+        velocity: recordedEvent.velocity,
+        ...(sliceIndex === undefined ? {} : { sliceIndex }),
+      }, recordedEvent);
       setTransportMessage('');
       if (gated) captured = { patternIndex: position.patternIndex, track, instrumentId, generation: startGeneration.current };
       return track;

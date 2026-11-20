@@ -46,6 +46,7 @@ export interface TableStep {
 export interface TrackerTable {
   id: number;
   name: string;
+  trackIndex: number;
   steps: TableStep[];
 }
 
@@ -94,6 +95,7 @@ const PHRASE_LENGTH = 32;
 const TRACK_COUNT = 8;
 const TABLE_PAGE_TICKS = 128;
 const TABLE_PAGES = 4;
+const MAX_RECORDED_EVENTS_PER_STEP = 3;
 
 function isPhraseLength(value: number): value is PhraseLength {
   return value === 16 || value === 32 || value === 64;
@@ -246,6 +248,12 @@ function normalizeTablePages(state: ProjectState): boolean {
   for (const table of tables) {
     if (!table || !Array.isArray(table.steps) || table.steps.length > TABLE_PAGE_TICKS * TABLE_PAGES ||
         table.steps.some((step) => !step || typeof step !== 'object' || Array.isArray(step))) throw new Error('Invalid table steps.');
+    if (table.trackIndex === undefined) {
+      table.trackIndex = 0;
+      changed = true;
+    } else if (!validTrack(table.trackIndex)) {
+      throw new Error('Invalid table track index.');
+    }
     if (table.steps.length === TABLE_PAGE_TICKS * TABLE_PAGES) continue;
     const previous = table.steps;
     const steps = Array.from({ length: TABLE_PAGE_TICKS * TABLE_PAGES }, (): TableStep => ({ pitch: null, volume: null }));
@@ -259,6 +267,29 @@ function normalizeTablePages(state: ProjectState): boolean {
     table.steps = steps;
     changed = true;
   }
+  let nextTableId = tables.reduce((max, table) => Math.max(max, table.id), 0) + 1;
+  for (const table of [...tables]) {
+    for (let trackIndex = 0; trackIndex < TRACK_COUNT; trackIndex++) {
+      if (trackIndex === table.trackIndex) continue;
+      const hasReference = state.tracker.patterns.some((pattern) =>
+        pattern.tracks[trackIndex].steps.some((step) => step.tableId === table.id));
+      if (!hasReference) continue;
+      const tableId = nextTableId++;
+      tables.push({
+        ...table,
+        id: tableId,
+        trackIndex,
+        steps: table.steps.map((step) => ({ ...step })),
+      });
+      for (const pattern of state.tracker.patterns) {
+        const track = pattern.tracks[trackIndex];
+        for (const step of track.steps) {
+          if (step.tableId === table.id) step.tableId = tableId;
+        }
+      }
+      changed = true;
+    }
+  }
   return changed;
 }
 
@@ -269,6 +300,7 @@ class ProjectController {
   private readOnly = false;
   private migrationBackup: string | null = null;
   private undoStack = new UndoRedoStack(16);
+  private selectedTrackIndex = 0;
 
   constructor() {
     this.state = this.getDefaultState();
@@ -387,15 +419,30 @@ class ProjectController {
     return this.state;
   }
 
+  public getSelectedTrackIndex(): number {
+    return this.selectedTrackIndex;
+  }
+
+  public setSelectedTrackIndex(trackIndex: number): void {
+    if (!validTrack(trackIndex)) throw new Error('Invalid track index.');
+    if (trackIndex === this.selectedTrackIndex) return;
+    this.selectedTrackIndex = trackIndex;
+    this.notifyListeners();
+  }
+
   public subscribe(listener: ProjectStateListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
+  private notifyListeners(): void {
+    this.listeners.forEach((listener) => listener(this.state));
+  }
+
   private notify(recordHistory = true): void {
     if (recordHistory) this.undoStack.push(this.state);
     this.saveToLocalStorage(); // Auto-save on every state change
-    this.listeners.forEach((listener) => listener(this.state));
+    this.notifyListeners();
   }
 
   private restoreSnapshot(snapshot: UndoableProjectData): void {
@@ -589,7 +636,17 @@ class ProjectController {
     const track = this.getTrack(patternIndex, trackIndex);
     this.validateStepIndex(patternIndex, stepIndex);
     const previous = track.steps[stepIndex];
-    const updated = { ...previous, ...(previous.sliceIndex !== undefined && stepData.instrumentId !== undefined && stepData.instrumentId !== previous.instrumentId ? { sliceIndex: undefined } : {}), ...stepData };
+    const invalidatesRecordedEvents = Boolean(previous.events?.length) && (
+      stepData.note !== undefined || stepData.instrumentId !== undefined || stepData.subTickOffset !== undefined ||
+      stepData.velocity !== undefined || stepData.sliceIndex !== undefined || stepData.fx !== undefined || stepData.fxValue !== undefined
+    );
+    const updated = {
+      ...previous,
+      ...(previous.sliceIndex !== undefined && stepData.instrumentId !== undefined && stepData.instrumentId !== previous.instrumentId
+        ? { sliceIndex: undefined } : {}),
+      ...stepData,
+      ...(invalidatesRecordedEvents ? { events: undefined } : {}),
+    };
     if ('sampleId' in updated) throw new Error('Legacy sample ID in phrase track.');
     migrateStep(updated);
     track.steps[stepIndex] = updated;
@@ -634,26 +691,47 @@ class ProjectController {
     const velocity = event.velocity ?? 127;
     if (!Number.isInteger(velocity) || velocity < 0 || velocity > 127) throw new Error('Invalid velocity.');
     const pattern = this.state.tracker.patterns[patternIndex];
-    for (const track of pattern.tracks) {
-      const step = track.steps[stepIndex];
-      if (step.instrumentId === event.instrumentId && step.note === event.note && step.sliceIndex === event.sliceIndex && (step.subTickOffset ?? 0) === (event.subTickOffset ?? 0)) {
-        track.steps[stepIndex] = { ...step, velocity };
-        this.notify();
-        return track.id;
-      }
+    const track = pattern.tracks[this.selectedTrackIndex];
+    const step = track.steps[stepIndex];
+    if (step.instrumentId === event.instrumentId && step.note === event.note && step.sliceIndex === event.sliceIndex &&
+        (step.subTickOffset ?? 0) === (event.subTickOffset ?? 0)) {
+      track.steps[stepIndex] = { ...step, velocity, events: undefined };
+    } else {
+      track.steps[stepIndex] = { ...event, velocity, events: undefined };
     }
-    for (let offset = 0; offset < TRACK_COUNT; offset++) {
-      const index = (preferredTrack + offset) % TRACK_COUNT;
-      const step = pattern.tracks[index].steps[stepIndex];
-      const empty = step.note === '---' && step.instrumentId === null &&
-        Object.entries(step).every(([key, value]) => key === 'note' || key === 'instrumentId' ||
-          value == null || (key === 'subTickOffset' && value === 0) || (key === 'fx' && value === ''));
-      if (!empty) continue;
-      pattern.tracks[index].steps[stepIndex] = { ...event, velocity };
-      this.notify();
-      return index;
-    }
-    return null;
+    this.notify();
+    return this.selectedTrackIndex;
+  }
+
+  public recordLiveHit(patternIndex: number, stepIndex: number, event: TrackerStepItem, recordedEvent: StepEvent): number {
+    this.assertWritable();
+    const track = this.getTrack(patternIndex, this.selectedTrackIndex);
+    this.validateStepIndex(patternIndex, stepIndex);
+    validateStepEvent(recordedEvent);
+    migrateStep(event);
+    if (!event.note || event.note === '---' || event.instrumentId === null) throw new Error('Invalid recorded note.');
+    const velocity = event.velocity ?? recordedEvent.velocity;
+    if (!Number.isInteger(velocity) || velocity < 0 || velocity > 127) throw new Error('Invalid velocity.');
+
+    const previous = track.steps[stepIndex];
+    const previousEvents = (previous.events ?? []).slice(-MAX_RECORDED_EVENTS_PER_STEP);
+    const eventToRecord = { ...recordedEvent, velocity };
+    const events = previousEvents.length < MAX_RECORDED_EVENTS_PER_STEP
+      ? [...previousEvents, eventToRecord]
+      : [...previousEvents.slice(1), eventToRecord];
+    const updated = {
+      ...previous,
+      note: event.note,
+      instrumentId: event.instrumentId,
+      subTickOffset: event.subTickOffset,
+      velocity,
+      ...(event.sliceIndex === undefined ? {} : { sliceIndex: event.sliceIndex }),
+      events,
+    };
+    if (event.sliceIndex === undefined) delete updated.sliceIndex;
+    track.steps[stepIndex] = updated;
+    this.notify();
+    return this.selectedTrackIndex;
   }
 
   public recordPolyphonicHit(patternIndex: number, stepIndex: number, preferredTrack: number, event: StepEvent): number | null {
@@ -664,32 +742,24 @@ class ProjectController {
     const padId = `${String.fromCharCode(65 + Math.floor(event.padId / 16))}${event.padId % 16 + 1}`;
     if (!this.isPadPolyphonic(padId)) throw new Error(`Pad ${padId} is not configured for polyphonic recording.`);
     const pattern = this.state.tracker.patterns[patternIndex];
-    for (let offset = 0; offset < TRACK_COUNT; offset++) {
-      const trackIndex = (preferredTrack + offset) % TRACK_COUNT;
-      const track = pattern.tracks[trackIndex];
-      const step = track.steps[stepIndex];
-      const empty = step.note === '---' && step.instrumentId === null &&
-        Object.entries(step).every(([key, value]) => key === 'note' || key === 'instrumentId' ||
-          value == null || (key === 'subTickOffset' && value === 0) || (key === 'fx' && value === ''));
-      if (empty) {
-        track.steps[stepIndex] = {
-          ...step,
-          note: event.note,
-          instrumentId: event.instrumentId ?? event.padId,
-          subTickOffset: event.subTickOffset,
-          velocity: event.velocity,
-          events: [event],
-        };
-        this.notify();
-        return trackIndex;
-      }
-      if (step.events) {
-        track.steps[stepIndex] = { ...step, events: [...step.events, event] };
-        this.notify();
-        return trackIndex;
-      }
-    }
-    return null;
+    const track = pattern.tracks[this.selectedTrackIndex];
+    const step = track.steps[stepIndex];
+    const previousEvents = (step.events ?? []).slice(-MAX_RECORDED_EVENTS_PER_STEP);
+    const events = previousEvents.length
+      ? previousEvents.length < MAX_RECORDED_EVENTS_PER_STEP
+        ? [...previousEvents, event]
+        : [...previousEvents.slice(1), event]
+      : [event];
+    track.steps[stepIndex] = {
+      ...step,
+      note: event.note,
+      instrumentId: event.instrumentId ?? event.padId,
+      subTickOffset: event.subTickOffset,
+      velocity: event.velocity,
+      events,
+    };
+    this.notify();
+    return this.selectedTrackIndex;
   }
 
   public recordPadHit(patternIndex: number, stepIndex: number, preferredTrack: number, event: StepEvent): number | null {
@@ -698,14 +768,15 @@ class ProjectController {
     if (this.isPadPolyphonic(padId)) {
       return this.recordPolyphonicHit(patternIndex, stepIndex, preferredTrack, event);
     }
-    return this.recordHit(patternIndex, stepIndex, preferredTrack, {
+    this.getTrack(patternIndex, preferredTrack);
+    return this.recordLiveHit(patternIndex, stepIndex, {
       note: event.note,
       instrumentId: event.instrumentId ?? event.padId,
       subTickOffset: event.subTickOffset,
       velocity: event.velocity,
       fx: event.fx,
       fxValue: event.fxValue,
-    });
+    }, event);
   }
 
   public applyEuclideanPattern(
@@ -763,26 +834,32 @@ class ProjectController {
     return true;
   }
 
-  public getTables(): TrackerTable[] {
-    return this.state.tracker.tables ?? [];
+  public getTables(trackIndex?: number): TrackerTable[] {
+    const tables = this.state.tracker.tables ?? [];
+    return trackIndex === undefined ? tables : tables.filter((table) => table.trackIndex === trackIndex);
   }
 
-  public createTable(): number {
+  public createTable(trackIndex = this.selectedTrackIndex): number {
     this.assertWritable();
+    if (!validTrack(trackIndex)) throw new Error('Invalid track index.');
     const tables = this.state.tracker.tables ?? (this.state.tracker.tables = []);
     const id = tables.reduce((max, table) => Math.max(max, table.id), 0) + 1;
     tables.push({
       id,
       name: `Table ${String(id).padStart(2, '0')}`,
+      trackIndex,
       steps: Array.from({ length: TABLE_PAGE_TICKS * TABLE_PAGES }, () => ({ pitch: null, volume: null })),
     });
     this.notify();
     return id;
   }
 
-  public updateTableStep(tableId: number, stepIndex: number, changes: Partial<TableStep>): void {
+  public updateTableStep(tableId: number, stepIndex: number, changes: Partial<TableStep>, trackIndex = this.selectedTrackIndex): void {
     this.assertWritable();
-    const step = this.getTables().find((table) => table.id === tableId)?.steps[stepIndex];
+    if (!validTrack(trackIndex)) throw new Error('Invalid track index.');
+    const table = this.getTables().find((item) => item.id === tableId);
+    if (table && table.trackIndex !== trackIndex) throw new Error('Table is bound to a different track.');
+    const step = table?.steps[stepIndex];
     if (!step) return;
     if (changes.pitch !== undefined && changes.pitch !== null &&
         (!Number.isInteger(changes.pitch) || changes.pitch < -24 || changes.pitch > 24)) throw new Error('Table pitch must be -24 to 24.');
@@ -796,9 +873,11 @@ class ProjectController {
     this.notify();
   }
 
-  public clearTableSteps(tableId: number, stepIndices: readonly number[]): void {
+  public clearTableSteps(tableId: number, stepIndices: readonly number[], trackIndex = this.selectedTrackIndex): void {
     this.assertWritable();
+    if (!validTrack(trackIndex)) throw new Error('Invalid track index.');
     const table = this.getTables().find((item) => item.id === tableId);
+    if (table && table.trackIndex !== trackIndex) throw new Error('Table is bound to a different track.');
     if (!table) return;
     let changed = false;
     for (const index of new Set(stepIndices)) {

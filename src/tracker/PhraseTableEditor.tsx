@@ -28,11 +28,14 @@ export function PhraseTableEditor({
   linkedPad, contextLock = false, onToggleContextLock,
 }: EditorProps) {
   const [tableId, setTableId] = useState<number | null>(null);
-  const [trackIndex, setTrackIndex] = useState(0);
+  const [trackIndex, setTrackIndex] = useState(() => projectController.getSelectedTrackIndex());
+  useEffect(() => projectController.subscribe(() => {
+    setTrackIndex(projectController.getSelectedTrackIndex());
+  }), []);
   const state = projectController.getState();
   const patternIndex = state.settings.activePatternIndex;
   const pattern = state.tracker.patterns[patternIndex];
-  const tables = projectController.getTables();
+  const tables = projectController.getTables(trackIndex);
   const table = tables.find((item) => item.id === tableId) ?? tables[0];
   if (!pattern) return <p role="alert">Active phrase is unavailable.</p>;
 
@@ -40,7 +43,7 @@ export function PhraseTableEditor({
     <section className={`${mode === 'phrase' ? 'phrase-panel' : 'table-panel'} relative flex-1 min-h-0 flex flex-col gap-2 p-3 bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl font-mono text-xs`}>
       <div className="phrase-toolbar flex items-center gap-2">
         <label className="control-block">TRK <select aria-label="Phrase track" className={fieldClass} value={trackIndex}
-          onChange={(event) => setTrackIndex(Number(event.target.value))}>
+          onChange={(event) => projectController.setSelectedTrackIndex(Number(event.target.value))}>
           {Array.from({ length: 8 }, (_, index) => <option key={index} value={index}>{index + 1}</option>)}
         </select></label>
         {mode === 'phrase' ? (
@@ -63,7 +66,8 @@ export function PhraseTableEditor({
               {!table && <option value="">NONE</option>}
               {tables.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select></label>
-            <button type="button" aria-label="New table" className={buttonClass} onClick={() => setTableId(projectController.createTable())}>＋</button>
+            <button type="button" aria-label="New table" className={buttonClass}
+              onClick={() => setTableId(projectController.createTable(trackIndex))}>＋</button>
             <button type="button" className={buttonClass} aria-label="Toggle table context lock"
               aria-pressed={contextLock} disabled={!linkedPad} onClick={onToggleContextLock}>
               {contextLock ? 'PAD LOCK' : 'LINK PAD'}
@@ -80,7 +84,7 @@ export function PhraseTableEditor({
         ? <PhraseRows key={`${pattern.id}-${trackIndex}-${pattern.length}`} pattern={pattern} patternIndex={patternIndex}
             trackIndex={trackIndex} slots={slots} activeStep={activeStep} transportBusy={transportBusy} contextLock={contextLock} />
         : table
-          ? <TableRows key={table.id} table={table} playing={activeStep >= 0} />
+          ? <TableRows key={`${table.id}-${trackIndex}`} table={table} trackIndex={trackIndex} playing={activeStep >= 0} />
           : <p className="text-zinc-400">Create a reusable table, then assign it to a phrase step.</p>}
     </section>
   );
@@ -171,7 +175,7 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, tran
                 tableId: event.target.value ? Number(event.target.value) : null,
               }, trackIndex)}>
               <option value="">---</option>
-              {projectController.getTables().map((table) => <option key={table.id} value={table.id}>{table.name}</option>)}
+              {projectController.getTables(trackIndex).map((table) => <option key={table.id} value={table.id}>{table.name}</option>)}
             </select>
             <select aria-label={`Phrase condition step ${index + 1}`} className={fieldClass}
               value={step.trig?.fillOnly ? 'FILL' : step.trig?.cycleCondition ?? ''}
@@ -227,7 +231,7 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, tran
   );
 }
 
-function TableRows({ table, playing }: { table: TrackerTable; playing: boolean }) {
+function TableRows({ table, trackIndex, playing }: { table: TrackerTable; trackIndex: number; playing: boolean }) {
   const [page, setPage] = useState(0);
   const [playingTicks, setPlayingTicks] = useState<number[]>([]);
   const pageCount = Math.ceil(table.steps.length / 16);
@@ -270,7 +274,7 @@ function TableRows({ table, playing }: { table: TrackerTable; playing: boolean }
             <select aria-label={`Table pitch tick ${index + 1}`} className={fieldClass}
               value={step.pitch ?? ''} onChange={(event) => projectController.updateTableStep(table.id, index, {
                 pitch: event.target.value === '' ? null : Number(event.target.value),
-              })}>
+              }, trackIndex)}>
               <option value="">HOLD</option>
               {Array.from({ length: 49 }, (_, i) => i - 24).map((value) => <option key={value} value={value}>{value > 0 ? `+${value}` : value}</option>)}
             </select>
@@ -278,13 +282,13 @@ function TableRows({ table, playing }: { table: TrackerTable; playing: boolean }
               value={step.reset ? 'OFF' : step.fx ?? 'OFF'} onChange={(event) => projectController.updateTableStep(table.id, index, {
                 reset: false,
                 fx: event.target.value as 'FL' | 'DL' | 'DR' | 'OFF',
-              })}>
+              }, trackIndex)}>
               <option value="OFF">OFF</option><option value="FL">FL</option><option value="DR">DR</option><option value="DL">DL</option>
             </select>
             <select aria-label={`Table microtiming tick ${index + 1}`} className={fieldClass}
               value={step.subTickOffset ?? 0} onChange={(event) => projectController.updateTableStep(table.id, index, {
                 subTickOffset: Number(event.target.value),
-              })}>
+              }, trackIndex)}>
               {Array.from({ length: 9 }, (_, i) => i - 4).map((value) =>
                 <option key={value} value={value}>{value > 0 ? `+${value}` : value}</option>)}
             </select>

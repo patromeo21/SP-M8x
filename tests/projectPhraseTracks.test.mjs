@@ -4,7 +4,7 @@ import test from 'node:test';
 import ts from 'typescript';
 import { inlineProjectModules } from './helpers/inlineProjectModules.mjs';
 
-test('recording spills and wraps, retriggers exactly, and never overwrites occupied cells', async () => {
+test('recording stays on the selected track and never spills into adjacent tracks', async () => {
   const store = new Map();
   let writes = 0;
   globalThis.window = {};
@@ -37,48 +37,59 @@ test('recording spills and wraps, retriggers exactly, and never overwrites occup
     assert.throws(() => controller.setTrackVolume(0, NaN), /volume/);
     assert.throws(() => controller.setTrackVolume(0, 1.01), /volume/);
 
+    controller.setSelectedTrackIndex(2);
+    assert.equal(controller.getSelectedTrackIndex(), 2);
     controller.updateStep(0, 4, { fx: 'OFF', fxValue: 0 }, 7);
     const event = { note: 'C-4', instrumentId: 0, subTickOffset: 1, velocity: 50, tableId: 4, fx: 'P12' };
-    assert.equal(controller.recordHit(0, 4, 7, event), 0);
-    assert.equal(controller.recordHit(0, 4, 7, { ...event, velocity: 91, fx: 'DIFFERENT', tableId: 8 }), 0);
-    assert.deepEqual(state.tracker.patterns[0].tracks[0].steps[4], { ...event, velocity: 91 });
-    assert.equal(controller.recordHit(0, 4, 7, { ...event, note: 'D-4' }), 1);
-    assert.equal(controller.recordHit(0, 4, 7, { ...event, subTickOffset: 2 }), 2);
-    for (let track = 3; track <= 6; track++) {
-      assert.equal(controller.recordHit(0, 4, 7, { ...event, instrumentId: track }), track);
-    }
+    assert.equal(controller.recordHit(0, 4, 7, event), 2);
+    assert.equal(controller.recordHit(0, 4, 7, { ...event, velocity: 91 }), 2);
+    assert.deepEqual(state.tracker.patterns[0].tracks[2].steps[4], { ...event, velocity: 91 });
+    assert.equal(controller.recordHit(0, 4, 7, { ...event, note: 'D-4' }), 2);
+    assert.deepEqual(state.tracker.patterns[0].tracks[2].steps[4], { ...event, note: 'D-4' });
+    assert.deepEqual(state.tracker.patterns[0].tracks[3].steps[4], { note: '---', instrumentId: null });
+    assert.deepEqual(state.tracker.patterns[0].tracks[7].steps[4], { note: '---', instrumentId: null, fx: 'OFF', fxValue: 0 });
     const snapshot = JSON.stringify(state);
     const oldWrites = writes;
     const oldNotifications = notifications;
-    assert.equal(controller.recordHit(0, 4, 7, { ...event, instrumentId: 63 }), null);
-    assert.equal(JSON.stringify(state), snapshot);
-    assert.equal(writes, oldWrites);
-    assert.equal(notifications, oldNotifications);
-    assert.deepEqual(state.tracker.patterns[0].tracks[7].steps[4], { note: '---', instrumentId: null, fx: 'OFF', fxValue: 0 });
+    assert.equal(controller.recordHit(0, 4, 7, { ...event, instrumentId: 63 }), 2);
+    const recordedSnapshot = JSON.stringify(state);
+    assert.notEqual(recordedSnapshot, snapshot);
+    assert.equal(writes, oldWrites + 1);
+    assert.equal(notifications, oldNotifications + 1);
+    assert.equal(state.tracker.patterns[0].tracks[2].steps[4].instrumentId, 63);
+    assert.deepEqual(state.tracker.patterns[0].tracks[1].steps[4], { note: '---', instrumentId: null });
+    assert.throws(() => controller.recordHit(0, 4, 7, { ...event, instrumentId: 64 }), /instrument ID/);
+    assert.equal(JSON.stringify(state), recordedSnapshot);
 
     assert.throws(() => controller.recordHit(0, 32, 0, event), /step index/);
     assert.throws(() => controller.recordHit(0, 0, 8, event), /track index/);
     assert.throws(() => controller.updateStep(-1, 0, {}, 0), /pattern index/);
     assert.throws(() => controller.clearStepNotes(0, [4, 99], 0), /step index/);
-    assert.equal(JSON.stringify(state), snapshot);
+    assert.equal(JSON.stringify(state), recordedSnapshot);
     controller.clearStepNotes(0, [4], 0);
-    assert.equal(state.tracker.patterns[0].tracks[0].steps[4].fx, 'P12');
+    assert.equal(state.tracker.patterns[0].tracks[7].steps[4].fx, 'OFF');
+    controller.setSelectedTrackIndex(3);
     controller.updateStep(0, 6, { note: 'E-4', instrumentId: 5, subTickOffset: 0, fx: 'OFF', tableId: 3 }, 3);
     assert.equal(controller.recordHit(0, 6, 7, { note: 'E-4', instrumentId: 5, velocity: 62 }), 3);
     assert.deepEqual(state.tracker.patterns[0].tracks[3].steps[6], {
       note: 'E-4', instrumentId: 5, subTickOffset: 0, fx: 'OFF', tableId: 3, velocity: 62,
     });
+    controller.setSelectedTrackIndex(4);
     controller.updateStep(0, 7, { note: 'F-4', instrumentId: 5, fx: 'P12' }, 4);
     assert.equal(controller.recordHit(0, 7, 0, { note: 'F-4', instrumentId: 5, subTickOffset: 0, velocity: 33 }), 4);
     assert.deepEqual(state.tracker.patterns[0].tracks[4].steps[7], { note: 'F-4', instrumentId: 5, fx: 'P12', velocity: 33 });
+    controller.setSelectedTrackIndex(0);
     assert.equal(controller.recordHit(0, 7, 0, { note: 'F-4', instrumentId: 5, subTickOffset: -1 }), 0);
+    controller.setSelectedTrackIndex(6);
     assert.equal(controller.recordHit(0, 5, 6, { note: 'C-4', instrumentId: 63 }), 6);
     assert.equal(state.tracker.patterns[0].tracks[6].steps[5].velocity, 127);
     assert.equal(state.sampler.pads.A1.sliActive, false);
     controller.updatePadMetadata('A1', { sliActive: true });
+    controller.setSelectedTrackIndex(0);
     assert.equal(controller.recordHit(0, 8, 0, { note: 'C-4', instrumentId: 0, sliceIndex: 1 }), 0);
-    assert.equal(controller.recordHit(0, 8, 0, { note: 'C-4', instrumentId: 0, sliceIndex: 2 }), 1);
-    assert.equal(state.tracker.patterns[0].tracks[1].steps[8].sliceIndex, 2);
+    assert.equal(controller.recordHit(0, 8, 0, { note: 'C-4', instrumentId: 0, sliceIndex: 2 }), 0);
+    assert.equal(state.tracker.patterns[0].tracks[0].steps[8].sliceIndex, 2);
+    assert.deepEqual(state.tracker.patterns[0].tracks[1].steps[8], { note: '---', instrumentId: null });
     assert.throws(() => controller.recordHit(0, 9, 0, { note: 'C-4', instrumentId: 0, sliceIndex: 0 }), /slice index/);
 
     const { projectController: restored } = await import(url('reload'));
@@ -87,9 +98,10 @@ test('recording spills and wraps, retriggers exactly, and never overwrites occup
     assert.equal(restored.getState().sampler.pads.D16.volume, 0.6);
     assert.equal(restored.getState().sampler.pads.D16.chokeGroup, 3);
     assert.equal(restored.getState().sampler.pads.A1.sliActive, true);
-    assert.equal(restored.getState().tracker.patterns[0].tracks[1].steps[8].sliceIndex, 2);
-    restored.clearStepNotes(0, [8], 1);
-    assert.equal(restored.getState().tracker.patterns[0].tracks[1].steps[8].sliceIndex, undefined);
+    assert.equal(restored.getState().tracker.patterns[0].tracks[0].steps[8].sliceIndex, 2);
+    restored.clearStepNotes(0, [8], 0);
+    assert.equal(restored.getState().tracker.patterns[0].tracks[0].steps[8].sliceIndex, undefined);
+    restored.setSelectedTrackIndex(1);
     assert.equal(restored.recordHit(0, 8, 1, { note: 'C-4', instrumentId: 0 }), 1);
     assert.equal(restored.getState().settings.trackVolumes[7], 0.25);
     restored.setPatternLength(0, 64);
@@ -140,6 +152,26 @@ test('polyphonic recording appends events and Euclidean generation populates phr
       ['first', 'second'],
     );
 
+    controller.setSelectedTrackIndex(4);
+    const liveHits = Array.from({ length: 4 }, (_, index) => event(`live-${index}`, 'C-4'));
+    for (const liveHit of liveHits) {
+      controller.recordLiveHit(0, 1, {
+        note: liveHit.note, instrumentId: liveHit.instrumentId, velocity: liveHit.velocity,
+        subTickOffset: liveHit.subTickOffset,
+      }, liveHit);
+    }
+    assert.deepEqual(
+      controller.getState().tracker.patterns[0].tracks[4].steps[1].events.map(({ id }) => id),
+      ['live-1', 'live-2', 'live-3'],
+    );
+    assert.deepEqual(controller.getState().tracker.patterns[0].tracks[3].steps[1], { note: '---', instrumentId: null });
+    controller.updateStep(0, 1, { note: 'D-4', fx: 'FL', fxValue: 24 }, 4);
+    const manuallyEdited = controller.getState().tracker.patterns[0].tracks[4].steps[1];
+    assert.equal(manuallyEdited.note, 'D-4');
+    assert.equal(manuallyEdited.fx, 'FL');
+    assert.equal(manuallyEdited.fxValue, 24);
+    assert.equal(manuallyEdited.events, undefined);
+
     controller.applyEuclideanPattern(0, 1, [true, false, true], 2);
     const steps = controller.getState().tracker.patterns[0].tracks[1].steps;
     assert.deepEqual(steps.slice(0, 3).map(({ note, instrumentId }) => [note, instrumentId]), [
@@ -187,6 +219,8 @@ test('control-all offsets, punch replacement, and pad polyphony helpers validate
     assert.equal(controller.isPadPolyphonic('A1'), false);
     assert.throws(() => controller.recordPolyphonicHit(0, 1, 0, event), /not configured for polyphonic/);
     assert.equal(controller.recordPadHit(0, 1, 0, event), 0);
+    for (let hit = 0; hit < 3; hit++) controller.recordPadHit(0, 1, 0, event);
+    assert.equal(controller.getState().tracker.patterns[0].tracks[0].steps[1].events.length, 3);
     controller.setPadPolyphonic('A1', true);
     assert.equal(controller.isPadPolyphonic('A1'), true);
     assert.equal(controller.recordPadHit(0, 2, 0, event), 0);
