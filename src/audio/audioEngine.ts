@@ -51,6 +51,8 @@ const clamp = (value: number, min: number, max: number): number =>
 class AudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
+  private metronomeOscillator: OscillatorNode | null = null;
+  private metronomeGain: GainNode | null = null;
   private masterOutput: AudioNode | null = null;
   private outputMeters: [AnalyserNode, AnalyserNode] | null = null;
   private meterSamples = new Float32Array(2048);
@@ -76,6 +78,13 @@ class AudioEngine {
       this.ctx = new AudioContextClass({ latencyHint: 'interactive' });
       this.masterGain = this.ctx.createGain();
       this.masterGain.gain.setValueAtTime(this.masterVolume, this.ctx.currentTime);
+      this.metronomeOscillator = this.ctx.createOscillator();
+      this.metronomeOscillator.type = 'square';
+      this.metronomeOscillator.frequency.setValueAtTime(880, this.ctx.currentTime);
+      this.metronomeGain = this.ctx.createGain();
+      this.metronomeGain.gain.setValueAtTime(0, this.ctx.currentTime);
+      this.metronomeOscillator.connect(this.metronomeGain).connect(this.masterGain);
+      this.metronomeOscillator.start();
 
       // Module 2 master chain:
       // masterGain -> glue compressor -> tape saturation -> hard limiter -> 0.92 safety clamp -> out
@@ -126,6 +135,26 @@ class AudioEngine {
 
   public getContext(): AudioContext | null {
     return this.ctx;
+  }
+
+  public scheduleMetronomeClick(time: number, volume: number, downbeat = false): void {
+    const context = this.ctx;
+    const oscillator = this.metronomeOscillator;
+    const gain = this.metronomeGain;
+    if (!context || context.state !== 'running' || !oscillator || !gain) return;
+    const clickTime = Math.max(context.currentTime, time);
+    oscillator.frequency.setValueAtTime(downbeat ? 1200 : 880, clickTime);
+    gain.gain.setValueAtTime(0, clickTime);
+    gain.gain.setValueAtTime(clamp(volume, 0, 1), clickTime + 0.001);
+    gain.gain.linearRampToValueAtTime(0, clickTime + 0.045);
+  }
+
+  public cancelMetronomeClicks(): void {
+    const context = this.ctx;
+    const gain = this.metronomeGain;
+    if (!context || !gain) return;
+    gain.gain.cancelScheduledValues(context.currentTime);
+    gain.gain.setValueAtTime(0, context.currentTime);
   }
 
   public connectMasterCapture(node: AudioNode): () => void {

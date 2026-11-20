@@ -14,6 +14,9 @@ const hexStep = (step: number) => step.toString(16).toUpperCase().padStart(2, '0
 export interface EditorProps {
   slots: Record<string, PadSlot>;
   activeStep: number;
+  activeSubtick: number;
+  transportPlaying: boolean;
+  transportPaused: boolean;
   transportBusy: boolean;
   mode: 'phrase' | 'table';
   queuedPatternIndex: number | null;
@@ -24,7 +27,7 @@ export interface EditorProps {
 }
 
 export function PhraseTableEditor({
-  slots, activeStep, transportBusy, mode, queuedPatternIndex, onSelectPattern,
+  slots, activeStep, activeSubtick, transportPlaying, transportPaused, transportBusy, mode, queuedPatternIndex, onSelectPattern,
   linkedPad, contextLock = false, onToggleContextLock,
 }: EditorProps) {
   const [tableId, setTableId] = useState<number | null>(null);
@@ -84,7 +87,8 @@ export function PhraseTableEditor({
         ? <PhraseRows key={`${pattern.id}-${trackIndex}-${pattern.length}`} pattern={pattern} patternIndex={patternIndex}
             trackIndex={trackIndex} slots={slots} activeStep={activeStep} transportBusy={transportBusy} contextLock={contextLock} />
         : table
-          ? <TableRows key={`${table.id}-${trackIndex}`} table={table} trackIndex={trackIndex} playing={activeStep >= 0} />
+          ? <TableRows key={`${table.id}-${trackIndex}`} table={table} trackIndex={trackIndex}
+              activeStep={activeStep} activeSubtick={activeSubtick} paused={transportPaused} playing={transportPlaying} />
           : <p className="text-zinc-400">Create a reusable table, then assign it to a phrase step.</p>}
     </section>
   );
@@ -231,11 +235,18 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, tran
   );
 }
 
-function TableRows({ table, trackIndex, playing }: { table: TrackerTable; trackIndex: number; playing: boolean }) {
+function TableRows({ table, trackIndex, activeStep, activeSubtick, paused, playing }: {
+  table: TrackerTable; trackIndex: number; activeStep: number; activeSubtick: number; paused: boolean; playing: boolean;
+}) {
   const [page, setPage] = useState(0);
   const [playingTicks, setPlayingTicks] = useState<number[]>([]);
   const pageCount = Math.ceil(table.steps.length / 16);
   const pageGroup = Math.floor(page / 8);
+  const heldTick = activeStep < 0 ? -1 : (activeStep * 8 + activeSubtick) % table.steps.length;
+
+  useEffect(() => {
+    if (paused && heldTick >= 0) setPage(Math.floor(heldTick / 16));
+  }, [heldTick, paused]);
 
   useEffect(() => {
     if (!playing) {
@@ -262,13 +273,14 @@ function TableRows({ table, trackIndex, playing }: { table: TrackerTable; trackI
         <span className="text-zinc-400">TICKS {page * 16 + 1}-{Math.min((page + 1) * 16, table.steps.length)}</span>
       </div>
       <div className="table-grid-header table-sequencer-grid">
-        <span>TICK</span><span>PITCH</span><span>FX</span><span>MICRO-TIMING</span>
+        <span>TICK</span><span>PITCH</span><span>VOL</span><span>FX</span><span>MICRO-TIMING</span>
       </div>
       {table.steps.slice(page * 16, page * 16 + 16).map((step, row) => {
         const index = page * 16 + row;
         const tickInGroup = page % 8 * 16 + row;
+        const held = paused && index === heldTick;
         return (
-          <div className={`table-row table-sequencer-grid ${playingTicks.includes(tickInGroup) ? 'is-playing' : ''}`}
+          <div className={`table-row table-sequencer-grid ${held || playingTicks.includes(tickInGroup) ? 'is-playing' : ''}`}
             key={index} data-tick={hexStep(row)}>
             <span className="table-step-address">{hexStep(row)} <small>/{String(index + 1).padStart(3, '0')}</small></span>
             <select aria-label={`Table pitch tick ${index + 1}`} className={fieldClass}
@@ -285,6 +297,17 @@ function TableRows({ table, trackIndex, playing }: { table: TrackerTable; trackI
               }, trackIndex)}>
               <option value="OFF">OFF</option><option value="FL">FL</option><option value="DR">DR</option><option value="DL">DL</option>
             </select>
+            <label className="flex items-center gap-1" aria-label={`Table volume tick ${index + 1}`}>
+              <input aria-label={`Table volume tick ${index + 1}`} type="range" min="0" max="127" step="1"
+                value={step.volume ?? 127}
+                onChange={(event) => projectController.updateTableStep(table.id, index, {
+                  volume: Number(event.target.value),
+                }, trackIndex)} />
+              <button type="button" aria-label={`Set table volume tick ${index + 1} to hold`}
+                onClick={() => projectController.updateTableStep(table.id, index, { volume: null }, trackIndex)}>
+                {step.volume ?? 'H'}
+              </button>
+            </label>
             <select aria-label={`Table microtiming tick ${index + 1}`} className={fieldClass}
               value={step.subTickOffset ?? 0} onChange={(event) => projectController.updateTableStep(table.id, index, {
                 subTickOffset: Number(event.target.value),

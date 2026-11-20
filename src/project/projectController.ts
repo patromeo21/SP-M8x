@@ -482,7 +482,9 @@ class ProjectController {
 
   public setBpm(bpm: number): void {
     this.assertWritable();
+    if (!Number.isFinite(bpm)) throw new Error('Tempo must be finite.');
     const clampedBpm = Math.max(40, Math.min(300, bpm));
+    if (clampedBpm === this.state.settings.bpm) return;
     this.state.settings.bpm = clampedBpm;
     this.notify();
   }
