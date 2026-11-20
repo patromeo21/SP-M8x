@@ -117,7 +117,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
 
   return (
     <div className="pad-bank-manager flex flex-col flex-1 min-h-0 gap-1">
-      <div className="flex items-center justify-between gap-1 text-[9px]">
+      <div className="pad-utility-bar flex items-center justify-between gap-1 text-[9px]">
         <button type="button" aria-label="Toggle chromatic pad mode" aria-pressed={padPlayMode === 'CHROMATIC_16'}
           className="touch-none rounded border border-zinc-700 px-2 py-1 text-zinc-300"
           onPointerDown={(event) => {
@@ -220,16 +220,16 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
                 : 'bg-zinc-950 border-zinc-800 hover:border-cyan-500/50'
             }`}
           >
-            <span className="flex w-full items-center justify-between font-bold">
-              <span className={isPressed ? 'text-zinc-900' : 'text-zinc-500'}>{isSlice ? `SLI ${String(Math.min(i + 1, slot.sliceMarkers.length - 1)).padStart(2, '0')}` : padPlayMode === 'CHROMATIC_16' ? chromaticNote(chromaticOffset(i, chromaticRootOffset)) : formatPadLabel(padId)}</span>
+            <span className="pad-label-row flex w-full items-center justify-between font-bold">
+              <span className={`pad-label ${isPressed ? 'text-zinc-900' : 'text-zinc-500'}`}>{isSlice ? `SLI ${String(Math.min(i + 1, slot.sliceMarkers.length - 1)).padStart(2, '0')}` : padPlayMode === 'CHROMATIC_16' ? chromaticNote(chromaticOffset(i, chromaticRootOffset)) : formatPadLabel(padId)}</span>
               {hasSample && (
-                <span className={`text-[8px] ${isPressed ? 'text-zinc-900' : 'text-[var(--accent-phrase)]'}`}>
+                <span className={`pad-mode-label text-[8px] ${isPressed ? 'text-zinc-900' : 'text-[var(--accent-phrase)]'}`}>
                   {selecting && isSelected ? 'SELECTED' : slot.playbackMode === 'one-shot' ? 'ONE' : slot.playbackMode.toUpperCase()}
                 </span>
               )}
             </span>
             <span
-              className={`text-[8px] truncate max-w-full ${
+              className={`pad-sample-label text-[8px] truncate max-w-full ${
                 isPressed ? 'text-zinc-900' : hasSample ? 'text-zinc-200' : 'text-zinc-600'
               }`}
             >
