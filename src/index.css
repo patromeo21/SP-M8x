@@ -340,16 +340,22 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   contain: layout paint;
 }
 .sampler-waveform canvas { display: block; }
-.wave-snap-view {
-  position: absolute;
-  z-index: 4;
-  top: 2px;
-  right: 2px;
-  padding: 2px 5px;
+.sampler-slicer-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+}
+.sampler-snap-view {
+  min-height: 30px;
+  flex: 0 0 auto;
+  padding: 2px 6px;
   border: 1px solid #52525b;
+  border-radius: 3px;
   background: rgba(9, 9, 11, 0.85);
   color: #00e6c3;
   font-size: 9px;
+  font-weight: 700;
   letter-spacing: 0.08em;
 }
 .phrase-panel { min-width: 0; overflow: hidden; }

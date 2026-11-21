@@ -111,14 +111,16 @@ test('preallocated voices reset FX without stopping dry audio and steal the olde
   const clickTime = context.currentTime + 1;
   audioEngine.scheduleMetronomeClick(clickTime, 0.8, true);
   assert.deepEqual(context.oscillators[0].frequency.events.at(-1), ['set', 1200, clickTime]);
-  assert.deepEqual(context.gains[1].gain.events.slice(-3), [
-    ['set', 0, clickTime],
-    ['set', 0.2, clickTime + 0.001],
-    ['linear', 0, clickTime + 0.02],
+  assert.deepEqual(context.gains[1].gain.events.slice(-2), [
+    ['set', 0.4, clickTime],
+    ['set', 0, clickTime + 0.02],
   ]);
   audioEngine.scheduleMetronomeClick(clickTime + 1, 0.4);
   assert.deepEqual(context.oscillators[0].frequency.events.at(-1), ['set', 880, clickTime + 1]);
-  assert.equal(context.gains[1].gain.events.at(-2)[1], 0.1);
+  assert.deepEqual(context.gains[1].gain.events.slice(-2), [
+    ['set', 0.1, clickTime + 1],
+    ['set', 0, clickTime + 1.02],
+  ]);
   audioEngine.cancelMetronomeClicks();
   assert.deepEqual(context.gains[1].gain.events.slice(-2), [
     ['cancel', context.currentTime],

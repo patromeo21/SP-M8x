@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { AudioSampleDropzone } from '../components/AudioSampleDropzone';
 import type { RecordingStatus } from '../audio/inputRecorder';
 import type { BankId } from '../project/projectController';
@@ -33,11 +33,15 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
   const [chopMessage, setChopMessage] = useState('');
   const [chopError, setChopError] = useState(false);
   const [bounceBars, setBounceBars] = useState<BounceBars>(1);
+  const [snapViewAction, setSnapViewAction] = useState<(() => void) | null>(null);
   const bounce = useBounceToPad(onLoadSample, getPadSettings);
+  const registerSnapViewAction = useCallback((action: (() => void) | null) => {
+    setSnapViewAction(() => action);
+  }, []);
   return (
   <div className="sampler-workbench bg-[var(--bg-canvas)] flex flex-col shrink-0 font-mono select-none">
     <WaveformEditor pad={pad} onUpdatePad={onUpdatePad} onPreviewRange={onPreviewRange}
-      sliceCount={count ?? 0} renderWaveform={renderWaveform} />
+      sliceCount={count ?? 0} onSnapActionChange={registerSnapViewAction} renderWaveform={renderWaveform} />
     <div className="sampler-toolbar">
       <button type="button" disabled={!pad.buffer} onClick={() => onUpdatePad(pad.id, {
         playbackMode: pad.playbackMode === 'one-shot' ? 'gate' : pad.playbackMode === 'gate' ? 'loop' : 'one-shot',
@@ -66,39 +70,43 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
         className="chop-action px-1 text-[9px] font-bold text-cyan-300 disabled:opacity-40">
         {bounce.status.busy ? 'CANCEL BOUNCE' : `BOUNCE TO ${pad.id}`}
       </button>
-      <select id={`slice-count-${pad.id}`} aria-label="Number of slices" value={count ?? ''}
-        disabled={!storageReady || !pad.sampleKey || chopping}
-        onChange={(event) => {
-          const nextCount = event.target.value ? Number(event.target.value) : null;
-          setCount(nextCount);
-          setChopMessage('');
-          if (nextCount === null) return;
+      <div className="sampler-slicer-controls">
+        <select id={`slice-count-${pad.id}`} aria-label="Number of slices" value={count ?? ''}
+          disabled={!storageReady || !pad.sampleKey || chopping}
+          onChange={(event) => {
+            const nextCount = event.target.value ? Number(event.target.value) : null;
+            setCount(nextCount);
+            setChopMessage('');
+            if (nextCount === null) return;
+            setChopping(true);
+            void onGenerateSliceMarkers(pad.id, nextCount).then(() => {
+              setChopError(false);
+              setChopMessage(`SAVED ${nextCount} SLI MARKERS`);
+            }).catch((error: unknown) => {
+              setChopError(true);
+              setChopMessage(error instanceof Error ? error.message : 'Could not save markers.');
+            }).finally(() => setChopping(false));
+          }}
+          className="sampler-count bg-zinc-900 border border-zinc-700 rounded text-[9px] text-zinc-200">
+          <option value="">CHOP</option>
+          {Array.from({ length: 31 }, (_, index) => index + 2).map((number) => <option key={number} value={number}>{number}</option>)}
+        </select>
+        {snapViewAction && <button type="button" className="sampler-snap-view" aria-label="Snap trim to view"
+          title="Snap trim to view" onClick={snapViewAction}>SNAP</button>}
+        {count !== null && <button type="button" disabled={!storageReady || !pad.sampleKey || chopping} onClick={() => {
           setChopping(true);
-          void onGenerateSliceMarkers(pad.id, nextCount).then(() => {
+          setChopMessage('');
+          void onChop(pad.id, activeBank, count).then((ids) => {
             setChopError(false);
-            setChopMessage(`SAVED ${nextCount} SLI MARKERS`);
+            setChopMessage(`ASSIGNED ${ids.length}: ${ids[0]} → ${ids[ids.length - 1]}`);
           }).catch((error: unknown) => {
             setChopError(true);
-            setChopMessage(error instanceof Error ? error.message : 'Could not save markers.');
+            setChopMessage(error instanceof Error ? error.message : 'Could not assign slices.');
           }).finally(() => setChopping(false));
-        }}
-        className="sampler-count bg-zinc-900 border border-zinc-700 rounded text-[9px] text-zinc-200">
-        <option value="">CHOP</option>
-        {Array.from({ length: 31 }, (_, index) => index + 2).map((number) => <option key={number} value={number}>{number}</option>)}
-      </select>
-      {count !== null && <button type="button" disabled={!storageReady || !pad.sampleKey || chopping} onClick={() => {
-        setChopping(true);
-        setChopMessage('');
-        void onChop(pad.id, activeBank, count).then((ids) => {
-          setChopError(false);
-          setChopMessage(`ASSIGNED ${ids.length}: ${ids[0]} → ${ids[ids.length - 1]}`);
-        }).catch((error: unknown) => {
-          setChopError(true);
-          setChopMessage(error instanceof Error ? error.message : 'Could not assign slices.');
-        }).finally(() => setChopping(false));
-      }} className="sampler-chop rounded border border-cyan-800 bg-cyan-950/30 font-bold text-[9px] text-cyan-300 disabled:opacity-40">
-        {chopping ? 'SAVING…' : `TO EMPTY ${activeBank}`}
-      </button>}
+        }} className="sampler-chop rounded border border-cyan-800 bg-cyan-950/30 font-bold text-[9px] text-cyan-300 disabled:opacity-40">
+          {chopping ? 'SAVING…' : `TO EMPTY ${activeBank}`}
+        </button>}
+      </div>
     </div>
     {chopMessage && <div role={chopError ? 'alert' : 'status'} className={`sampler-chop-status mb-2 text-[9px] break-words ${chopError ? 'text-rose-300' : 'text-cyan-300'}`}>{chopMessage}</div>}
     {bounce.status.message && <div role={bounce.status.error ? 'alert' : 'status'} className={`text-[9px] ${bounce.status.error ? 'text-rose-300' : 'text-cyan-300'}`}>{bounce.status.message}</div>}

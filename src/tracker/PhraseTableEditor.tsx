@@ -9,7 +9,7 @@ const fieldClass = 'phrase-cell-control bg-zinc-950 border border-zinc-700 text-
 const buttonClass = 'border border-zinc-700 px-2 py-1 text-zinc-300';
 const notes = ['C-', 'C#', 'D-', 'D#', 'E-', 'F-', 'F#', 'G-', 'G#', 'A-', 'A#', 'B-'];
 const noteName = (midi: number) => `${notes[midi % 12]}${Math.floor(midi / 12) - 1}`;
-const hexStep = (step: number) => step.toString(16).toUpperCase().padStart(2, '0');
+const stepNumber = (stepIndex: number) => String(stepIndex + 1).padStart(2, '0');
 
 export interface EditorProps {
   slots: Record<string, PadSlot>;
@@ -141,12 +141,12 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, play
         const occupied = Boolean(step.instrumentId !== null || (step.note && step.note !== '---'));
         return (
           <div className={`phrase-row phrase-sequencer-grid ${activeStep === index ? 'is-playing' : ''} ${playing && activeStep === index && delayedSteps[index % 16] ? 'is-groove-pulse' : ''}`}
-            key={index} data-step={hexStep(index)}>
+            key={index} data-step={index + 1}>
             <button type="button" aria-label={`Phrase step ${index + 1}`} aria-pressed={active}
               disabled={contextLock || (transportBusy && !occupied)}
               onClick={() => toggleStep(index)}
               className={`phrase-step-toggle ${active ? 'is-active' : ''}`}>
-              {hexStep(index)}
+              {stepNumber(index)}
             </button>
             <select aria-label={`Phrase note step ${index + 1}`} className={fieldClass} value={step.note || '---'}
               disabled={!padId} onChange={(event) => projectController.updateStep(patternIndex, index, { note: event.target.value }, trackIndex)}
@@ -232,7 +232,7 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, play
           className={`${buttonClass} ${page === index ? 'border-cyan-400 text-cyan-300' : ''}`}
           aria-label={`Phrase page ${index + 1}${activeStep >= index * 16 && activeStep < (index + 1) * 16 ? ', playing' : ''}`}
           onClick={() => setPage(index)}>
-          {hexStep(index * 16)}-{hexStep(index * 16 + 15)}
+          {stepNumber(index * 16)}-{stepNumber(index * 16 + 15)}
         </button>)}
         {transportBusy && <span className="text-amber-300">Stop to change instrument assignments.</span>}
       </div>
@@ -257,46 +257,50 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, delayedSteps,
       <div className="table-page-controls">
         <label className="control-block">PAGE <select aria-label="Table page" className={fieldClass}
           value={page} onChange={(event) => setPage(Number(event.target.value))}>
-          {Array.from({ length: pageCount }, (_, index) => <option key={index} value={index}>{index + 1} · {hexStep(index * 16)}-{hexStep(index * 16 + 15)}</option>)}
+          {Array.from({ length: pageCount }, (_, index) => <option key={index} value={index}>
+            {index + 1} · {index * 16 + 1}-{Math.min((index + 1) * 16, table.steps.length)}
+          </option>)}
         </select></label>
-        <span className="text-zinc-400">TICKS {page * 16 + 1}-{Math.min((page + 1) * 16, table.steps.length)}</span>
+        <span className="text-zinc-400">SUBTICKS {page * 16 + 1}-{Math.min((page + 1) * 16, table.steps.length)}</span>
       </div>
       <div className="table-grid-header table-sequencer-grid">
-        <span>TICK</span><span>PITCH</span><span>VOL</span><span>FX</span><span>MICRO-TIMING</span>
+        <span>SUBTICK</span><span>PITCH</span><span>VOL</span><span>FX</span><span>MICRO-TIMING</span>
       </div>
       {table.steps.slice(page * 16, page * 16 + 16).map((step, row) => {
         const index = page * 16 + row;
         const current = (playing || paused) && index === currentTick;
         return (
           <div className={`table-row table-sequencer-grid ${current ? 'is-playing' : ''} ${playing && current && delayedSteps[activeStep % 16] ? 'is-groove-pulse' : ''}`}
-            key={index} data-tick={hexStep(row)}>
-            <span className="table-step-address">{hexStep(row)} <small>/{String(index + 1).padStart(3, '0')}</small></span>
-            <select aria-label={`Table pitch tick ${index + 1}`} className={fieldClass}
+            key={index} data-subtick={index + 1}>
+            <span className="table-step-address" aria-label={`Table subtick ${index + 1}`}>
+              {String(index + 1).padStart(3, '0')}
+            </span>
+            <select aria-label={`Table pitch subtick ${index + 1}`} className={fieldClass}
               value={step.pitch ?? ''} onChange={(event) => projectController.updateTableStep(table.id, index, {
                 pitch: event.target.value === '' ? null : Number(event.target.value),
               }, trackIndex)}>
               <option value="">HOLD</option>
               {Array.from({ length: 49 }, (_, i) => i - 24).map((value) => <option key={value} value={value}>{value > 0 ? `+${value}` : value}</option>)}
             </select>
-            <select aria-label={`Table FX tick ${index + 1}`} className={fieldClass}
+            <select aria-label={`Table FX subtick ${index + 1}`} className={fieldClass}
               value={step.reset ? 'OFF' : step.fx ?? 'OFF'} onChange={(event) => projectController.updateTableStep(table.id, index, {
                 reset: false,
                 fx: event.target.value as 'FL' | 'DL' | 'DR' | 'OFF',
               }, trackIndex)}>
               <option value="OFF">OFF</option><option value="FL">FL</option><option value="DR">DR</option><option value="DL">DL</option>
             </select>
-            <label className="flex items-center gap-1" aria-label={`Table volume tick ${index + 1}`}>
-              <input aria-label={`Table volume tick ${index + 1}`} type="range" min="0" max="127" step="1"
+            <label className="flex items-center gap-1" aria-label={`Table volume subtick ${index + 1}`}>
+              <input aria-label={`Table volume subtick ${index + 1}`} type="range" min="0" max="127" step="1"
                 value={step.volume ?? 127}
                 onChange={(event) => projectController.updateTableStep(table.id, index, {
                   volume: Number(event.target.value),
                 }, trackIndex)} />
-              <button type="button" aria-label={`Set table volume tick ${index + 1} to hold`}
+              <button type="button" aria-label={`Set table volume subtick ${index + 1} to hold`}
                 onClick={() => projectController.updateTableStep(table.id, index, { volume: null }, trackIndex)}>
                 {step.volume ?? 'H'}
               </button>
             </label>
-            <select aria-label={`Table microtiming tick ${index + 1}`} className={fieldClass}
+            <select aria-label={`Table microtiming subtick ${index + 1}`} className={fieldClass}
               value={step.subTickOffset ?? 0} onChange={(event) => projectController.updateTableStep(table.id, index, {
                 subTickOffset: Number(event.target.value),
               }, trackIndex)}>

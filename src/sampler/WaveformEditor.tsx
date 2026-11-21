@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { audioEngine } from '../audio/audioEngine';
 import { ADSR_BOUNDS, normalizeAdsrEnvelope, type AdsrEnvelope } from '../types';
 import { percentFromFrame, rangeFromPercent, type SampleRange } from './sampleRange';
@@ -72,10 +72,13 @@ interface Props {
   onUpdatePad: PadBankApi['updatePad'];
   onPreviewRange: PadBankApi['previewRange'];
   sliceCount: number;
+  onSnapActionChange: (action: (() => void) | null) => void;
   renderWaveform: (props: Omit<AudioWaveformCanvasProps, 'audioBuffer'>) => React.ReactNode;
 }
 
-export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRange, sliceCount, renderWaveform }) => {
+export const WaveformEditor: React.FC<Props> = ({
+  pad, onUpdatePad, onPreviewRange, sliceCount, onSnapActionChange, renderWaveform,
+}) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const drag = useRef<MarkerDrag | null>(null);
   const waveformPointers = useRef(new Map<number, { x: number; y: number }>());
@@ -188,7 +191,7 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
     });
   };
 
-  const snapTrimToView = () => {
+  const snapTrimToView = useCallback(() => {
     if (!length || viewEnd <= viewStart) return;
     const next = { start: viewStart, end: viewEnd };
     setPreview(null);
@@ -196,7 +199,13 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
       startPct: percentFromFrame(next.start, length),
       endPct: percentFromFrame(next.end, length),
     });
-  };
+  }, [length, onUpdatePad, pad.id, viewEnd, viewStart]);
+
+  useEffect(() => {
+    onSnapActionChange(zoom > 1.01 && length > 0 ? snapTrimToView : null);
+  }, [length, onSnapActionChange, snapTrimToView, zoom]);
+
+  useEffect(() => () => onSnapActionChange(null), [onSnapActionChange]);
 
   const applyMarkerPosition = (active: MarkerDrag, clientX: number) => {
     const bounds = containerRef.current?.getBoundingClientRect();
@@ -438,9 +447,6 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
           return visible || active ? sliceMarkerHandle(frame, index) : null;
         })}
         {marker('end')}
-        {zoom > 1.01 && <button type="button" className="wave-snap-view" aria-label="Snap trim to view" onClick={snapTrimToView}>
-          SNAP VIEW
-        </button>}
         <button type="button" className="wave-precision" onClick={() => { setPrecision(!precision); setError(null); }}>
           {precision ? 'DONE' : 'FRAMES'}
         </button>
