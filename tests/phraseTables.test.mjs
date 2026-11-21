@@ -25,7 +25,9 @@ test('phrases and per-track tables persist, and table clearing preserves other t
     controller.updateTableStep(id, 2, { volume: 0 });
     assert.throws(() => controller.updateTableStep(id, 0, { pitch: 25 }), /pitch/);
     assert.throws(() => controller.updateTableStep(id, 0, { volume: -1 }), /volume/);
-    assert.throws(() => controller.updateTableStep(id, 0, { subTickOffset: 5 }), /microtiming/);
+    controller.updateTableStep(id, 1, { subTickOffset: -8 });
+    controller.updateTableStep(id, 2, { subTickOffset: 8 });
+    assert.throws(() => controller.updateTableStep(id, 0, { subTickOffset: 9 }), /microtiming/);
     controller.setSelectedTrackIndex(1);
     const trackOneId = controller.createTable();
     controller.updateTableStep(trackOneId, 0, { pitch: -12 });

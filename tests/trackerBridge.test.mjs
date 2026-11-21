@@ -26,6 +26,7 @@ test('bridge schedules pad slices and signed microtiming and cancels future voic
   const tableSteps = Array.from({ length: 512 }, () => ({ pitch: null, volume: null }));
   tableSteps[0] = { pitch: 12, volume: 64 };
   tableSteps[2] = { pitch: -2, volume: null, subTickOffset: 4 };
+  tableSteps[3] = { pitch: null, volume: null, subTickOffset: 8, fx: 'PS', fxValue: -12 };
   tableSteps[136] = { pitch: 5, volume: 50 };
   tableSteps[137] = { pitch: null, volume: null, reset: true };
   tableSteps[256] = { pitch: 7, volume: null };
@@ -89,6 +90,7 @@ test('bridge schedules pad slices and signed microtiming and cancels future voic
     assert.deepEqual(triggered[0].options.modulation, [
       { offset: 0, semitoneOffset: 12, volume: 64 / 127 },
       { offset: 0.0390625, semitoneOffset: -2 },
+      { offset: 0.0625, fx: { code: 'PS', value: -12 } },
     ]);
     assert.ok(Math.abs(triggered[0].options.scheduledTime - 1.16875) < 1e-8);
     assert.deepEqual(triggered[2].options.modulation, [

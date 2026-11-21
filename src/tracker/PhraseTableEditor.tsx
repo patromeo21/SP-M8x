@@ -244,6 +244,7 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, delayedSteps,
   table: TrackerTable; trackIndex: number; activeStep: number; activeSubtick: number; delayedSteps: boolean[]; paused: boolean; playing: boolean;
 }) {
   const [page, setPage] = useState(0);
+  const [pitchSlidePopup, setPitchSlidePopup] = useState<number | null>(null);
   const pageCount = Math.ceil(table.steps.length / 16);
   const currentTick = activeStep < 0 || table.steps.length === 0 ? -1 : (activeStep * 8 + activeSubtick) % table.steps.length;
   const cursorPage = currentTick < 0 ? -1 : Math.floor(currentTick / 16);
@@ -251,6 +252,9 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, delayedSteps,
   useEffect(() => {
     if ((playing || paused) && cursorPage >= 0) setPage(cursorPage);
   }, [cursorPage, paused, playing]);
+  useEffect(() => {
+    setPitchSlidePopup(null);
+  }, [page]);
 
   return (
     <div className="table-grid-scroll table-sequencer-list flex-1 min-h-0" aria-label="Vertical table ticks">
@@ -282,13 +286,37 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, delayedSteps,
               <option value="">HOLD</option>
               {Array.from({ length: 49 }, (_, i) => i - 24).map((value) => <option key={value} value={value}>{value > 0 ? `+${value}` : value}</option>)}
             </select>
-            <select aria-label={`Table FX subtick ${index + 1}`} className={fieldClass}
-              value={step.reset ? 'OFF' : step.fx ?? 'OFF'} onChange={(event) => projectController.updateTableStep(table.id, index, {
-                reset: false,
-                fx: event.target.value as 'FL' | 'DL' | 'DR' | 'OFF',
-              }, trackIndex)}>
-              <option value="OFF">OFF</option><option value="FL">FL</option><option value="DR">DR</option><option value="DL">DL</option>
-            </select>
+            <div className="table-fx-cell relative">
+              <select aria-label={`Table FX subtick ${index + 1}`} className={`${fieldClass} w-full`}
+                value={step.reset ? 'OFF' : step.fx ?? 'OFF'} onChange={(event) => {
+                  const fx = event.target.value as 'FL' | 'DL' | 'DR' | 'PS' | 'OFF';
+                  projectController.updateTableStep(table.id, index, {
+                    reset: false,
+                    fx,
+                    fxValue: fx === 'PS' ? (step.fxValue ?? 0) : undefined,
+                  }, trackIndex);
+                  setPitchSlidePopup(fx === 'PS' ? index : null);
+                }}>
+                <option value="OFF">OFF</option><option value="FL">FL</option><option value="DR">DR</option><option value="DL">DL</option><option value="PS">PS</option>
+              </select>
+              {step.fx === 'PS' && step.reset !== true && (
+                <button type="button" className="table-pitch-slide-button" aria-label={`Edit pitch slide subtick ${index + 1}`}
+                  aria-expanded={pitchSlidePopup === index} onClick={() => setPitchSlidePopup((open) => open === index ? null : index)}>
+                  {(step.fxValue ?? 0) > 0 ? '+' : ''}{step.fxValue ?? 0}
+                </button>
+              )}
+              {pitchSlidePopup === index && step.fx === 'PS' && (
+                <div className="table-pitch-slide-popup" role="dialog" aria-label={`Pitch slide subtick ${index + 1}`}>
+                  <button type="button" aria-label="Close pitch slide scrubber" onClick={() => setPitchSlidePopup(null)}>×</button>
+                  <input aria-label={`Pitch slide semitones subtick ${index + 1}`} type="range" min="-24" max="24" step="1"
+                    value={step.fxValue ?? 0} onChange={(event) => {
+                      const next = Math.max(-24, Math.min(24, Math.round(Number(event.target.value))));
+                      projectController.updateTableStep(table.id, index, { fx: 'PS', fxValue: next }, trackIndex);
+                    }} />
+                  <output>{(step.fxValue ?? 0) > 0 ? '+' : ''}{step.fxValue ?? 0} ST</output>
+                </div>
+              )}
+            </div>
             <label className="flex items-center gap-1" aria-label={`Table volume subtick ${index + 1}`}>
               <input aria-label={`Table volume subtick ${index + 1}`} type="range" min="0" max="127" step="1"
                 value={step.volume ?? 127}
@@ -300,13 +328,20 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, delayedSteps,
                 {step.volume ?? 'H'}
               </button>
             </label>
-            <select aria-label={`Table microtiming subtick ${index + 1}`} className={fieldClass}
-              value={step.subTickOffset ?? 0} onChange={(event) => projectController.updateTableStep(table.id, index, {
-                subTickOffset: Number(event.target.value),
-              }, trackIndex)}>
-              {Array.from({ length: 9 }, (_, i) => i - 4).map((value) =>
-                <option key={value} value={value}>{value > 0 ? `+${value}` : value}</option>)}
-            </select>
+            <div className="table-microtiming-control" aria-label={`Table microtiming subtick ${index + 1}`}>
+              <button type="button" aria-label={`Move subtick ${index + 1} earlier`}
+                onClick={() => projectController.updateTableStep(table.id, index, {
+                  subTickOffset: Math.max(-8, (step.subTickOffset ?? 0) - 1),
+                }, trackIndex)}>−</button>
+              <button type="button" className="table-micro-zero" aria-label={`Reset subtick ${index + 1} to zero`}
+                onClick={() => projectController.updateTableStep(table.id, index, { subTickOffset: 0 }, trackIndex)}>
+                {(step.subTickOffset ?? 0) === 0 ? '0' : (step.subTickOffset ?? 0) > 0 ? `+${step.subTickOffset}` : String(step.subTickOffset)}
+              </button>
+              <button type="button" aria-label={`Move subtick ${index + 1} later`}
+                onClick={() => projectController.updateTableStep(table.id, index, {
+                  subTickOffset: Math.min(8, (step.subTickOffset ?? 0) + 1),
+                }, trackIndex)}>+</button>
+            </div>
           </div>
         );
       })}

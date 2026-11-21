@@ -34,8 +34,8 @@ export function validateStepEvent(event: StepEvent): void {
   }
   if (!Number.isInteger(event.padId) || event.padId < 0 || event.padId > 63) throw new Error('Invalid step event pad ID.');
   if (!Number.isInteger(event.velocity) || event.velocity < 0 || event.velocity > 127) throw new Error('Step event velocity must be 0 to 127.');
-  if (!Number.isInteger(event.subTickOffset) || event.subTickOffset < -4 || event.subTickOffset > 4) {
-    throw new Error('Step event microtiming must be -4 to 4.');
+  if (!Number.isInteger(event.subTickOffset) || event.subTickOffset < -8 || event.subTickOffset > 8) {
+    throw new Error('Step event microtiming must be -8 to 8.');
   }
   if (!PLAY_MODES.includes(event.playMode)) throw new Error(`Invalid play mode: ${event.playMode}`);
   if (!Number.isSafeInteger(event.sliceStartFrame) || event.sliceStartFrame < 0) throw new Error('Invalid slice start frame.');

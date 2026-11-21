@@ -402,11 +402,26 @@ class AudioEngine {
     }
     const rateChanges: { time: number; rate: number }[] = [];
     if (options.fx) this.fxPool.applyTableOpcode(slot, options.fx, targetGainTime);
-    for (const change of [...(options.modulation ?? [])].sort((a, b) => a.offset - b.offset)) {
+    const modulation = [...(options.modulation ?? [])].sort((a, b) => a.offset - b.offset);
+    for (let index = 0; index < modulation.length; index++) {
+      const change = modulation[index];
       if (!Number.isFinite(change.offset) || change.offset < 0) continue;
       const time = targetGainTime + change.offset;
       if (change.fx) this.fxPool.applyTableOpcode(slot, change.fx, time);
-      if (change.semitoneOffset !== undefined && Number.isFinite(change.semitoneOffset)) {
+      if (change.fx?.code === 'PS') {
+        const slideSemitones = clamp(change.fx.value ?? 0, -24, 24);
+        const slideRate = Math.pow(2, clamp(semitones + (change.semitoneOffset ?? 0) + slideSemitones, -48, 48) / 12);
+        source.playbackRate.setValueAtTime(slideRate, time);
+        const nextChange = modulation[index + 1];
+        if (nextChange && Number.isFinite(nextChange.offset) && nextChange.offset > change.offset) {
+          const nextSlideSemitones = nextChange.fx?.code === 'PS'
+            ? clamp(nextChange.fx.value ?? 0, -24, 24) : 0;
+          const nextRate = Math.pow(2, clamp(semitones + (nextChange.semitoneOffset ?? 0) + nextSlideSemitones, -48, 48) / 12);
+          source.playbackRate.linearRampToValueAtTime(nextRate, targetGainTime + nextChange.offset);
+        }
+        rateChanges.push({ time, rate: slideRate });
+      }
+      if (change.fx?.code !== 'PS' && change.semitoneOffset !== undefined && Number.isFinite(change.semitoneOffset)) {
         const rate = Math.pow(2, clamp(semitones + change.semitoneOffset, -48, 48) / 12);
         source.playbackRate.setValueAtTime(rate, time);
         rateChanges.push({ time, rate });

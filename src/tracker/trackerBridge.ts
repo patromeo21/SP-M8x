@@ -101,8 +101,9 @@ class TrackerBridge {
     }
 
     const rawOffset = event?.subTickOffset ?? step.subTickOffset;
-    const offset = typeof rawOffset === 'number' && Number.isFinite(rawOffset) ? Math.max(boundary ? 0 : -4, Math.min(4, rawOffset)) : 0;
-    const scheduledTime = stepTime + offset * stepDuration / 8;
+    const offset = typeof rawOffset === 'number' && Number.isFinite(rawOffset)
+      ? Math.max(boundary ? 0 : -8, Math.min(8, Math.round(rawOffset))) : 0;
+    const scheduledTime = Math.max(0, stepTime + offset * stepDuration / 8);
     const now = audioEngine.getContext()?.currentTime ?? 0;
     if (scheduledTime < now - 0.01) return;
 
@@ -148,7 +149,7 @@ class TrackerBridge {
         const item = table.steps[pageIndex * 128 + tick];
         if (!item) break;
         const microOffset = typeof item.subTickOffset === 'number' && Number.isFinite(item.subTickOffset)
-          ? Math.max(-4, Math.min(4, item.subTickOffset)) : 0;
+          ? Math.max(-8, Math.min(8, Math.round(item.subTickOffset))) : 0;
         const offset = ((tick - startTick) + microOffset / 8) * stepDuration / 8;
         const fx = item.reset ? { code: 'OFF' as const } : item.fx ? { code: item.fx, value: item.fxValue } : undefined;
         if (item.pitch !== null || item.volume !== null || fx) {

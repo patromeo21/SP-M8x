@@ -313,7 +313,7 @@ export class TrackerEngine {
     const subTickOffset = Math.round((time - this.stepTime(nearest)) / subTickDuration);
     return {
       step: (nearest - segment.startStep) % segment.length,
-      subTickOffset: Math.max(-4, Math.min(4, subTickOffset)),
+      subTickOffset: Math.max(-8, Math.min(8, Math.round(subTickOffset))),
       patternIndex: segment.patternIndex,
     };
   }

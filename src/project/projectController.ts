@@ -38,7 +38,7 @@ export interface TableStep {
   pitch: number | null;
   volume: number | null;
   reset?: boolean;
-  fx?: 'FL' | 'DL' | 'DR' | 'OFF';
+  fx?: 'FL' | 'DL' | 'DR' | 'PS' | 'OFF';
   fxValue?: number;
   subTickOffset?: number;
 }
@@ -868,8 +868,8 @@ class ProjectController {
     if (changes.volume !== undefined && changes.volume !== null &&
         (!Number.isInteger(changes.volume) || changes.volume < 0 || changes.volume > 127)) throw new Error('Table volume must be 0 to 127.');
     if (changes.subTickOffset !== undefined &&
-        (!Number.isInteger(changes.subTickOffset) || changes.subTickOffset < -4 || changes.subTickOffset > 4)) {
-      throw new Error('Table microtiming must be -4 to 4.');
+        (!Number.isInteger(changes.subTickOffset) || changes.subTickOffset < -8 || changes.subTickOffset > 8)) {
+      throw new Error('Table microtiming must be -8 to 8.');
     }
     Object.assign(step, changes);
     this.notify();

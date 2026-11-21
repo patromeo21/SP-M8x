@@ -1,4 +1,4 @@
-export type VoiceFxCode = 'FL' | 'DL' | 'DR' | 'OFF';
+export type VoiceFxCode = 'FL' | 'DL' | 'DR' | 'PS' | 'OFF';
 
 export interface VoiceFxCommand {
   code: VoiceFxCode;
@@ -102,6 +102,7 @@ export class VoiceFxPool {
 
   public applyTableOpcode(slot: VoiceFxSlot, command: TableOpcode, time: number): void {
     if (!Number.isFinite(time) || time < 0) throw new RangeError('Table opcode time must be finite and non-negative.');
+    if (command.code === 'PS') return;
     if (command.code === 'OFF') {
       this.reset(slot, time);
       return;

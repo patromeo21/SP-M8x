@@ -234,7 +234,7 @@
 .pad-pitch-control input {
   flex: 1 1 auto;
   min-width: 0;
-  touch-action: none;
+  touch-action: manipulation;
 }
 
 @media (orientation: landscape) {
