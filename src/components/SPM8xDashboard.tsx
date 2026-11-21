@@ -352,9 +352,9 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
                   </div>}
               </section>}
       </main>
-      <footer className="spm8x-footer flex items-center justify-between px-4 py-2 bg-[var(--bg-canvas)] border-t border-[var(--border-grid)] text-[10px] text-zinc-400 shrink-0">
-        <div className="spm8x-footer-row flex items-center space-x-4">
-          <span className="flex items-center space-x-1.5 shrink-0">
+      <footer className="flex items-center justify-between px-4 py-2 bg-[var(--bg-canvas)] border-t border-[var(--border-grid)] text-[10px] text-zinc-400 shrink-0">
+        <div className="flex items-center space-x-4">
+          <span className="flex items-center space-x-1.5">
             <span className={`w-2 h-2 rounded-full ${engineStatus.state === 'running' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
             {engineStatus.state === 'running' ? <span className="text-zinc-300 font-bold">ENGINE READY</span> :
               engineStatus.state === 'closed' ? <span role="alert" className="text-rose-300 font-bold">AUDIO CLOSED — RELOAD</span> :
@@ -366,9 +366,9 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
                 });
               }}>{audioError ? 'AUDIO BLOCKED — TAP TO RETRY' : engineStatus.state === 'idle' ? 'TAP TO START AUDIO' : 'AUDIO PAUSED — TAP TO RESUME'}</button>}
           </span>
-          <span className="shrink-0">VOICES: <strong className="text-zinc-200">{engineStatus.voices}</strong></span>
-          <button type="button" aria-pressed={playing} onClick={toggleTransport} className="transport-control text-cyan-300 shrink-0">{starting ? 'CANCEL' : playing ? 'STOP' : 'PLAY'}</button>
-          <button type="button" aria-pressed={armed} onClick={() => setArmed(!armed)} className={`transport-control shrink-0 ${armed ? 'text-rose-300' : 'text-zinc-400'}`}>{armed ? 'PHRASE REC ARMED' : 'PHRASE REC'}</button>
+          <span>VOICES: <strong className="text-zinc-200">{engineStatus.voices}</strong></span>
+          <button type="button" aria-pressed={playing} onClick={toggleTransport} className="transport-control text-cyan-300">{starting ? 'CANCEL' : playing ? 'STOP' : 'PLAY'}</button>
+          <button type="button" aria-pressed={armed} onClick={() => setArmed(!armed)} className={`transport-control ${armed ? 'text-rose-300' : 'text-zinc-400'}`}>{armed ? 'PHRASE REC ARMED' : 'PHRASE REC'}</button>
           <button type="button" aria-pressed={fillActive} onPointerDown={() => {
             setFillActive(true);
             trackerEngine.setFillActive(true);
@@ -381,12 +381,12 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
           }} onBlur={() => {
             setFillActive(false);
             trackerEngine.setFillActive(false);
-          }} className={`transport-control shrink-0 ${fillActive ? 'text-amber-300' : 'text-zinc-500'}`}>FILL</button>
-          <span className="shrink-0">BPM: <strong className="text-zinc-200">{projectController.getState().settings.bpm.toFixed(1)}</strong></span>
+          }} className={`transport-control ${fillActive ? 'text-amber-300' : 'text-zinc-500'}`}>FILL</button>
+          <span>BPM: <strong className="text-zinc-200">{projectController.getState().settings.bpm.toFixed(1)}</strong></span>
           <MasterOutput savedLocally={padBank.storageReady && !padBank.storageError && !projectController.hasSaveError() && !['SAVING', 'DELETING'].includes(padBank.storageStatus)} />
-          {padBank.storageError && <span role="alert" className="spm8x-transport-alert text-rose-400" title={padBank.storageStatus}>{padBank.storageStatus}</span>}
-          {projectController.hasSaveError() && <span role="alert" className="spm8x-transport-alert text-rose-400" title="PHRASE SAVE FAILED">PHRASE SAVE FAILED</span>}
-          {transportMessage && <span role="alert" className="spm8x-transport-alert text-rose-400" title={transportMessage}>{transportMessage}</span>}
+          {padBank.storageError && <span role="alert" className="text-rose-400">{padBank.storageStatus}</span>}
+          {projectController.hasSaveError() && <span role="alert" className="text-rose-400">PHRASE SAVE FAILED</span>}
+          {transportMessage && <span role="alert" className="text-rose-400">{transportMessage}</span>}
           <span className="sr-only" aria-live="polite">Project revision {projectRevision}</span>
         </div>
       </footer>

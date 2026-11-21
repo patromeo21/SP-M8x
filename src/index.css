@@ -125,32 +125,6 @@ body,
 .app-shell > footer {
   min-height: 0;
 }
-.app-shell > footer,
-.spm8x-footer {
-  max-height: 36px;
-  overflow: hidden;
-  flex-wrap: nowrap;
-}
-.app-shell > footer > div,
-.spm8x-footer-row {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  max-width: 100%;
-  flex-wrap: nowrap;
-  overflow: hidden;
-  white-space: nowrap;
-}
-.spm8x-transport-alert {
-  display: block;
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  line-height: 1.2;
-}
 .app-shell > main {
   min-width: 0;
   min-height: 0;
@@ -411,7 +385,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   grid-template-columns: 2.5rem minmax(3.2rem, 0.9fr) minmax(3rem, 0.8fr) minmax(5rem, 1.2fr) minmax(3rem, 0.8fr) minmax(3.5rem, 0.8fr) minmax(3.6rem, 0.8fr);
 }
 .table-sequencer-grid {
-  grid-template-columns: 4.5rem minmax(3.5rem, 1fr) minmax(3.5rem, 1fr) minmax(3.2rem, 0.8fr) minmax(5.2rem, 1.2fr);
+  grid-template-columns: 5rem minmax(4rem, 1fr) minmax(3.5rem, 0.8fr) minmax(6rem, 1.2fr);
 }
 .phrase-grid-header > span,
 .table-grid-header > span,
@@ -885,7 +859,6 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 .table-grid-scroll::-webkit-scrollbar-thumb {
   background: var(--m8-border-strong);
   border-radius: 3px;
-}
 
 /* ==========================================================================
    SONG-STYLE RECESSED HARDWARE CELLS FOR PHRASE & TABLE VIEWS
@@ -964,4 +937,5 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 .table-row[data-playing="true"] > *:first-child {
   color: var(--m8-accent-green);
   border-color: #2a9d63;
+}
 }

@@ -80,7 +80,7 @@ export function PhraseTableEditor({
         ? <PhraseRows key={`${pattern.id}-${trackIndex}-${pattern.length}`} pattern={pattern} patternIndex={patternIndex}
             trackIndex={trackIndex} slots={slots} activeStep={activeStep} transportBusy={transportBusy} contextLock={contextLock} />
         : table
-          ? <TableRows key={table.id} table={table} playing={activeStep >= 0} activeStep={activeStep} />
+          ? <TableRows key={table.id} table={table} playing={activeStep >= 0} />
           : <p className="text-zinc-400">Create a reusable table, then assign it to a phrase step.</p>}
     </section>
   );
@@ -227,30 +227,17 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, tran
   );
 }
 
-function TableRows({ table, playing, activeStep }: { table: TrackerTable; playing: boolean; activeStep: number }) {
+function TableRows({ table, playing }: { table: TrackerTable; playing: boolean }) {
   const [page, setPage] = useState(0);
   const [playingTicks, setPlayingTicks] = useState<number[]>([]);
-  const [pausedSubtick, setPausedSubtick] = useState<number>(0);
-  const [lastHeldStep, setLastHeldStep] = useState<number | null>(null);
   const pageCount = Math.ceil(table.steps.length / 16);
   const pageGroup = Math.floor(page / 8);
 
   useEffect(() => {
     if (!playing) {
       setPlayingTicks([]);
-      if (activeStep >= 0 && lastHeldStep !== activeStep) {
-        const clampedStep = Math.min(activeStep, Math.max(0, Math.floor((table.steps.length - 1) / 8)));
-        const heldTick = clampedStep * 8;
-        const targetPage = Math.floor(heldTick / 16);
-        setLastHeldStep(activeStep);
-        setPausedSubtick(((heldTick % 8) + 8) % 8);
-        if (targetPage >= 0 && targetPage < pageCount) {
-          setPage(targetPage);
-        }
-      }
       return;
     }
-    setLastHeldStep(null);
     let frame: number;
     const update = () => {
       const ticks = trackerBridge.getPlayingTableTicks(table.id, pageGroup);
@@ -259,11 +246,7 @@ function TableRows({ table, playing, activeStep }: { table: TrackerTable; playin
     };
     frame = requestAnimationFrame(update);
     return () => cancelAnimationFrame(frame);
-  }, [activeStep, lastHeldStep, pageCount, pageGroup, playing, table.id, table.steps.length]);
-
-  const activeSubtick = playing
-    ? (playingTicks.length > 0 ? (((playingTicks[playingTicks.length - 1] % 8) + 8) % 8) : 0)
-    : pausedSubtick;
+  }, [pageGroup, playing, table.id]);
 
   return (
     <div className="table-grid-scroll table-sequencer-list flex-1 min-h-0" aria-label="Vertical table ticks">
@@ -273,10 +256,9 @@ function TableRows({ table, playing, activeStep }: { table: TrackerTable; playin
           {Array.from({ length: pageCount }, (_, index) => <option key={index} value={index}>{index + 1} · {hexStep(index * 16)}-{hexStep(index * 16 + 15)}</option>)}
         </select></label>
         <span className="text-zinc-400">TICKS {page * 16 + 1}-{Math.min((page + 1) * 16, table.steps.length)}</span>
-        <span className="text-cyan-300" aria-label="Active subtick">SUB {activeSubtick}</span>
       </div>
       <div className="table-grid-header table-sequencer-grid">
-        <span>TICK</span><span>PITCH</span><span>VOL</span><span>FX</span><span>MICRO-TIMING</span>
+        <span>TICK</span><span>PITCH</span><span>FX</span><span>MICRO-TIMING</span>
       </div>
       {table.steps.slice(page * 16, page * 16 + 16).map((step, row) => {
         const index = page * 16 + row;
@@ -291,13 +273,6 @@ function TableRows({ table, playing, activeStep }: { table: TrackerTable; playin
               })}>
               <option value="">HOLD</option>
               {Array.from({ length: 49 }, (_, i) => i - 24).map((value) => <option key={value} value={value}>{value > 0 ? `+${value}` : value}</option>)}
-            </select>
-            <select aria-label={`Table volume tick ${index + 1}`} className={fieldClass}
-              value={step.volume ?? ''} onChange={(event) => projectController.updateTableStep(table.id, index, {
-                volume: event.target.value === '' ? null : Number(event.target.value),
-              })}>
-              <option value="">HOLD</option>
-              {Array.from({ length: 128 }, (_, value) => <option key={value} value={value}>{value}</option>)}
             </select>
             <select aria-label={`Table FX tick ${index + 1}`} className={fieldClass}
               value={step.reset ? 'OFF' : step.fx ?? 'OFF'} onChange={(event) => projectController.updateTableStep(table.id, index, {
