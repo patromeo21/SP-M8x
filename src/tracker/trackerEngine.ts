@@ -3,6 +3,9 @@ import { audioEngine } from '../audio/audioEngine';
 import { rmxStepIndex, type FxBus, type RmxLength } from '../fx/fxEngine';
 import { projectController } from '../project/projectController';
 import type { ConditionalTrig } from './stepTypes';
+import { GROOVE_PRESETS, type GroovePreset, isGroovePreset, writeGrooveSlots } from './groovePresets';
+
+export { GROOVE_PRESETS, type GroovePreset };
 
 const LOOKAHEAD_SECONDS = 0.1;
 const TIMER_MS = 25;
@@ -20,15 +23,8 @@ for (let mask = 0; mask < 256; mask++) {
   TRACK_MASKS.push(tracks);
 }
 
-export const GROOVE_PRESETS = ['8-8', '9-7', '10-6', '11-5', '12-4', '9-9-7-7'] as const;
-export type GroovePreset = typeof GROOVE_PRESETS[number];
-
 interface PatternSegment { patternIndex: number; startStep: number; length: number }
 interface TransportPosition { absoluteStep: number; stepFraction: number }
-
-function isGroovePreset(value: string): value is GroovePreset {
-  return GROOVE_PRESETS.includes(value as GroovePreset);
-}
 
 function passesTrig(trig: ConditionalTrig | undefined, cycle: number, fillActive: boolean): boolean {
   if (!trig) return true;
@@ -94,7 +90,7 @@ export class TrackerEngine {
   constructor(bpm = 120) {
     this.bpm = bpm;
     for (let index = 0; index < MAX_SEGMENTS; index++) this.segments.push({ patternIndex: 0, startStep: 0, length: BAR_STEPS });
-    this.copyGroovePreset('8-8');
+    writeGrooveSlots('8-8', this.grooveSlots);
     this.rebuildTiming();
   }
 
@@ -279,7 +275,7 @@ export class TrackerEngine {
     const context = audioEngine.getContext();
     const position = this.playing && context ? this.positionAtTime(context.currentTime) : null;
     this.groovePreset = preset;
-    this.copyGroovePreset(preset);
+    writeGrooveSlots(preset, this.grooveSlots);
     this.rebuildTiming();
     if (position && context) {
       trackerBridge.cancelPending();
@@ -349,20 +345,6 @@ export class TrackerEngine {
 
   private get barDuration(): number {
     return this.stepPrefix[BAR_STEPS];
-  }
-
-  private copyGroovePreset(preset: GroovePreset): void {
-    for (let step = 0; step < BAR_STEPS; step++) {
-      const pairPosition = step % 4;
-      if (preset === '8-8') this.grooveSlots[step] = 8;
-      else if (preset === '9-9-7-7') this.grooveSlots[step] = pairPosition < 2 ? 9 : 7;
-      else {
-        const separator = preset.indexOf('-');
-        let longValue = 0;
-        for (let index = 0; index < separator; index++) longValue = longValue * 10 + preset.charCodeAt(index) - 48;
-        this.grooveSlots[step] = pairPosition % 2 === 0 ? longValue : 16 - longValue;
-      }
-    }
   }
 
   private rebuildTiming(): void {
