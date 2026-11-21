@@ -43,22 +43,24 @@ export function getGrooveSlots(preset: GroovePreset, barSteps = BAR_STEPS): Uint
   return slots;
 }
 
+export function getGrooveDelayedSteps(preset: GroovePreset): boolean[] {
+  const slots = getGrooveSlots(preset);
+  let offset = 0;
+  return Array.from(slots, (slot) => {
+    const delayed = offset > 0;
+    offset += slot - 8;
+    return delayed;
+  });
+}
+
 export function getGrooveMetronomePulses(preset: GroovePreset, barSteps = BAR_STEPS): GrooveMetronomePulse[] {
   if (barSteps <= 0) return [];
   const slots = getGrooveSlots(preset, barSteps);
-  const halfBarDuration = slots.reduce((total, slot) => total + slot, 0) / 2;
+  const pulses: GrooveMetronomePulse[] = [];
   let elapsed = 0;
-  let accentStep = 0;
-  let closestDistance = halfBarDuration;
-  for (let step = 1; step < barSteps; step++) {
-    elapsed += slots[step - 1];
-    const distance = Math.abs(elapsed - halfBarDuration);
-    if (distance < closestDistance) {
-      closestDistance = distance;
-      accentStep = step;
-    }
+  for (let step = 0; step < barSteps; step++) {
+    if (elapsed % 32 === 0) pulses.push({ step, downbeat: elapsed % 128 === 0 });
+    elapsed += slots[step];
   }
-  return accentStep === 0
-    ? [{ step: 0, downbeat: true }]
-    : [{ step: 0, downbeat: true }, { step: accentStep, downbeat: false }];
+  return pulses;
 }

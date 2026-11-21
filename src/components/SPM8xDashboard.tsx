@@ -440,14 +440,14 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
         {currentTab === 'phrase'
           ? <div className="phrase-workspace">
               <PhraseTableEditor slots={padBank.slots} activeStep={visibleStep}
-                activeSubtick={subtick} transportPlaying={playing} transportPaused={paused}
+                activeSubtick={subtick} groovePreset={groovePreset} transportPlaying={playing} transportPaused={paused}
                 transportBusy={playing || starting} mode="phrase" queuedPatternIndex={queuedPatternIndex}
                 onSelectPattern={selectPattern} linkedPad={linkedPad} contextLock={contextLock} onToggleContextLock={toggleContextLock} />
               <SamplerWorkspace padBank={padBank} recorder={recorder} triggerPad={triggerPad} compact />
             </div>
           : currentTab === 'table'
             ? <PhraseTableEditor slots={padBank.slots} activeStep={visibleStep}
-                activeSubtick={subtick} transportPlaying={playing} transportPaused={paused}
+                activeSubtick={subtick} groovePreset={groovePreset} transportPlaying={playing} transportPaused={paused}
                 transportBusy={playing || starting} mode="table" queuedPatternIndex={queuedPatternIndex}
                 onSelectPattern={selectPattern} linkedPad={linkedPad} contextLock={contextLock} onToggleContextLock={toggleContextLock} />
           : currentTab === 'sampler'

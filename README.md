@@ -113,7 +113,8 @@ assign a loaded pad, note, velocity, microtiming and an optional table. Stop
 transport before changing pad assignments or the active phrase. NEW PHRASE
 creates another 32-step phrase; song arrangement is not implemented yet.
 The playhead highlights the playing step and page without switching the page
-you are editing.
+you are editing. Each bar has 16 steps (four per beat); a 64-step phrase spans
+four bars. Swing presets briefly accent delayed step boundaries.
 Existing single-track phrases are migrated to track 1 with a local-storage
 backup of the old project. Existing 64-step phrases are split into two named
 phrases. Each new phrase plays separately;
@@ -132,10 +133,11 @@ rapid reactivation or slot reuse can bring back an old echo. Pitch and volume
 events are scheduled on the audio clock; values hold until changed. The DEL/OP gesture clears selected populated table ticks after
 confirmation. Table changes affect newly scheduled voices, not voices already
 playing.
-While the transport runs, the selected table highlights the ticks of sounding
-voices that use it; overlapping voices can highlight several ticks. The final
-tick remains highlighted while its value holds. Scroll the tick list to reach
-rows that do not fit; the current ticks also appear above the list.
+While the transport runs, the Table playhead follows the phrase's grooved
+step and subtick clock and switches to the current 16-tick editor page. It
+continues to follow the clock even when no voice is sounding. Table automation
+for an already-triggered voice remains scheduled at that voice's original
+step rate.
 Other table commands, looping, adjustable table rates and phrase optcodes are
 not yet implemented.
 Changes inside the scheduler's lookahead may not play until the next loop.

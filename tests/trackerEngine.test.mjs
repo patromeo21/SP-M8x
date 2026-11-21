@@ -11,7 +11,7 @@ const grooveSource = ts.transpileModule(
 ).outputText;
 
 test('groove presets produce the expected slots without overwriting the target tail', async () => {
-  const { GROOVE_PRESETS, isGroovePreset, getGrooveSlots, getGrooveMetronomePulses, writeGrooveSlots } =
+  const { GROOVE_PRESETS, isGroovePreset, getGrooveSlots, getGrooveDelayedSteps, getGrooveMetronomePulses, writeGrooveSlots } =
     await import(moduleUrl(grooveSource));
   const patterns = [[8, 8, 8, 8], [9, 7, 9, 7], [10, 6, 10, 6], [11, 5, 11, 5], [12, 4, 12, 4], [9, 9, 7, 7]];
   assert.equal(isGroovePreset('9-8'), false);
@@ -24,8 +24,13 @@ test('groove presets produce the expected slots without overwriting the target t
     assert.deepEqual([...getGrooveSlots(preset, 3)], patterns[index].slice(0, 3));
     assert.deepEqual(getGrooveMetronomePulses(preset), [
       { step: 0, downbeat: true },
+      { step: 4, downbeat: false },
       { step: 8, downbeat: false },
+      { step: 12, downbeat: false },
     ]);
+    assert.deepEqual(getGrooveDelayedSteps(preset).slice(0, 4),
+      index === 0 ? [false, false, false, false] :
+        index === 5 ? [false, true, true, true] : [false, true, false, true]);
   }
 });
 
@@ -150,16 +155,50 @@ test('lookahead schedules on the audio clock, records microtiming and cancels fu
     const grooveTracker = new TrackerEngine(120);
     await grooveTracker.start();
     grooveTracker.setGroovePreset('9-7');
-    const longStepDuration = 9 * 60 / 120 / 128;
+    const longStepDuration = 9 * 60 / 120 / 32;
     assert.deepEqual(
       grooveTracker.recordPosition(grooveTracker.startTime + longStepDuration * 0.7),
       { step: 1, subTickOffset: -3, patternIndex: 0 },
     );
     grooveTracker.setMetronome(true);
-    context.currentTime = grooveTracker.startTime + 0.2;
+    context.currentTime = grooveTracker.startTime + 0.36;
     grooveTracker.tick();
-    assert.deepEqual(metronomeCalls.at(-1), [grooveTracker.startTime + 0.25, 0.15, false]);
+    assert.deepEqual(metronomeCalls.at(-1), [grooveTracker.startTime + 0.5, 0.15, false]);
     grooveTracker.stop();
+
+    globalThis.trackerTestProject.getState = () => ({
+      settings: { activePatternIndex: 0 },
+      tracker: { patterns: [{ length: 64, tracks: Array.from({ length: 8 }, (_, id) => ({
+        id, steps: Array.from({ length: 64 }, () => ({})),
+      })) }] },
+    });
+    const { GROOVE_PRESETS, getGrooveSlots } = await import(moduleUrl(grooveSource));
+    for (const preset of GROOVE_PRESETS) {
+      const positions = [];
+      const clock = new TrackerEngine(120);
+      clock.setGroovePreset(preset);
+      clock.setCallbacks(() => {}, () => {}, undefined, (step, subtick) => positions.push([step, subtick]));
+      context.currentTime = 100;
+      await clock.start();
+      const start = clock.startTime;
+      const slots = getGrooveSlots(preset);
+      let elapsed = 0;
+      for (let step = 0; step < 64; step++) {
+        const duration = slots[step % 16] / 32 * 0.5;
+        context.currentTime = start + elapsed + duration * 0.3;
+        clock.tick();
+        assert.deepEqual(positions.at(-1), [step, 2], `${preset} step ${step}`);
+        if (step % 16 === 0) assert.ok(Math.abs(elapsed - step / 16 * 2) < 1e-8);
+        elapsed += duration;
+      }
+      assert.ok(Math.abs(elapsed - 8) < 1e-8, `${preset} four bars`);
+      context.currentTime = start + elapsed + 0.001;
+      clock.tick();
+      assert.deepEqual(positions.at(-1), [0, 0], `${preset} phrase wrap`);
+      clock.pause();
+      await clock.resume();
+      clock.stop();
+    }
 
     globalThis.trackerTestAudio.initialize = () => new Promise((resolve) => { resolveStart = resolve; });
     const pending = tracker.start();

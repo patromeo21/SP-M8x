@@ -351,7 +351,7 @@ export class TrackerEngine {
   }
 
   private rebuildTiming(): void {
-    this.secondsPerSubtick = 60 / this.bpm / SUBTICKS_PER_BAR;
+    this.secondsPerSubtick = 4 * 60 / this.bpm / SUBTICKS_PER_BAR;
     this.stepPrefix[0] = 0;
     for (let step = 0; step < BAR_STEPS; step++) {
       const duration = this.grooveSlots[step] * this.secondsPerSubtick;
@@ -421,11 +421,12 @@ export class TrackerEngine {
       this.displayedPattern = displaySegment.patternIndex;
       this.onPattern?.(displaySegment.patternIndex);
     }
-    if (displayStep !== this.lastDisplayedStep) {
+    const stepChanged = displayStep !== this.lastDisplayedStep;
+    if (stepChanged) {
       this.lastDisplayedStep = displayStep;
       this.onStep?.(displayStep);
     }
-    if (displaySubtick !== this.lastDisplayedSubtick && displayStep >= 0) {
+    if ((stepChanged || displaySubtick !== this.lastDisplayedSubtick) && displayStep >= 0) {
       this.lastDisplayedSubtick = displaySubtick;
       this.onPosition?.(displayStep, displaySubtick);
     }

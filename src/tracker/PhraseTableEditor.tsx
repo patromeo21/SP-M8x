@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { projectController, type Pattern, type PhraseLength, type TrackerTable } from '../project/projectController';
 import type { PadSlot } from '../sampler/usePadBank';
-import { trackerBridge } from './trackerBridge';
+import { getGrooveDelayedSteps, type GroovePreset } from './groovePresets';
 import { instrumentIdToPadId, padIdToInstrumentId } from '../sampler/padIds';
 import { generateEuclideanSteps } from './euclideanGenerator';
 
@@ -15,6 +15,7 @@ export interface EditorProps {
   slots: Record<string, PadSlot>;
   activeStep: number;
   activeSubtick: number;
+  groovePreset: GroovePreset;
   transportPlaying: boolean;
   transportPaused: boolean;
   transportBusy: boolean;
@@ -27,7 +28,7 @@ export interface EditorProps {
 }
 
 export function PhraseTableEditor({
-  slots, activeStep, activeSubtick, transportPlaying, transportPaused, transportBusy, mode, queuedPatternIndex, onSelectPattern,
+  slots, activeStep, activeSubtick, groovePreset, transportPlaying, transportPaused, transportBusy, mode, queuedPatternIndex, onSelectPattern,
   linkedPad, contextLock = false, onToggleContextLock,
 }: EditorProps) {
   const [tableId, setTableId] = useState<number | null>(null);
@@ -40,6 +41,7 @@ export function PhraseTableEditor({
   const pattern = state.tracker.patterns[patternIndex];
   const tables = projectController.getTables(trackIndex);
   const table = tables.find((item) => item.id === tableId) ?? tables[0];
+  const delayedSteps = useMemo(() => getGrooveDelayedSteps(groovePreset), [groovePreset]);
   if (!pattern) return <p role="alert">Active phrase is unavailable.</p>;
 
   return (
@@ -85,17 +87,20 @@ export function PhraseTableEditor({
       </div>
       {mode === 'phrase'
         ? <PhraseRows key={`${pattern.id}-${trackIndex}-${pattern.length}`} pattern={pattern} patternIndex={patternIndex}
-            trackIndex={trackIndex} slots={slots} activeStep={activeStep} transportBusy={transportBusy} contextLock={contextLock} />
+            trackIndex={trackIndex} slots={slots} activeStep={activeStep}
+            playing={transportPlaying} delayedSteps={delayedSteps} transportBusy={transportBusy} contextLock={contextLock} />
         : table
           ? <TableRows key={`${table.id}-${trackIndex}`} table={table} trackIndex={trackIndex}
-              activeStep={activeStep} activeSubtick={activeSubtick} paused={transportPaused} playing={transportPlaying} />
+              activeStep={activeStep} activeSubtick={activeSubtick} delayedSteps={delayedSteps}
+              paused={transportPaused} playing={transportPlaying} />
           : <p className="text-zinc-400">Create a reusable table, then assign it to a phrase step.</p>}
     </section>
   );
 }
 
-function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, transportBusy, contextLock }: {
-  pattern: Pattern; patternIndex: number; trackIndex: number; slots: Record<string, PadSlot>; activeStep: number; transportBusy: boolean; contextLock: boolean;
+function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, playing, delayedSteps, transportBusy, contextLock }: {
+  pattern: Pattern; patternIndex: number; trackIndex: number; slots: Record<string, PadSlot>; activeStep: number;
+  playing: boolean; delayedSteps: boolean[]; transportBusy: boolean; contextLock: boolean;
 }) {
   const [page, setPage] = useState(0);
   const [euclideanOpen, setEuclideanOpen] = useState(false);
@@ -135,7 +140,7 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, tran
         const active = padId !== null && step.note !== '---' && step.note !== 'OFF';
         const occupied = Boolean(step.instrumentId !== null || (step.note && step.note !== '---'));
         return (
-          <div className={`phrase-row phrase-sequencer-grid ${activeStep === index ? 'is-playing' : ''}`}
+          <div className={`phrase-row phrase-sequencer-grid ${activeStep === index ? 'is-playing' : ''} ${playing && activeStep === index && delayedSteps[index % 16] ? 'is-groove-pulse' : ''}`}
             key={index} data-step={hexStep(index)}>
             <button type="button" aria-label={`Phrase step ${index + 1}`} aria-pressed={active}
               disabled={contextLock || (transportBusy && !occupied)}
@@ -235,33 +240,17 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, tran
   );
 }
 
-function TableRows({ table, trackIndex, activeStep, activeSubtick, paused, playing }: {
-  table: TrackerTable; trackIndex: number; activeStep: number; activeSubtick: number; paused: boolean; playing: boolean;
+function TableRows({ table, trackIndex, activeStep, activeSubtick, delayedSteps, paused, playing }: {
+  table: TrackerTable; trackIndex: number; activeStep: number; activeSubtick: number; delayedSteps: boolean[]; paused: boolean; playing: boolean;
 }) {
   const [page, setPage] = useState(0);
-  const [playingTicks, setPlayingTicks] = useState<number[]>([]);
   const pageCount = Math.ceil(table.steps.length / 16);
-  const pageGroup = Math.floor(page / 8);
-  const heldTick = activeStep < 0 ? -1 : (activeStep * 8 + activeSubtick) % table.steps.length;
+  const currentTick = activeStep < 0 || table.steps.length === 0 ? -1 : (activeStep * 8 + activeSubtick) % table.steps.length;
+  const cursorPage = currentTick < 0 ? -1 : Math.floor(currentTick / 16);
 
   useEffect(() => {
-    if (paused && heldTick >= 0) setPage(Math.floor(heldTick / 16));
-  }, [heldTick, paused]);
-
-  useEffect(() => {
-    if (!playing) {
-      setPlayingTicks([]);
-      return;
-    }
-    let frame: number;
-    const update = () => {
-      const ticks = trackerBridge.getPlayingTableTicks(table.id, pageGroup);
-      setPlayingTicks((previous) => previous.length === ticks.length && previous.every((tick, index) => tick === ticks[index]) ? previous : ticks);
-      frame = requestAnimationFrame(update);
-    };
-    frame = requestAnimationFrame(update);
-    return () => cancelAnimationFrame(frame);
-  }, [pageGroup, playing, table.id]);
+    if ((playing || paused) && cursorPage >= 0) setPage(cursorPage);
+  }, [cursorPage, paused, playing]);
 
   return (
     <div className="table-grid-scroll table-sequencer-list flex-1 min-h-0" aria-label="Vertical table ticks">
@@ -277,10 +266,9 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, paused, playi
       </div>
       {table.steps.slice(page * 16, page * 16 + 16).map((step, row) => {
         const index = page * 16 + row;
-        const tickInGroup = page % 8 * 16 + row;
-        const held = paused && index === heldTick;
+        const current = (playing || paused) && index === currentTick;
         return (
-          <div className={`table-row table-sequencer-grid ${held || playingTicks.includes(tickInGroup) ? 'is-playing' : ''}`}
+          <div className={`table-row table-sequencer-grid ${current ? 'is-playing' : ''} ${playing && current && delayedSteps[activeStep % 16] ? 'is-groove-pulse' : ''}`}
             key={index} data-tick={hexStep(row)}>
             <span className="table-step-address">{hexStep(row)} <small>/{String(index + 1).padStart(3, '0')}</small></span>
             <select aria-label={`Table pitch tick ${index + 1}`} className={fieldClass}
