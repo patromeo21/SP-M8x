@@ -155,6 +155,12 @@ test('restored slices share a single decode and each receives the buffer', async
     assert.equal(api.slots.A2.name, 'A2');
     assert.equal(api.slots.A4.buffer, buffer);
     assert.equal(api.slots.A5.buffer, buffer);
+    api.updatePad('A1', { startPct: 20, endPct: 80 });
+    const croppedIds = await render().chopToBank('A1', 'A', 2);
+    assert.deepEqual(croppedIds, ['A6', 'A7']);
+    api = render();
+    assert.deepEqual([api.slots.A6.startPct, api.slots.A6.endPct], [20, 50]);
+    assert.deepEqual([api.slots.A7.startPct, api.slots.A7.endPct], [50, 80]);
     api.updatePad('A4', { endPct: 20, playbackMode: 'loop' });
     api = render();
     assert.equal(api.slots.A5.startPct, 50);

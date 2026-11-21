@@ -96,9 +96,10 @@ export const SamplerWorkbench: React.FC<SamplerWorkbenchProps> = ({
         {count !== null && <button type="button" disabled={!storageReady || !pad.sampleKey || chopping} onClick={() => {
           setChopping(true);
           setChopMessage('');
-          void onChop(pad.id, activeBank, count).then((ids) => {
+          void onChop(pad.id, activeBank, count).then(() => {
             setChopError(false);
-            setChopMessage(`ASSIGNED ${ids.length}: ${ids[0]} → ${ids[ids.length - 1]}`);
+            setCount(null);
+            setChopMessage('');
           }).catch((error: unknown) => {
             setChopError(true);
             setChopMessage(error instanceof Error ? error.message : 'Could not assign slices.');

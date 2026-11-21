@@ -5,6 +5,7 @@
 
 import React, { useCallback, useState } from 'react';
 import { BANKS, type PadBankApi } from './usePadBank';
+import { chopToBankReplacingSingleSource } from './chopToBank';
 import { PadBankManager } from './PadBankManager';
 import { SamplerWorkbench } from './SamplerWorkbench';
 import { useInputRecorder } from './useInputRecorder';
@@ -29,6 +30,8 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({ padBank, rec
   const renderWaveform = useCallback((props: Omit<AudioWaveformCanvasProps, 'audioBuffer'>) => (
     <AudioWaveformCanvas audioBuffer={padBank.selectedPad.buffer} {...props} />
   ), [padBank.selectedPad.buffer]);
+  const chopToBank = useCallback((padId: string, bank: (typeof BANKS)[number], count: number) =>
+    chopToBankReplacingSingleSource(padBank, padId, bank, count), [padBank]);
   return (
   <div className={`${compact ? 'sampler-compact' : 'sampler-full'} flex-1 grid gap-3 overflow-hidden min-h-0`}>
     <div className="sampler-full-pads bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col gap-2 min-h-0">
@@ -114,7 +117,7 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({ padBank, rec
       onRecord={recorder.toggle}
       storageReady={padBank.storageReady}
       activeBank={padBank.activeBank}
-      onChop={padBank.chopToBank}
+      onChop={chopToBank}
       onGenerateSliceMarkers={padBank.generateSliceMarkers}
       renderWaveform={renderWaveform}
     />}
