@@ -1,9 +1,25 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { audioEngine } from '../audio/audioEngine';
 import { percentFromFrame, rangeFromPercent, type SampleRange } from './sampleRange';
-import { markerRangeAtPointer } from './waveformGesture';
-import type { PadBankApi, PadSlot } from './usePadBank';
+import { intermediateMarkerFrameAtPointer, markerRangeAtPointer } from './waveformGesture';
+import type { PadBankApi, PadSlot, PadSlotPatch } from './usePadBank';
 import type { AudioWaveformCanvasProps } from './AudioWaveformCanvas';
+
+type MarkerDrag = {
+  pointerId: number;
+  kind: 'start' | 'end' | 'slice';
+  range: SampleRange;
+  original: SampleRange;
+  originalMarkers: number[];
+  markers: number[];
+  markerIndex: number;
+  x: number;
+  origin: number;
+  pendingX: number;
+  frame: number | null;
+};
+
+type SliceMarkerPatch = PadSlotPatch & Pick<PadSlot, 'sliceMarkers'>;
 
 interface Props {
   pad: PadSlot;
@@ -15,11 +31,12 @@ interface Props {
 
 export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRange, sliceCount, renderWaveform }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ pointerId: number; edge: 'start' | 'end'; range: SampleRange; original: SampleRange; x: number; origin: number } | null>(null);
+  const drag = useRef<MarkerDrag | null>(null);
   const waveformPointers = useRef(new Map<number, { x: number; y: number }>());
   const pinch = useRef<{ ids: [number, number]; distance: number; zoom: number; centerFrame: number } | null>(null);
   const scrubPointer = useRef<number | null>(null);
   const [preview, setPreview] = useState<SampleRange | null>(null);
+  const [sliceMarkerPreview, setSliceMarkerPreview] = useState<number[] | null>(null);
   const [scrubPosition, setScrubPosition] = useState<number | null>(null);
   const [precision, setPrecision] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,26 +49,46 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
   const viewStart = Math.max(0, Math.min(length - viewLength, Math.round(position * length)));
   const viewEnd = Math.min(length, viewStart + viewLength);
   const range = preview ?? (length ? rangeFromPercent(pad.startPct, pad.endPct, length) : { start: 0, end: 0 });
-  const sliceMarkerFrames = useMemo(() => sliceCount > 0
-    ? Array.from({ length: sliceCount - 1 }, (_, index) => range.start + Math.floor((index + 1) * (range.end - range.start) / sliceCount))
-    : pad.sliceMarkers.slice(1, -1),
-  [sliceCount, range.start, range.end, pad.sliceMarkers]);
+  const sliceMarkerFrames = useMemo(() => {
+    if (sliceMarkerPreview) return sliceMarkerPreview;
+    if (sliceCount > 0) {
+      const saved = pad.sliceMarkers;
+      if (saved.length === sliceCount + 1 && saved[0] === range.start && saved[saved.length - 1] === range.end) {
+        return saved.slice(1, -1);
+      }
+      return Array.from({ length: sliceCount - 1 }, (_, index) =>
+        range.start + Math.floor((index + 1) * (range.end - range.start) / sliceCount));
+    }
+    return pad.sliceMarkers.slice(1, -1);
+  }, [sliceCount, range.start, range.end, pad.sliceMarkers, sliceMarkerPreview]);
+  const sliceMarkerBoundaries = useMemo(() => {
+    if (sliceMarkerPreview) return [range.start, ...sliceMarkerPreview, range.end];
+    if (sliceCount > 0 && pad.sliceMarkers.length === sliceCount + 1 &&
+        pad.sliceMarkers[0] === range.start && pad.sliceMarkers[pad.sliceMarkers.length - 1] === range.end) {
+      return [...pad.sliceMarkers];
+    }
+    if (sliceCount === 0 && pad.sliceMarkers.length >= 2) return [...pad.sliceMarkers];
+    return [range.start, ...sliceMarkerFrames, range.end];
+  }, [sliceCount, range.start, range.end, pad.sliceMarkers, sliceMarkerFrames, sliceMarkerPreview]);
   const sliceMarkerNorms = useMemo(() => length ? sliceMarkerFrames.map((frame) => frame / length) : [],
     [sliceMarkerFrames, length]);
 
   useEffect(() => {
+    if (drag.current?.frame !== null && drag.current?.frame !== undefined) cancelAnimationFrame(drag.current.frame);
     drag.current = null;
     setPreview(null);
+    setSliceMarkerPreview(null);
     setPrecision(false);
     setError(null);
     setZoom(1);
     setPosition(0);
     return () => {
       const active = drag.current;
-      if (active && length) {
+      if (active?.frame !== null && active?.frame !== undefined) cancelAnimationFrame(active.frame);
+      if (active && active.kind !== 'slice' && length) {
         onPreviewRange(pad.id, percentFromFrame(active.original.start, length), percentFromFrame(active.original.end, length));
-        drag.current = null;
       }
+      drag.current = null;
     };
   }, [pad.id, pad.sampleKey, length, onPreviewRange]);
 
@@ -101,14 +138,76 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
     });
   };
 
-  const moveMarker = (event: React.PointerEvent<HTMLButtonElement>) => {
-    const active = drag.current;
+  const applyMarkerPosition = (active: MarkerDrag, clientX: number) => {
     const bounds = containerRef.current?.getBoundingClientRect();
-    if (!active || active.pointerId !== event.pointerId || !bounds || bounds.width <= 0 || !length) return;
-    const next = markerRangeAtPointer(active.original, active.edge, active.origin, active.x, event.clientX, viewLength, bounds.width, length);
+    if (!bounds || bounds.width <= 0 || !length) return;
+    if (active.kind === 'slice') {
+      const index = active.markerIndex;
+      const next = [...active.originalMarkers];
+      next[index] = intermediateMarkerFrameAtPointer(
+        {
+          start: active.originalMarkers[index - 1],
+          end: active.originalMarkers[index + 1],
+        },
+        active.origin,
+        active.x,
+        clientX,
+        viewStart,
+        viewEnd,
+        viewLength,
+        bounds.width,
+        length,
+      );
+      active.markers = next;
+      setSliceMarkerPreview(next.slice(1, -1));
+      return;
+    }
+    const next = markerRangeAtPointer(active.original, active.kind, active.origin, active.x, clientX, viewLength, bounds.width, length);
     active.range = next;
     setPreview(next);
     onPreviewRange(pad.id, percentFromFrame(next.start, length), percentFromFrame(next.end, length));
+  };
+
+  const moveMarker = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const active = drag.current;
+    if (!active || active.pointerId !== event.pointerId) return;
+    active.pendingX = event.clientX;
+    if (active.frame !== null) return;
+    active.frame = requestAnimationFrame(() => {
+      if (drag.current !== active) return;
+      active.frame = null;
+      applyMarkerPosition(active, active.pendingX);
+    });
+  };
+
+  const finishMarker = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const active = drag.current;
+    if (!active || active.pointerId !== event.pointerId) return;
+    if (active.frame !== null) cancelAnimationFrame(active.frame);
+    active.frame = null;
+    applyMarkerPosition(active, event.clientX);
+    drag.current = null;
+    if (active.kind === 'slice') {
+      setSliceMarkerPreview(null);
+      const patch: SliceMarkerPatch = { sliceMarkers: active.markers };
+      onUpdatePad(pad.id, patch);
+    } else {
+      setPreview(null);
+      commitRange(active.range);
+    }
+  };
+
+  const cancelMarker = (pointerId: number) => {
+    const active = drag.current;
+    if (!active || active.pointerId !== pointerId) return;
+    if (active.frame !== null) cancelAnimationFrame(active.frame);
+    drag.current = null;
+    if (active.kind === 'slice') {
+      setSliceMarkerPreview(null);
+    } else {
+      setPreview(null);
+      onPreviewRange(pad.id, percentFromFrame(active.original.start, length), percentFromFrame(active.original.end, length));
+    }
   };
 
   const scrubAt = (clientX: number) => {
@@ -126,6 +225,29 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
     if (pinch.current?.ids.includes(pointerId)) pinch.current = null;
   };
 
+  const startMarkerDrag = (event: React.PointerEvent<HTMLButtonElement>, kind: MarkerDrag['kind'], markerIndex = 0) => {
+    if (drag.current || waveformPointers.current.size > 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    if (kind === 'slice') {
+      const origin = sliceMarkerBoundaries[markerIndex];
+      drag.current = {
+        pointerId: event.pointerId, kind, range, original: range,
+        originalMarkers: sliceMarkerBoundaries, markers: sliceMarkerBoundaries,
+        markerIndex, x: event.clientX, origin, pendingX: event.clientX, frame: null,
+      };
+      return;
+    }
+    const edge = kind;
+    const visible = Math.max(viewStart, Math.min(viewEnd, range[edge]));
+    const origin = edge === 'start' ? Math.min(visible, range.end - 1) : Math.max(visible, range.start + 1);
+    drag.current = {
+      pointerId: event.pointerId, kind, range, original: range,
+      originalMarkers: [], markers: [], markerIndex: 0,
+      x: event.clientX, origin, pendingX: event.clientX, frame: null,
+    };
+  };
+
   const marker = (edge: 'start' | 'end') => (
     <button
       type="button"
@@ -133,37 +255,11 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
       disabled={!pad.buffer}
       className={`slice-handle slice-handle-${edge}`}
       style={{ left: `clamp(22px, ${length ? (range[edge] - viewStart) * 100 / viewLength : 0}%, calc(100% - 22px))`, touchAction: 'none' }}
-      onPointerDown={(event) => {
-        if (drag.current) return;
-        event.preventDefault();
-        event.currentTarget.setPointerCapture(event.pointerId);
-        const visible = Math.max(viewStart, Math.min(viewEnd, range[edge]));
-        const origin = edge === 'start' ? Math.min(visible, range.end - 1) : Math.max(visible, range.start + 1);
-        drag.current = { pointerId: event.pointerId, edge, range, original: range, x: event.clientX, origin };
-      }}
+      onPointerDown={(event) => startMarkerDrag(event, edge)}
       onPointerMove={moveMarker}
-      onPointerUp={(event) => {
-        if (drag.current?.pointerId !== event.pointerId) return;
-        moveMarker(event);
-        const next = drag.current.range;
-        drag.current = null;
-        setPreview(null);
-        commitRange(next);
-      }}
-      onPointerCancel={(event) => {
-        if (drag.current?.pointerId !== event.pointerId) return;
-        const original = drag.current.original;
-        drag.current = null;
-        setPreview(null);
-        onPreviewRange(pad.id, percentFromFrame(original.start, length), percentFromFrame(original.end, length));
-      }}
-      onLostPointerCapture={(event) => {
-        if (drag.current?.pointerId !== event.pointerId) return;
-        const original = drag.current.original;
-        drag.current = null;
-        setPreview(null);
-        onPreviewRange(pad.id, percentFromFrame(original.start, length), percentFromFrame(original.end, length));
-      }}
+      onPointerUp={finishMarker}
+      onPointerCancel={(event) => cancelMarker(event.pointerId)}
+      onLostPointerCapture={(event) => cancelMarker(event.pointerId)}
       onKeyDown={(event) => {
         if (!length || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
         event.preventDefault();
@@ -177,10 +273,27 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
     </button>
   );
 
+  const sliceMarkerHandle = (frame: number, index: number) => (
+    <button
+      key={`slice-marker-${index}`}
+      type="button"
+      aria-label={`Slice marker ${index + 1}`}
+      disabled={!pad.buffer}
+      className="slice-handle slice-handle-intermediate"
+      style={{ left: `${(frame - viewStart) * 100 / viewLength}%`, touchAction: 'none' }}
+      onPointerDown={(event) => startMarkerDrag(event, 'slice', index + 1)}
+      onPointerMove={moveMarker}
+      onPointerUp={finishMarker}
+      onPointerCancel={(event) => cancelMarker(event.pointerId)}
+      onLostPointerCapture={(event) => cancelMarker(event.pointerId)}
+    />
+  );
+
   return (
     <div ref={containerRef} className="sampler-waveform relative h-24 bg-zinc-950 border border-zinc-700 overflow-hidden shrink-0">
       <div className="waveform-gesture-surface absolute inset-0 touch-none"
         onPointerDown={(event) => {
+          if (drag.current) return;
           event.preventDefault();
           event.currentTarget.setPointerCapture(event.pointerId);
           waveformPointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
@@ -258,6 +371,11 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
           </span>
         </div>
         {marker('start')}
+        {sliceMarkerFrames.map((frame, index) => {
+          const visible = frame >= viewStart && frame <= viewEnd;
+          const active = drag.current?.kind === 'slice' && drag.current.markerIndex === index + 1;
+          return visible || active ? sliceMarkerHandle(frame, index) : null;
+        })}
         {marker('end')}
         {zoom > 1.01 && <button type="button" className="wave-snap-view" aria-label="Snap trim to view" onClick={snapTrimToView}>
           SNAP VIEW
