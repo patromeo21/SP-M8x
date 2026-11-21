@@ -3,7 +3,7 @@ import { audioEngine } from '../audio/audioEngine';
 import { rmxStepIndex, type FxBus, type RmxLength } from '../fx/fxEngine';
 import { projectController } from '../project/projectController';
 import type { ConditionalTrig } from './stepTypes';
-import { GROOVE_PRESETS, type GroovePreset, isGroovePreset, writeGrooveSlots } from './groovePresets';
+import { getGrooveMetronomePulses, GROOVE_PRESETS, type GroovePreset, isGroovePreset, writeGrooveSlots } from './groovePresets';
 
 export { GROOVE_PRESETS, type GroovePreset };
 
@@ -308,9 +308,12 @@ export class TrackerEngine {
     const nearest = position.absoluteStep + (position.stepFraction >= 0.5 ? 1 : 0);
     const segment = this.segmentAt(nearest);
     if (!segment) return null;
+    const stepDuration = this.stepDuration(nearest);
+    const subTickDuration = stepDuration / SUBTICKS_PER_STEP;
+    const subTickOffset = Math.round((time - this.stepTime(nearest)) / subTickDuration);
     return {
       step: (nearest - segment.startStep) % segment.length,
-      subTickOffset: Math.max(-4, Math.min(4, Math.round((position.stepFraction - (nearest - position.absoluteStep)) * SUBTICKS_PER_STEP))),
+      subTickOffset: Math.max(-4, Math.min(4, subTickOffset)),
       patternIndex: segment.patternIndex,
     };
   }
@@ -430,6 +433,7 @@ export class TrackerEngine {
     const currentDuration = currentPosition ? this.stepDuration(currentPosition.absoluteStep) : this.stepDurations[0];
     const horizon = now + LOOKAHEAD_SECONDS + currentDuration / 2;
     this.scheduleCountIn(now, horizon);
+    const metronomePulses = this.metronomeEnabled ? getGrooveMetronomePulses(this.groovePreset) : [];
     if (currentPosition && this.nextStep < currentPosition.absoluteStep) this.nextStep = currentPosition.absoluteStep;
     while (this.stepTime(this.nextStep) < horizon) {
       const scheduledStep = this.nextStep;
@@ -480,8 +484,9 @@ export class TrackerEngine {
         }
         trackerBridge.scheduleStep(localStep % segment.length, stepTime, duration,
           rmx ? this.scheduledRmxScope : undefined, segment.patternIndex, boundary, TRACK_MASKS[trackMask]);
-        if (this.metronomeEnabled && scheduledStep % 4 === 0) {
-          audioEngine.scheduleMetronomeClick(stepTime, this.metronomeVolume, scheduledStep % BAR_STEPS === 0);
+        const metronomePulse = metronomePulses.find((pulse) => pulse.step === scheduledStep % BAR_STEPS);
+        if (metronomePulse) {
+          audioEngine.scheduleMetronomeClick(stepTime, this.metronomeVolume, metronomePulse.downbeat);
         }
       }
       this.nextStep++;

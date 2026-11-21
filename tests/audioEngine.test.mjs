@@ -13,6 +13,7 @@ class AudioParamMock {
   value = 0;
   events = [];
   setValueAtTime(value, time) { this.events.push(['set', value, time]); this.value = value; }
+  cancelScheduledValues(time) { this.events.push(['cancel', time]); }
   setTargetAtTime(value, time, constant) { this.events.push(['target', value, time, constant]); this.value = value; }
   cancelAndHoldAtTime(time) { this.events.push(['hold', time]); }
   linearRampToValueAtTime(value, time) { this.events.push(['linear', value, time]); this.value = value; }
@@ -32,6 +33,7 @@ class AudioContextMock {
   sampleRate = 44100;
   destination = new NodeMock();
   sources = [];
+  oscillators = [];
   gains = [];
   delays = [];
   filters = [];
@@ -56,7 +58,11 @@ class AudioContextMock {
     return node;
   }
   createWaveShaper() { return new NodeMock(); }
-  createOscillator() { return Object.assign(new NodeMock(), { frequency: new AudioParamMock(), start() {} }); }
+  createOscillator() {
+    const oscillator = Object.assign(new NodeMock(), { frequency: new AudioParamMock(), start() {} });
+    this.oscillators.push(oscillator);
+    return oscillator;
+  }
   createDynamicsCompressor() {
     return Object.assign(new NodeMock(), {
       threshold: new AudioParamMock(), knee: new AudioParamMock(), ratio: new AudioParamMock(),
@@ -101,6 +107,23 @@ test('preallocated voices reset FX without stopping dry audio and steal the olde
   assert.equal(context.delays.length, 37);
   assert.equal(context.filters.length, 37);
   const initialGains = context.gains.length;
+
+  const clickTime = context.currentTime + 1;
+  audioEngine.scheduleMetronomeClick(clickTime, 0.8, true);
+  assert.deepEqual(context.oscillators[0].frequency.events.at(-1), ['set', 1200, clickTime]);
+  assert.deepEqual(context.gains[1].gain.events.slice(-3), [
+    ['set', 0, clickTime],
+    ['set', 0.2, clickTime + 0.001],
+    ['linear', 0, clickTime + 0.02],
+  ]);
+  audioEngine.scheduleMetronomeClick(clickTime + 1, 0.4);
+  assert.deepEqual(context.oscillators[0].frequency.events.at(-1), ['set', 880, clickTime + 1]);
+  assert.equal(context.gains[1].gain.events.at(-2)[1], 0.1);
+  audioEngine.cancelMetronomeClicks();
+  assert.deepEqual(context.gains[1].gain.events.slice(-2), [
+    ['cancel', context.currentTime],
+    ['set', 0, context.currentTime],
+  ]);
 
   const bytes = new ArrayBuffer(8);
   await audioEngine.decodeAudioData(bytes);

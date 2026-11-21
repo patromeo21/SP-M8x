@@ -11,7 +11,8 @@ const grooveSource = ts.transpileModule(
 ).outputText;
 
 test('groove presets produce the expected slots without overwriting the target tail', async () => {
-  const { GROOVE_PRESETS, isGroovePreset, getGrooveSlots, writeGrooveSlots } = await import(moduleUrl(grooveSource));
+  const { GROOVE_PRESETS, isGroovePreset, getGrooveSlots, getGrooveMetronomePulses, writeGrooveSlots } =
+    await import(moduleUrl(grooveSource));
   const patterns = [[8, 8, 8, 8], [9, 7, 9, 7], [10, 6, 10, 6], [11, 5, 11, 5], [12, 4, 12, 4], [9, 9, 7, 7]];
   assert.equal(isGroovePreset('9-8'), false);
   for (const [index, preset] of GROOVE_PRESETS.entries()) {
@@ -21,11 +22,16 @@ test('groove presets produce the expected slots without overwriting the target t
     writeGrooveSlots(preset, target, 5);
     assert.deepEqual([...target], [...patterns[index], patterns[index][0], 99, 99, 99]);
     assert.deepEqual([...getGrooveSlots(preset, 3)], patterns[index].slice(0, 3));
+    assert.deepEqual(getGrooveMetronomePulses(preset), [
+      { step: 0, downbeat: true },
+      { step: 8, downbeat: false },
+    ]);
   }
 });
 
 test('lookahead schedules on the audio clock, records microtiming and cancels future notes', async () => {
   const calls = [];
+  const metronomeCalls = [];
   const context = { currentTime: 12.5, state: 'running' };
   let interval;
   let cancelled = 0;
@@ -37,6 +43,9 @@ test('lookahead schedules on the audio clock, records microtiming and cancels fu
   globalThis.trackerTestAudio = {
     initialize: () => Promise.resolve(context),
     getContext: () => context,
+    stopAllVoices() {},
+    scheduleMetronomeClick: (...args) => metronomeCalls.push(args),
+    cancelMetronomeClicks() {},
   };
   globalThis.trackerTestBridge = {
     scheduleStep: (...args) => calls.push(args),
@@ -92,12 +101,14 @@ test('lookahead schedules on the audio clock, records microtiming and cancels fu
     const tracker = new TrackerEngine(120);
     const steps = [];
     const patterns = [];
+    tracker.setMetronome(true);
     tracker.setCallbacks((step) => steps.push(step), () => {}, (index) => patterns.push(index));
     await tracker.start();
     assert.equal(interval.delay, 25);
     assert.deepEqual(calls.map(([step]) => step), [0]);
     assert.ok(Math.abs(calls[0][1] - 12.58) < 1e-8);
     assert.equal(calls[0][2], 0.125);
+    assert.deepEqual(metronomeCalls, [[12.58, 0.15, true]]);
     assert.equal(tracker.recordPosition(12.55), null);
     assert.deepEqual(tracker.recordPosition(12.58 + 0.125 * 0.7), { step: 1, subTickOffset: -2, patternIndex: 0 });
     context.currentTime = 12.56;
@@ -135,6 +146,20 @@ test('lookahead schedules on the audio clock, records microtiming and cancels fu
     assert.equal(interval, undefined);
     assert.equal(cancelled, 1);
     assert.equal(tracker.recordPosition(20), null);
+
+    const grooveTracker = new TrackerEngine(120);
+    await grooveTracker.start();
+    grooveTracker.setGroovePreset('9-7');
+    const longStepDuration = 9 * 60 / 120 / 128;
+    assert.deepEqual(
+      grooveTracker.recordPosition(grooveTracker.startTime + longStepDuration * 0.7),
+      { step: 1, subTickOffset: -3, patternIndex: 0 },
+    );
+    grooveTracker.setMetronome(true);
+    context.currentTime = grooveTracker.startTime + 0.2;
+    grooveTracker.tick();
+    assert.deepEqual(metronomeCalls.at(-1), [grooveTracker.startTime + 0.25, 0.15, false]);
+    grooveTracker.stop();
 
     globalThis.trackerTestAudio.initialize = () => new Promise((resolve) => { resolveStart = resolve; });
     const pending = tracker.start();

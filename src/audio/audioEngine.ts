@@ -145,8 +145,8 @@ class AudioEngine {
     const clickTime = Math.max(context.currentTime, time);
     oscillator.frequency.setValueAtTime(downbeat ? 1200 : 880, clickTime);
     gain.gain.setValueAtTime(0, clickTime);
-    gain.gain.setValueAtTime(clamp(volume, 0, 1), clickTime + 0.001);
-    gain.gain.linearRampToValueAtTime(0, clickTime + 0.045);
+    gain.gain.setValueAtTime(clamp(volume, 0, 1) * 0.25, clickTime + 0.001);
+    gain.gain.linearRampToValueAtTime(0, clickTime + 0.02);
   }
 
   public cancelMetronomeClicks(): void {
