@@ -286,6 +286,17 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, delayedSteps,
               <option value="">HOLD</option>
               {Array.from({ length: 49 }, (_, i) => i - 24).map((value) => <option key={value} value={value}>{value > 0 ? `+${value}` : value}</option>)}
             </select>
+            <label className="flex items-center gap-1" aria-label={`Table volume subtick ${index + 1}`}>
+              <input aria-label={`Table volume subtick ${index + 1}`} type="range" min="0" max="127" step="1"
+                value={step.volume ?? 127}
+                onChange={(event) => projectController.updateTableStep(table.id, index, {
+                  volume: Number(event.target.value),
+                }, trackIndex)} />
+              <button type="button" aria-label={`Set table volume subtick ${index + 1} to hold`}
+                onClick={() => projectController.updateTableStep(table.id, index, { volume: null }, trackIndex)}>
+                {step.volume ?? 'H'}
+              </button>
+            </label>
             <div className="table-fx-cell relative">
               <select aria-label={`Table FX subtick ${index + 1}`} className={`${fieldClass} w-full`}
                 value={step.reset ? 'OFF' : step.fx ?? 'OFF'} onChange={(event) => {
@@ -317,17 +328,6 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, delayedSteps,
                 </div>
               )}
             </div>
-            <label className="flex items-center gap-1" aria-label={`Table volume subtick ${index + 1}`}>
-              <input aria-label={`Table volume subtick ${index + 1}`} type="range" min="0" max="127" step="1"
-                value={step.volume ?? 127}
-                onChange={(event) => projectController.updateTableStep(table.id, index, {
-                  volume: Number(event.target.value),
-                }, trackIndex)} />
-              <button type="button" aria-label={`Set table volume subtick ${index + 1} to hold`}
-                onClick={() => projectController.updateTableStep(table.id, index, { volume: null }, trackIndex)}>
-                {step.volume ?? 'H'}
-              </button>
-            </label>
             <div className="table-microtiming-control" aria-label={`Table microtiming subtick ${index + 1}`}>
               <button type="button" aria-label={`Move subtick ${index + 1} earlier`}
                 onClick={() => projectController.updateTableStep(table.id, index, {
