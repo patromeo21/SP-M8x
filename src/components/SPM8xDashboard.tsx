@@ -4,42 +4,22 @@ import { usePadBank, useEngineStatus } from '../sampler/usePadBank';
 import { useInputRecorder } from '../sampler/useInputRecorder';
 import { audioEngine } from '../audio/audioEngine';
 import { MasterOutput } from '../audio/MasterOutput';
-import { GROOVE_PRESETS, trackerEngine } from '../tracker/trackerEngine';
+import { trackerEngine } from '../tracker/trackerEngine';
 import { trackerBridge } from '../tracker/trackerBridge';
-import { projectController, type Pattern } from '../project/projectController';
+import { projectController } from '../project/projectController';
 import { PhraseTableEditor, type EditorProps } from '../tracker/PhraseTableEditor';
 import { SongArrangementView } from '../tracker/SongArrangementView';
 import { chromaticNote } from '../sampler/chromatic';
 import { instrumentIdToPadId, padIdToInstrumentId } from '../sampler/padIds';
-import { rangeFromPercent } from '../sampler/sampleRange';
-import { sliceRange } from '../sampler/gridSlices';
 import { exportSp8Bundle, importSp8Bundle } from '../project/sp8Bundle';
 import { readStoredAudio } from '../sampler/padStorage';
 import type { StoredPad } from '../sampler/padStorage';
-import { createRecordedStepEvent } from '../project/stepModel';
 
 export type WorkspaceTab = 'phrase' | 'table' | 'song' | 'mixer' | 'sampler';
 
 export interface SPM8xDashboardProps {
   initialTab?: WorkspaceTab;
   activeStep?: number;
-}
-
-function collectPatternPadIds(pattern: Pattern): string[] {
-  const padIds = new Set<string>();
-  for (const track of pattern.tracks) {
-    for (let stepIndex = 0; stepIndex < pattern.length; stepIndex++) {
-      const step = track.steps[stepIndex];
-      if (!step) continue;
-      const primaryPadId = instrumentIdToPadId(step.instrumentId);
-      if (primaryPadId) padIds.add(primaryPadId);
-      for (const event of step.events ?? []) {
-        const eventPadId = instrumentIdToPadId(event.instrumentId ?? event.padId);
-        if (eventPadId) padIds.add(eventPadId);
-      }
-    }
-  }
-  return [...padIds];
 }
 
 export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'phrase', activeStep = -1 }) => {
@@ -68,15 +48,8 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
   const engineStatus = useEngineStatus();
   const [audioError, setAudioError] = useState(false);
   const [playing, setPlaying] = useState(false);
-  const [paused, setPaused] = useState(false);
   const [starting, setStarting] = useState(false);
   const [armed, setArmed] = useState(false);
-  const [transportCursorVisible, setTransportCursorVisible] = useState(false);
-  const [countInEnabled, setCountInEnabled] = useState(false);
-  const [metronomeEnabled, setMetronomeEnabled] = useState(false);
-  const [metronomeVolume, setMetronomeVolume] = useState(0.15);
-  const [groovePreset, setGroovePreset] = useState(trackerEngine.getGroovePreset());
-  const [subtick, setSubtick] = useState(0);
   const [fillActive, setFillActive] = useState(false);
   const [playhead, setPlayhead] = useState(-1);
   const [transportMessage, setTransportMessage] = useState('');
@@ -87,8 +60,6 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
   const bundleInputRef = useRef<HTMLInputElement>(null);
   const startGeneration = useRef(0);
   const queueGeneration = useRef(0);
-  const tapTempoRef = useRef<{ times: Float64Array; count: number; next: number } | null>(null);
-  if (tapTempoRef.current === null) tapTempoRef.current = { times: new Float64Array(8), count: 0, next: 0 };
   const recordingRef = useRef(false);
   recordingRef.current = armed && playing;
   const stopTransport = useCallback(() => {
@@ -99,21 +70,10 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
     padBank.stopGatedVoices();
     setStarting(false);
     setPlaying(false);
-    setPaused(false);
-    setPlayhead(0);
-    setSubtick(0);
-    setTransportCursorVisible(true);
+    setPlayhead(-1);
     setFillActive(false);
     trackerEngine.setFillActive(false);
   }, [padBank.stopGatedVoices]);
-
-  const pauseTransport = useCallback(() => {
-    if (!playing) return;
-    trackerEngine.pause();
-    setPlaying(false);
-    setPaused(true);
-    padBank.stopGatedVoices();
-  }, [padBank.stopGatedVoices, playing]);
 
   const handleUndo = useCallback(() => {
     projectController.undo();
@@ -208,15 +168,12 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
       queueGeneration.current++;
       setQueuedPatternIndex(null);
       setPlaying(false);
-      setPaused(false);
-      setPlayhead(0);
-      setSubtick(0);
-      setTransportCursorVisible(true);
+      setPlayhead(-1);
       if (reason) setTransportMessage(reason);
     }, (index) => {
       projectController.setActivePattern(index);
       setQueuedPatternIndex((queued) => queued === index ? null : queued);
-    }, (_step, nextSubtick) => setSubtick(nextSubtick));
+    });
     const unsubscribe = projectController.subscribe(() => refreshProject((value) => value + 1));
     const unsubscribeOverload = audioEngine.subscribeOverload(setTransportMessage);
     return () => {
@@ -228,39 +185,27 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
     };
   }, [padBank.getPadSettings]);
 
-  const startTransport = useCallback(() => {
-    if (starting) {
-      startGeneration.current++;
-      trackerEngine.stop();
-      setStarting(false);
-      setPlaying(false);
-      setPaused(false);
-      setPlayhead(0);
-      setSubtick(0);
-      setTransportCursorVisible(true);
+  const toggleTransport = useCallback(() => {
+    if (playing || starting) {
+      stopTransport();
       return;
     }
-    if (playing) return;
     const generation = ++startGeneration.current;
     setStarting(true);
-    setTransportCursorVisible(true);
     setTransportMessage('');
     void (async () => {
       try {
-        if (paused) {
-          await trackerEngine.resume();
-        } else {
-          await audioEngine.initialize();
-          const state = projectController.getState();
-          const pattern = state.tracker.patterns[state.settings.activePatternIndex];
-          if (!pattern) throw new Error('Active phrase is unavailable.');
-          await padBank.preparePads(collectPatternPadIds(pattern));
-          if (generation !== startGeneration.current) return;
-          await trackerEngine.start(state.settings.bpm, armed && countInEnabled);
-        }
+        await audioEngine.initialize();
+        const state = projectController.getState();
+        const pattern = state.tracker.patterns[state.settings.activePatternIndex];
+        if (!pattern) throw new Error('Active phrase is unavailable.');
+        const ids = pattern.tracks.flatMap((track) => track.steps.slice(0, pattern.length).map((step) => instrumentIdToPadId(step.instrumentId)))
+          .filter((id): id is string => id !== null);
+        await padBank.preparePads(ids);
+        if (generation !== startGeneration.current) return;
+        await trackerEngine.start(state.settings.bpm);
         if (generation !== startGeneration.current) return;
         setPlaying(true);
-        setPaused(false);
       } catch (error) {
         if (generation !== startGeneration.current) return;
         console.error('[SP-M8x] Could not start transport:', error);
@@ -269,40 +214,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
         if (generation === startGeneration.current) setStarting(false);
       }
     })();
-  }, [armed, countInEnabled, padBank.preparePads, paused, playing, starting]);
-
-  const handleBpmChange = useCallback((bpm: number) => {
-    if (!Number.isFinite(bpm) || bpm < 40 || bpm > 300) return;
-    projectController.setBpm(bpm);
-    trackerEngine.setBpm(bpm);
-  }, []);
-
-  const handleTapTempo = useCallback(() => {
-    const ring = tapTempoRef.current;
-    if (!ring) return;
-    const now = performance.now();
-    ring.times[ring.next] = now;
-    ring.next = (ring.next + 1) % ring.times.length;
-    ring.count = Math.min(ring.count + 1, ring.times.length);
-    if (ring.count < 2) return;
-    let intervalTotal = 0;
-    const intervalCount = ring.count - 1;
-    const oldest = (ring.next - ring.count + ring.times.length) % ring.times.length;
-    for (let index = 0; index < intervalCount; index++) {
-      const current = (oldest + index) % ring.times.length;
-      const next = (current + 1) % ring.times.length;
-      intervalTotal += ring.times[next] - ring.times[current];
-    }
-    const averageInterval = intervalTotal / intervalCount;
-    if (averageInterval < 200 || averageInterval > 1500) return;
-    handleBpmChange(Math.round(60000 / averageInterval * 10) / 10);
-  }, [handleBpmChange]);
-
-  const handleMetronomeChange = useCallback((enabled: boolean, volume = metronomeVolume) => {
-    setMetronomeEnabled(enabled);
-    setMetronomeVolume(volume);
-    trackerEngine.setMetronome(enabled, volume);
-  }, [metronomeVolume]);
+  }, [padBank.preparePads, playing, starting, stopTransport]);
 
   const selectPattern = useCallback((index: number) => {
     const request = ++queueGeneration.current;
@@ -320,7 +232,8 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
     trackerEngine.queuePattern(null);
     setQueuedPatternIndex(index);
     setTransportMessage('PREPARING QUEUED PHRASE');
-    const ids = collectPatternPadIds(pattern);
+    const ids = pattern.tracks.flatMap((track) => track.steps.slice(0, pattern.length).map((step) => instrumentIdToPadId(step.instrumentId)))
+      .filter((id): id is string => id !== null);
     void padBank.preparePads(ids).then(() => {
       if (request !== queueGeneration.current) return;
       const queued = trackerEngine.queuePattern(index);
@@ -344,40 +257,18 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
       if (!recordingRef.current) return;
       const position = trackerEngine.recordPosition(captureTime ?? time);
       if (!position) return;
+      const state = projectController.getState();
       const instrumentId = padIdToInstrumentId(padId);
       if (instrumentId === null) return;
-      const padSettings = padBank.getPadSettings(padId);
-      const buffer = padSettings?.buffer;
-      if (!padSettings || !buffer) {
-        setTransportMessage(`Pad ${padId} is unavailable — hit not recorded.`);
+      const track = projectController.recordHit(position.patternIndex, position.step,
+        state.sampler.pads[padId]?.targetTrack ?? 0, {
+          note: chromaticNote(semitoneOffset), instrumentId, subTickOffset: position.subTickOffset, velocity: 127,
+          ...(sliceIndex === undefined ? {} : { sliceIndex }),
+        });
+      if (track === null) {
+        setTransportMessage(`Step ${position.step + 1} full — hit not recorded.`);
         return;
       }
-      const resolvedSlice = sliceIndex === undefined ? undefined : Math.min(sliceIndex, padSettings.sliceMarkers.length - 1);
-      const range = resolvedSlice === undefined
-        ? rangeFromPercent(padSettings.startPct, padSettings.endPct, buffer.length)
-        : sliceRange(padSettings.sliceMarkers, resolvedSlice, buffer.length);
-      if (!range) {
-        setTransportMessage(`Pad ${padId} has no valid slice — hit not recorded.`);
-        return;
-      }
-      const recordedEvent = createRecordedStepEvent({
-        note: chromaticNote(semitoneOffset),
-        instrumentId,
-        padId: instrumentId,
-        velocity: 127,
-        subTickOffset: position.subTickOffset,
-        playMode: padSettings.playbackMode,
-        sliceStartFrame: range.start,
-        sliceEndFrame: playThrough && resolvedSlice !== undefined ? buffer.length : range.end,
-        isReversed: false,
-      });
-      const track = projectController.recordLiveHit(position.patternIndex, position.step, {
-        note: recordedEvent.note,
-        instrumentId,
-        subTickOffset: position.subTickOffset,
-        velocity: recordedEvent.velocity,
-        ...(sliceIndex === undefined ? {} : { sliceIndex }),
-      }, recordedEvent);
       setTransportMessage('');
       if (gated) captured = { patternIndex: position.patternIndex, track, instrumentId, generation: startGeneration.current };
       return track;
@@ -408,8 +299,6 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
     </main>;
   }
 
-  const visibleStep = playing || paused || transportCursorVisible ? playhead : activeStep;
-
   return (
     <div className="app-shell flex flex-col w-full bg-[var(--bg-shell-deep)] text-[var(--text-primary)] font-mono overflow-hidden select-none">
       <header className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 bg-[var(--bg-canvas)] border-b border-[var(--border-grid)] shrink-0">
@@ -439,22 +328,16 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
       <main className={`workspace-main ${currentTab === 'table' ? 'workspace-main-table' : ''} flex-1 flex overflow-hidden p-3 gap-3 bg-[var(--bg-shell-deep)]`}>
         {currentTab === 'phrase'
           ? <div className="phrase-workspace">
-              <PhraseTableEditor slots={padBank.slots} activeStep={visibleStep}
-                activeSubtick={subtick} transportPlaying={playing} transportPaused={paused}
-                transportBusy={playing || starting} mode="phrase" queuedPatternIndex={queuedPatternIndex}
-                onSelectPattern={selectPattern} linkedPad={linkedPad} contextLock={contextLock} onToggleContextLock={toggleContextLock} />
+              <PhraseTableEditor slots={padBank.slots} activeStep={playing ? playhead : activeStep} transportBusy={playing || starting} mode="phrase" queuedPatternIndex={queuedPatternIndex} onSelectPattern={selectPattern} linkedPad={linkedPad} contextLock={contextLock} onToggleContextLock={toggleContextLock} />
               <SamplerWorkspace padBank={padBank} recorder={recorder} triggerPad={triggerPad} compact />
             </div>
           : currentTab === 'table'
-            ? <PhraseTableEditor slots={padBank.slots} activeStep={visibleStep}
-                activeSubtick={subtick} transportPlaying={playing} transportPaused={paused}
-                transportBusy={playing || starting} mode="table" queuedPatternIndex={queuedPatternIndex}
-                onSelectPattern={selectPattern} linkedPad={linkedPad} contextLock={contextLock} onToggleContextLock={toggleContextLock} />
+            ? <PhraseTableEditor slots={padBank.slots} activeStep={playing ? playhead : activeStep} transportBusy={playing || starting} mode="table" queuedPatternIndex={queuedPatternIndex} onSelectPattern={selectPattern} linkedPad={linkedPad} contextLock={contextLock} onToggleContextLock={toggleContextLock} />
           : currentTab === 'sampler'
             ? <SamplerWorkspace padBank={padBank} recorder={recorder} triggerPad={triggerPad} />
             : <section className="workspace-secondary flex-1 p-4 bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl">
                 <h2 className="text-sm text-cyan-300 uppercase">{currentTab}</h2>
-                {currentTab === 'song' ? <SongArrangementView isPlaying={playing} currentStep={visibleStep} /> :
+                {currentTab === 'song' ? <SongArrangementView isPlaying={playing} currentStep={playing ? playhead : activeStep} /> :
                   <div className="mixer-tracks flex gap-4 mt-4">
                     {(projectController.getState().settings.trackVolumes ?? Array.from({ length: 8 }, () => 1)).map((volume, index) =>
                       <label key={index} className="flex flex-col gap-2 text-xs">TRACK {index + 1}
@@ -469,9 +352,9 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
                   </div>}
               </section>}
       </main>
-      <footer className="flex items-center justify-between px-4 py-2 bg-[var(--bg-canvas)] border-t border-[var(--border-grid)] text-[10px] text-zinc-400 shrink-0">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <span className="flex items-center space-x-1.5">
+      <footer className="spm8x-footer flex items-center justify-between px-4 py-2 bg-[var(--bg-canvas)] border-t border-[var(--border-grid)] text-[10px] text-zinc-400 shrink-0">
+        <div className="spm8x-footer-row flex items-center space-x-4">
+          <span className="flex items-center space-x-1.5 shrink-0">
             <span className={`w-2 h-2 rounded-full ${engineStatus.state === 'running' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
             {engineStatus.state === 'running' ? <span className="text-zinc-300 font-bold">ENGINE READY</span> :
               engineStatus.state === 'closed' ? <span role="alert" className="text-rose-300 font-bold">AUDIO CLOSED — RELOAD</span> :
@@ -483,19 +366,9 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
                 });
               }}>{audioError ? 'AUDIO BLOCKED — TAP TO RETRY' : engineStatus.state === 'idle' ? 'TAP TO START AUDIO' : 'AUDIO PAUSED — TAP TO RESUME'}</button>}
           </span>
-          <span>VOICES: <strong className="text-zinc-200">{engineStatus.voices}</strong></span>
-          <button type="button" aria-pressed={playing || paused} onClick={startTransport} className="transport-control text-cyan-300">
-            {starting ? 'CANCEL' : paused ? 'RESUME' : playing ? 'PLAYING' : 'PLAY'}
-          </button>
-          <button type="button" aria-pressed={paused} disabled={!playing} onClick={pauseTransport}
-            className="transport-control text-amber-300">PAUSE</button>
-          <button type="button" onClick={stopTransport} className="transport-control text-rose-300">STOP</button>
-          <button type="button" aria-pressed={armed} onClick={() => setArmed(!armed)} className={`transport-control ${armed ? 'text-rose-300' : 'text-zinc-400'}`}>{armed ? 'PHRASE REC ARMED' : 'PHRASE REC'}</button>
-          <label className="flex items-center gap-1">
-            <input aria-label="One bar count-in" type="checkbox" checked={countInEnabled}
-              onChange={(event) => setCountInEnabled(event.target.checked)} />
-            COUNT IN
-          </label>
+          <span className="shrink-0">VOICES: <strong className="text-zinc-200">{engineStatus.voices}</strong></span>
+          <button type="button" aria-pressed={playing} onClick={toggleTransport} className="transport-control text-cyan-300 shrink-0">{starting ? 'CANCEL' : playing ? 'STOP' : 'PLAY'}</button>
+          <button type="button" aria-pressed={armed} onClick={() => setArmed(!armed)} className={`transport-control shrink-0 ${armed ? 'text-rose-300' : 'text-zinc-400'}`}>{armed ? 'PHRASE REC ARMED' : 'PHRASE REC'}</button>
           <button type="button" aria-pressed={fillActive} onPointerDown={() => {
             setFillActive(true);
             trackerEngine.setFillActive(true);
@@ -508,43 +381,12 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
           }} onBlur={() => {
             setFillActive(false);
             trackerEngine.setFillActive(false);
-          }} className={`transport-control ${fillActive ? 'text-amber-300' : 'text-zinc-500'}`}>FILL</button>
-          <label className="flex items-center gap-1">BPM
-            <input aria-label="Tempo BPM" type="number" min="40" max="300" step="0.1"
-              value={projectController.getState().settings.bpm}
-              onChange={(event) => handleBpmChange(Number(event.target.value))}
-              className="w-16 bg-zinc-950 border border-zinc-700 text-zinc-100" />
-            <input aria-label="Tempo BPM slider" type="range" min="40" max="300" step="0.1"
-              value={projectController.getState().settings.bpm}
-              onChange={(event) => handleBpmChange(Number(event.target.value))} />
-          </label>
-          <button type="button" className="transport-control" onClick={handleTapTempo}>TAP TEMPO</button>
-          <label className="flex items-center gap-1">
-            <input aria-label="Metronome" type="checkbox" checked={metronomeEnabled}
-              onChange={(event) => handleMetronomeChange(event.target.checked)} />
-            CLICK
-          </label>
-          <label className="flex items-center gap-1">LEVEL
-            <input aria-label="Metronome level" type="range" min="0" max="1" step="0.01"
-              value={metronomeVolume}
-              onChange={(event) => handleMetronomeChange(metronomeEnabled, Number(event.target.value))} />
-          </label>
-          <label className="flex items-center gap-1">GROOVE
-            <select aria-label="Groove preset" value={groovePreset} className="bg-zinc-950 border border-zinc-700 text-zinc-100"
-              onChange={(event) => {
-                const preset = GROOVE_PRESETS.find((item) => item === event.target.value);
-                if (!preset) return;
-                setGroovePreset(preset);
-                trackerEngine.setGroovePreset(preset);
-              }}>
-              {GROOVE_PRESETS.map((preset) => <option key={preset} value={preset}>{preset}</option>)}
-            </select>
-          </label>
-          <span role="status">STEP {Math.max(0, playhead % 16).toString(16).toUpperCase().padStart(2, '0')} · SUB {subtick}</span>
+          }} className={`transport-control shrink-0 ${fillActive ? 'text-amber-300' : 'text-zinc-500'}`}>FILL</button>
+          <span className="shrink-0">BPM: <strong className="text-zinc-200">{projectController.getState().settings.bpm.toFixed(1)}</strong></span>
           <MasterOutput savedLocally={padBank.storageReady && !padBank.storageError && !projectController.hasSaveError() && !['SAVING', 'DELETING'].includes(padBank.storageStatus)} />
-          {padBank.storageError && <span role="alert" className="text-rose-400">{padBank.storageStatus}</span>}
-          {projectController.hasSaveError() && <span role="alert" className="text-rose-400">PHRASE SAVE FAILED</span>}
-          {transportMessage && <span role="alert" className="text-rose-400">{transportMessage}</span>}
+          {padBank.storageError && <span role="alert" className="spm8x-transport-alert text-rose-400" title={padBank.storageStatus}>{padBank.storageStatus}</span>}
+          {projectController.hasSaveError() && <span role="alert" className="spm8x-transport-alert text-rose-400" title="PHRASE SAVE FAILED">PHRASE SAVE FAILED</span>}
+          {transportMessage && <span role="alert" className="spm8x-transport-alert text-rose-400" title={transportMessage}>{transportMessage}</span>}
           <span className="sr-only" aria-live="polite">Project revision {projectRevision}</span>
         </div>
       </footer>
