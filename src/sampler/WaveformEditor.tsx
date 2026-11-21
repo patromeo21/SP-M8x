@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { audioEngine } from '../audio/audioEngine';
-import { ADSR_BOUNDS, DEFAULT_HARDWARE_ADSR, normalizeAdsrEnvelope, type AdsrEnvelope } from '../types';
-import { projectController } from '../project/projectController';
+import { ADSR_BOUNDS, normalizeAdsrEnvelope, type AdsrEnvelope } from '../types';
 import { percentFromFrame, rangeFromPercent, type SampleRange } from './sampleRange';
 import { intermediateMarkerFrameAtPointer, markerRangeAtPointer } from './waveformGesture';
 import type { PadBankApi, PadSlot, PadSlotPatch } from './usePadBank';
@@ -22,6 +21,13 @@ type MarkerDrag = {
 };
 
 type SliceMarkerPatch = PadSlotPatch & Pick<PadSlot, 'sliceMarkers'>;
+type AdsrPadSlot = PadSlot & { adsr?: AdsrEnvelope };
+type AdsrPadSlotPatch = PadSlotPatch & { adsr: AdsrEnvelope };
+
+function getPadAdsr(pad: PadSlot): AdsrEnvelope {
+  const adsrPad: AdsrPadSlot = pad;
+  return normalizeAdsrEnvelope(adsrPad.adsr);
+}
 
 const ADSR_CONTROLS: readonly {
   key: keyof AdsrEnvelope;
@@ -84,9 +90,7 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
   const [playheadNorm, setPlayheadNorm] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [position, setPosition] = useState(0);
-  const [adsr, setAdsr] = useState<AdsrEnvelope>(() =>
-    normalizeAdsrEnvelope(projectController.getState().sampler.pads[pad.id]?.adsr ?? DEFAULT_HARDWARE_ADSR),
-  );
+  const [adsr, setAdsr] = useState<AdsrEnvelope>(() => getPadAdsr(pad));
   const length = pad.buffer?.length ?? 0;
   const viewLength = Math.max(1, Math.ceil(length / zoom));
   const viewStart = Math.max(0, Math.min(length - viewLength, Math.round(position * length)));
@@ -117,13 +121,16 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
     [sliceMarkerFrames, length]);
 
   useEffect(() => {
-    setAdsr(normalizeAdsrEnvelope(projectController.getState().sampler.pads[pad.id]?.adsr ?? DEFAULT_HARDWARE_ADSR));
-  }, [pad.id]);
+    setAdsr(getPadAdsr(pad));
+    audioEngine.setPadAdsr(pad.id, getPadAdsr(pad));
+  }, [pad]);
 
   const changeAdsr = (key: keyof AdsrEnvelope, value: number, parse: (value: number) => number) => {
     const next = normalizeAdsrEnvelope({ ...adsr, [key]: parse(value) });
     setAdsr(next);
-    projectController.updatePadMetadata(pad.id, { adsr: next });
+    const patch: AdsrPadSlotPatch = { adsr: next };
+    onUpdatePad(pad.id, patch);
+    audioEngine.setPadAdsr(pad.id, next);
   };
 
   useEffect(() => {

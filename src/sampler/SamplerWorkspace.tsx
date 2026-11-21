@@ -3,7 +3,7 @@
  * SamplerWorkspace.tsx — Sampler view with workbench above the pad bank
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { BANKS, type PadBankApi } from './usePadBank';
 import { PadBankManager } from './PadBankManager';
 import { SamplerWorkbench } from './SamplerWorkbench';
@@ -26,10 +26,6 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({ padBank, rec
   const project = projectController.getState();
   const selectedPad = project.sampler.pads[padBank.selectedPadId];
   const trackVolume = project.settings.trackVolumes?.[selectedPad.targetTrack] ?? 1;
-  useEffect(() => {
-    audioEngine.setPadAdsrProvider((padId) => projectController.getState().sampler.pads[padId]?.adsr);
-    return () => audioEngine.setPadAdsrProvider(null);
-  }, []);
   const renderWaveform = useCallback((props: Omit<AudioWaveformCanvasProps, 'audioBuffer'>) => (
     <AudioWaveformCanvas audioBuffer={padBank.selectedPad.buffer} {...props} />
   ), [padBank.selectedPad.buffer]);

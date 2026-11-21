@@ -92,7 +92,7 @@ class AudioEngine {
   private macroBuses: Record<FxBus, MacroFxBus> | null = null;
   private slotOwners = new Map<VoiceFxSlot, string>();
   private trackVolumes = Array.from({ length: 8 }, () => 1);
-  private padAdsrProvider: ((padId: string) => Partial<AdsrEnvelope> | null | undefined) | null = null;
+  private padEnvelopes = new Map<string, AdsrEnvelope>();
 
   /** Lazily create the one app AudioContext and request resume after user interaction. */
   public async initialize(): Promise<AudioContext> {
@@ -164,10 +164,12 @@ class AudioEngine {
     return this.ctx;
   }
 
-  public setPadAdsrProvider(
-    provider: ((padId: string) => Partial<AdsrEnvelope> | null | undefined) | null,
-  ): void {
-    this.padAdsrProvider = provider;
+  public getPadAdsr(padId: string | number): AdsrEnvelope {
+    return this.padEnvelopes.get(normalizePadKey(padId)) ?? { ...DEFAULT_HARDWARE_ADSR };
+  }
+
+  public setPadAdsr(padId: string | number, envelope: Partial<AdsrEnvelope> | null): void {
+    this.padEnvelopes.set(normalizePadKey(padId), normalizeAdsrEnvelope(envelope));
   }
 
   public scheduleMetronomeClick(time: number, volume: number, downbeat = false): void {
@@ -365,7 +367,7 @@ class AudioEngine {
         return null;
       }
       targetGainTime = Math.max(targetGainTime, context.currentTime + 0.006);
-      this.stopVoiceAt(oldest.id, targetGainTime - 0.006, 0.006);
+      this.stopVoiceAt(oldest.id, targetGainTime - 0.006, 0.006, false, false);
       slot = oldest.candidate;
     }
     this.fxPool.prepare(slot, targetGainTime, normalizePadKey(padId));
@@ -391,9 +393,7 @@ class AudioEngine {
 
     const voiceGain = slot.voiceGain;
     const volume = clamp(options.volume ?? 1, 0, 1);
-    const adsr = normalizeAdsrEnvelope(
-      options.adsr ?? this.padAdsrProvider?.(normalizePadKey(padId)) ?? DEFAULT_HARDWARE_ADSR,
-    );
+    const adsr = normalizeAdsrEnvelope(options.adsr ?? this.getPadAdsr(padId));
     const gainChanges = [{ time: targetGainTime, gain: volume }];
     if (options.envelope) {
       validateAHDSR(options.envelope);
@@ -487,20 +487,28 @@ class AudioEngine {
     }
   }
 
-  public stopVoiceAt(voiceId: string, time: number, fadeSeconds = 0.01, exponential = false): void {
+  public stopVoiceAt(
+    voiceId: string,
+    time: number,
+    fadeSeconds = 0.01,
+    exponential = false,
+    useAdsrRelease = true,
+  ): void {
     const voice = this.activeVoices.get(voiceId);
     const context = this.ctx;
     if (!voice || !context) return;
     const stopTime = Math.max(context.currentTime, time);
     if (voice.stopTime !== undefined && voice.stopTime <= stopTime) return;
     if (voice.slot.generationId !== voice.generationId) return;
-    const fade = voice.adsr
-      ? clamp(voice.adsr.releaseMs / 1000, 0.001, 5)
-      : voice.envelope
-      ? clamp(Math.max(voice.envelope.releaseTime, fadeSeconds), 0.005, 2)
-      : clamp(fadeSeconds, 0.001, 0.05);
+    const fade = !useAdsrRelease
+      ? clamp(fadeSeconds, 0.001, 0.05)
+      : voice.adsr
+        ? clamp(voice.adsr.releaseMs / 1000, 0.001, 5)
+        : voice.envelope
+          ? clamp(Math.max(voice.envelope.releaseTime, fadeSeconds), 0.005, 2)
+          : clamp(fadeSeconds, 0.001, 0.05);
     holdAudioParam(voice.gainNode.gain, stopTime);
-    if (voice.adsr) {
+    if (voice.adsr || !useAdsrRelease) {
       voice.gainNode.gain.linearRampToValueAtTime(0, stopTime + fade);
     } else if (exponential) {
       if (voice.gainNode.gain.value <= 0) voice.gainNode.gain.setValueAtTime(0.0001, stopTime);
