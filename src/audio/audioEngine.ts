@@ -9,6 +9,7 @@ import { PerformanceDeck, type PerformanceFx } from '../fx/PerformanceDeck';
 import { MacroFxBus, type FxBus, type MacroFx } from '../fx/fxEngine';
 import { makeSafetyClampCurve, makeTapeSaturationCurve } from '../fx/dspMath';
 import { scheduleAHDSR, validateAHDSR, type AHDSRParams } from './ahdsr';
+import { DEFAULT_HARDWARE_ADSR, normalizeAdsrEnvelope, type AdsrEnvelope } from '../types';
 
 declare global {
   interface Window {
@@ -35,6 +36,7 @@ export interface ActiveVoice {
   gated: boolean;
   chokeGroup: number | null;
   envelope?: AHDSRParams;
+  adsr?: AdsrEnvelope;
 }
 
 export interface VoiceModulation {
@@ -47,6 +49,30 @@ export interface VoiceModulation {
 const normalizePadKey = (padId: string | number): string => String(padId);
 const clamp = (value: number, min: number, max: number): number =>
   Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : min;
+
+function scheduleAdsr(
+  gain: AudioParam,
+  startTime: number,
+  peakGain: number,
+  envelope: AdsrEnvelope,
+): void {
+  const attackEnd = startTime + envelope.attackMs / 1000;
+  const decayEnd = attackEnd + envelope.decayMs / 1000;
+  const sustainGain = peakGain * envelope.sustain;
+  gain.cancelScheduledValues(startTime);
+
+  if (envelope.attackMs === 0) {
+    gain.setValueAtTime(peakGain, startTime);
+  } else {
+    gain.setValueAtTime(0, startTime);
+    gain.linearRampToValueAtTime(peakGain, attackEnd);
+  }
+  if (sustainGain === peakGain) {
+    gain.setValueAtTime(sustainGain, decayEnd);
+  } else {
+    gain.linearRampToValueAtTime(sustainGain, decayEnd);
+  }
+}
 
 class AudioEngine {
   private ctx: AudioContext | null = null;
@@ -66,6 +92,7 @@ class AudioEngine {
   private macroBuses: Record<FxBus, MacroFxBus> | null = null;
   private slotOwners = new Map<VoiceFxSlot, string>();
   private trackVolumes = Array.from({ length: 8 }, () => 1);
+  private padAdsrProvider: ((padId: string) => Partial<AdsrEnvelope> | null | undefined) | null = null;
 
   /** Lazily create the one app AudioContext and request resume after user interaction. */
   public async initialize(): Promise<AudioContext> {
@@ -135,6 +162,12 @@ class AudioEngine {
 
   public getContext(): AudioContext | null {
     return this.ctx;
+  }
+
+  public setPadAdsrProvider(
+    provider: ((padId: string) => Partial<AdsrEnvelope> | null | undefined) | null,
+  ): void {
+    this.padAdsrProvider = provider;
   }
 
   public scheduleMetronomeClick(time: number, volume: number, downbeat = false): void {
@@ -279,6 +312,7 @@ class AudioEngine {
       chokeGroup?: number | null;
       chokeTrackRange?: { firstTrack: number; lastTrack: number };
       envelope?: AHDSRParams;
+      adsr?: Partial<AdsrEnvelope> | null;
     } = {},
   ): string | null {
     const context = this.ctx;
@@ -357,12 +391,15 @@ class AudioEngine {
 
     const voiceGain = slot.voiceGain;
     const volume = clamp(options.volume ?? 1, 0, 1);
+    const adsr = normalizeAdsrEnvelope(
+      options.adsr ?? this.padAdsrProvider?.(normalizePadKey(padId)) ?? DEFAULT_HARDWARE_ADSR,
+    );
     const gainChanges = [{ time: targetGainTime, gain: volume }];
     if (options.envelope) {
       validateAHDSR(options.envelope);
       scheduleAHDSR(voiceGain.gain, targetGainTime, volume, options.envelope);
     } else {
-      voiceGain.gain.setValueAtTime(volume, targetGainTime);
+      scheduleAdsr(voiceGain.gain, targetGainTime, volume, adsr);
     }
     const rateChanges: { time: number; rate: number }[] = [];
     if (options.fx) this.fxPool.applyTableOpcode(slot, options.fx, targetGainTime);
@@ -403,6 +440,9 @@ class AudioEngine {
     if (voiceId && options.envelope) {
       const voice = this.activeVoices.get(voiceId);
       if (voice) voice.envelope = options.envelope;
+    } else if (voiceId) {
+      const voice = this.activeVoices.get(voiceId);
+      if (voice) voice.adsr = adsr;
     }
     return voiceId;
   }
@@ -454,11 +494,15 @@ class AudioEngine {
     const stopTime = Math.max(context.currentTime, time);
     if (voice.stopTime !== undefined && voice.stopTime <= stopTime) return;
     if (voice.slot.generationId !== voice.generationId) return;
-    const fade = voice.envelope
+    const fade = voice.adsr
+      ? clamp(voice.adsr.releaseMs / 1000, 0.001, 5)
+      : voice.envelope
       ? clamp(Math.max(voice.envelope.releaseTime, fadeSeconds), 0.005, 2)
       : clamp(fadeSeconds, 0.001, 0.05);
     holdAudioParam(voice.gainNode.gain, stopTime);
-    if (exponential) {
+    if (voice.adsr) {
+      voice.gainNode.gain.linearRampToValueAtTime(0, stopTime + fade);
+    } else if (exponential) {
       if (voice.gainNode.gain.value <= 0) voice.gainNode.gain.setValueAtTime(0.0001, stopTime);
       voice.gainNode.gain.exponentialRampToValueAtTime(0.0001, stopTime + fade);
     } else {
@@ -650,19 +694,33 @@ class AudioEngine {
     try {
       if (this.ctx) {
         const now = this.ctx.currentTime;
-        voice.stopTime = now;
-        this.notifyVoiceChanges();
         if (voice.startTime > now) {
+          voice.stopTime = now;
+          this.notifyVoiceChanges();
           voice.source.stop(now);
           return;
         }
         if (voice.slot.generationId !== voice.generationId) {
+          voice.stopTime = now;
+          this.notifyVoiceChanges();
           voice.source.stop(now);
           return;
         }
+        const fade = voice.adsr
+          ? clamp(voice.adsr.releaseMs / 1000, 0.001, 5)
+          : voice.envelope
+            ? clamp(Math.max(voice.envelope.releaseTime, 0.01), 0.005, 2)
+            : 0.01;
+        voice.stopTime = now;
+        this.notifyVoiceChanges();
         holdAudioParam(voice.gainNode.gain, now);
-        voice.gainNode.gain.linearRampToValueAtTime(0.0001, now + 0.01);
-        voice.source.stop(now + 0.01);
+        if (voice.adsr) {
+          voice.gainNode.gain.linearRampToValueAtTime(0, now + fade);
+        } else {
+          voice.gainNode.gain.linearRampToValueAtTime(0.0001, now + fade);
+        }
+        voice.source.stop(now + fade);
+        return;
       } else {
         voice.source.stop();
       }

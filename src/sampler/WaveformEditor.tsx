@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { audioEngine } from '../audio/audioEngine';
+import { ADSR_BOUNDS, DEFAULT_HARDWARE_ADSR, normalizeAdsrEnvelope, type AdsrEnvelope } from '../types';
+import { projectController } from '../project/projectController';
 import { percentFromFrame, rangeFromPercent, type SampleRange } from './sampleRange';
 import { intermediateMarkerFrameAtPointer, markerRangeAtPointer } from './waveformGesture';
 import type { PadBankApi, PadSlot, PadSlotPatch } from './usePadBank';
@@ -20,6 +22,44 @@ type MarkerDrag = {
 };
 
 type SliceMarkerPatch = PadSlotPatch & Pick<PadSlot, 'sliceMarkers'>;
+
+const ADSR_CONTROLS: readonly {
+  key: keyof AdsrEnvelope;
+  label: 'A' | 'D' | 'S' | 'R';
+  title: string;
+  min: number;
+  max: number;
+  step: number;
+  value: (envelope: AdsrEnvelope) => number;
+  display: (envelope: AdsrEnvelope) => string;
+  parse: (value: number) => number;
+}[] = [
+  {
+    key: 'attackMs', label: 'A', title: 'Attack (ms) — 0ms keeps raw transient',
+    min: ADSR_BOUNDS.minAttackMs, max: ADSR_BOUNDS.maxAttackMs, step: 1,
+    value: (envelope) => envelope.attackMs, display: (envelope) => `${Math.round(envelope.attackMs)}ms`,
+    parse: (value) => value,
+  },
+  {
+    key: 'decayMs', label: 'D', title: 'Decay (ms) to sustain',
+    min: ADSR_BOUNDS.minDecayMs, max: ADSR_BOUNDS.maxDecayMs, step: 5,
+    value: (envelope) => envelope.decayMs, display: (envelope) => `${Math.round(envelope.decayMs)}ms`,
+    parse: (value) => value,
+  },
+  {
+    key: 'sustain', label: 'S', title: 'Sustain level (%)',
+    min: 0, max: 100, step: 1,
+    value: (envelope) => Math.round(envelope.sustain * 100),
+    display: (envelope) => `${Math.round(envelope.sustain * 100)}%`,
+    parse: (value) => value / 100,
+  },
+  {
+    key: 'releaseMs', label: 'R', title: 'Release (ms) on gate/stop',
+    min: ADSR_BOUNDS.minReleaseMs, max: ADSR_BOUNDS.maxReleaseMs, step: 1,
+    value: (envelope) => envelope.releaseMs, display: (envelope) => `${Math.round(envelope.releaseMs)}ms`,
+    parse: (value) => value,
+  },
+];
 
 interface Props {
   pad: PadSlot;
@@ -44,6 +84,9 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
   const [playheadNorm, setPlayheadNorm] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [position, setPosition] = useState(0);
+  const [adsr, setAdsr] = useState<AdsrEnvelope>(() =>
+    normalizeAdsrEnvelope(projectController.getState().sampler.pads[pad.id]?.adsr ?? DEFAULT_HARDWARE_ADSR),
+  );
   const length = pad.buffer?.length ?? 0;
   const viewLength = Math.max(1, Math.ceil(length / zoom));
   const viewStart = Math.max(0, Math.min(length - viewLength, Math.round(position * length)));
@@ -72,6 +115,16 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
   }, [sliceCount, range.start, range.end, pad.sliceMarkers, sliceMarkerFrames, sliceMarkerPreview]);
   const sliceMarkerNorms = useMemo(() => length ? sliceMarkerFrames.map((frame) => frame / length) : [],
     [sliceMarkerFrames, length]);
+
+  useEffect(() => {
+    setAdsr(normalizeAdsrEnvelope(projectController.getState().sampler.pads[pad.id]?.adsr ?? DEFAULT_HARDWARE_ADSR));
+  }, [pad.id]);
+
+  const changeAdsr = (key: keyof AdsrEnvelope, value: number, parse: (value: number) => number) => {
+    const next = normalizeAdsrEnvelope({ ...adsr, [key]: parse(value) });
+    setAdsr(next);
+    projectController.updatePadMetadata(pad.id, { adsr: next });
+  };
 
   useEffect(() => {
     if (drag.current?.frame !== null && drag.current?.frame !== undefined) cancelAnimationFrame(drag.current.frame);
@@ -290,6 +343,7 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
   );
 
   return (
+    <>
     <div ref={containerRef} className="sampler-waveform relative h-24 bg-zinc-950 border border-zinc-700 overflow-hidden shrink-0">
       <div className="waveform-gesture-surface absolute inset-0 touch-none"
         onPointerDown={(event) => {
@@ -394,6 +448,38 @@ export const WaveformEditor: React.FC<Props> = ({ pad, onUpdatePad, onPreviewRan
       </>}
       {error && <span role="alert" className="wave-error">{error}</span>}
     </div>
+    <div
+      className="waveform-adsr"
+      role="group"
+      aria-label="Hardware ADSR Envelope"
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+        gap: '6px',
+        alignItems: 'center',
+        flex: '0 0 auto',
+      }}
+    >
+      {ADSR_CONTROLS.map((control) => (
+        <label key={control.key} title={control.title} style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+          <span style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', fontWeight: 600, lineHeight: 1.1 }}>
+            <span>{control.label}</span>
+            <span>{control.display(adsr)}</span>
+          </span>
+          <input
+            type="range"
+            aria-label={`ADSR ${control.title}`}
+            min={control.min}
+            max={control.max}
+            step={control.step}
+            value={control.value(adsr)}
+            onChange={(event) => changeAdsr(control.key, Number(event.target.value), control.parse)}
+            style={{ width: '100%', minHeight: '32px', margin: 0, touchAction: 'pan-x' }}
+          />
+        </label>
+      ))}
+    </div>
+    </>
   );
 };
 
