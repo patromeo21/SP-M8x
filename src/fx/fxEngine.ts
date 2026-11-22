@@ -57,6 +57,16 @@ export class MacroFxBus {
     for (const param of [this.dry.gain, this.filterWet.gain, this.lofiWet.gain, this.chorusWet.gain, this.filter.frequency]) {
       holdAudioParam(param, now);
     }
+
+    if (effect === 'mute') {
+      this.filter.frequency.setTargetAtTime(20000, now, 0.02);
+      this.dry.gain.setTargetAtTime(0, now, 0.002);
+      this.filterWet.gain.setTargetAtTime(0, now, 0.002);
+      this.lofiWet.gain.setTargetAtTime(0, now, 0.002);
+      this.chorusWet.gain.setTargetAtTime(0, now, 0.002);
+      return;
+    }
+
     this.filter.frequency.setTargetAtTime(effect === 'filter' ? 350 : 20000, now, effect === 'filter' ? 0.3 : 0.1);
     this.dry.gain.setTargetAtTime(effect === 'off' ? 1 : effect === 'chorus' ? 0.65 : 0, now, 0.002);
     this.filterWet.gain.setTargetAtTime(effect === 'filter' ? 1 : 0, now, 0.002);
