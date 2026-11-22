@@ -259,6 +259,11 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
     setPitchSlidePopup(null);
   }, [page]);
 
+  const setSlideValue = (subtickIndex: number, rawSemitones: number) => {
+    const next = Math.max(-24, Math.min(24, Math.round(rawSemitones)));
+    projectController.updateTableStep(table.id, subtickIndex, { fx: 'PS', fxValue: next }, trackIndex);
+  };
+
   return (
     <div className="table-grid-scroll table-sequencer-list flex-1 min-h-0" aria-label="Vertical table ticks">
       <div className="table-page-controls">
@@ -277,6 +282,10 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
         const index = page * 16 + row;
         const current = (playing || paused) && index === currentTick;
         const isGrooveSubAccent = playing && current && groovePreset !== '8-8' && activeStep >= 0 && Boolean(delayedSteps[activeStep % 16]);
+        const activeFx = step.reset ? 'OFF' : step.fx ?? 'OFF';
+        const slideValue = step.fxValue ?? 0;
+        const formattedSlide = `${slideValue > 0 ? '+' : ''}${slideValue}`;
+        const rampRatio = slideValue / 24;
         return (
           <div className={`table-row table-sequencer-grid ${current ? 'is-playing' : ''} ${playing && current && activeStep >= 0 && delayedSteps[activeStep % 16] ? 'is-groove-pulse' : ''} ${isGrooveSubAccent ? 'is-groove-subaccent border-rose-500/80 bg-rose-950/20' : ''}`}
             key={index} data-subtick={index + 1}>
@@ -301,9 +310,9 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
                 {step.volume ?? 'H'}
               </button>
             </label>
-            <div className="table-fx-cell relative">
-              <select aria-label={`Table FX subtick ${index + 1}`} className={`${fieldClass} w-full`}
-                value={step.reset ? 'OFF' : step.fx ?? 'OFF'} onChange={(event) => {
+            <div className="table-fx-cell relative flex items-center gap-1">
+              <select aria-label={`Table FX subtick ${index + 1}`} className={`${fieldClass} flex-1 min-w-0`}
+                value={activeFx} onChange={(event) => {
                   const fx = event.target.value as 'FL' | 'DL' | 'DR' | 'PS' | 'OFF';
                   projectController.updateTableStep(table.id, index, {
                     reset: false,
@@ -314,25 +323,50 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
                 }}>
                 <option value="OFF">OFF</option><option value="FL">FL</option><option value="DR">DR</option><option value="DL">DL</option><option value="PS">PS</option>
               </select>
-              {step.fx === 'PS' && step.reset !== true && (
-                <button type="button" className="table-pitch-slide-button" aria-label={`Edit pitch slide subtick ${index + 1}`}
-                  aria-expanded={pitchSlidePopup === index} onClick={() => setPitchSlidePopup((open) => open === index ? null : index)}>
-                  {(step.fxValue ?? 0) > 0 ? '+' : ''}{step.fxValue ?? 0}
+              {activeFx === 'PS' && (
+                <button type="button" className="table-pitch-slide-button px-1.5 py-0.5 border border-cyan-500/70 bg-cyan-950/60 text-cyan-200 text-[10px] shrink-0"
+                  aria-label={`Edit pitch slide subtick ${index + 1}`}
+                  aria-expanded={pitchSlidePopup === index}
+                  onClick={() => setPitchSlidePopup((open) => open === index ? null : index)}>
+                  PS {formattedSlide}
                 </button>
               )}
-              {pitchSlidePopup === index && step.fx === 'PS' && (
+              {pitchSlidePopup === index && activeFx === 'PS' && (
                 <div
-                  className={`table-pitch-slide-popup z-30 ${row >= 10 ? 'bottom-full mb-1 top-auto' : 'top-full mt-1'}`}
+                  className={`table-pitch-slide-popup z-30 flex flex-col gap-1.5 p-2 rounded border border-cyan-500/70 bg-zinc-950/95 shadow-lg min-w-[180px] ${row >= 10 ? 'bottom-full mb-1 top-auto' : 'top-full mt-1'}`}
                   role="dialog"
                   aria-label={`Pitch slide subtick ${index + 1}`}
                 >
-                  <button type="button" aria-label="Close pitch slide scrubber" onClick={() => setPitchSlidePopup(null)}>×</button>
+                  <div className="flex items-center justify-between gap-2 text-[10px]">
+                    <span className="text-cyan-300 font-bold">PS RAMP</span>
+                    <button type="button" className="px-1 border border-zinc-700 text-zinc-300"
+                      aria-label="Close pitch slide scrubber" onClick={() => setPitchSlidePopup(null)}>×</button>
+                  </div>
+                  <div className="h-4 w-full rounded bg-zinc-900 border border-zinc-800 px-1.5 flex items-center" aria-hidden="true">
+                    <svg viewBox="0 0 100 16" className="w-full h-3 overflow-visible">
+                      <line x1="0" y1="8" x2="100" y2="8" stroke="currentColor" className="text-zinc-700" strokeDasharray="2 2" />
+                      <line
+                        x1="0"
+                        y1="8"
+                        x2="100"
+                        y2={Math.max(1, Math.min(15, 8 - rampRatio * 7))}
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        className="text-cyan-300"
+                      />
+                    </svg>
+                  </div>
                   <input aria-label={`Pitch slide semitones subtick ${index + 1}`} type="range" min="-24" max="24" step="1"
-                    value={step.fxValue ?? 0} onChange={(event) => {
-                      const next = Math.max(-24, Math.min(24, Math.round(Number(event.target.value))));
-                      projectController.updateTableStep(table.id, index, { fx: 'PS', fxValue: next }, trackIndex);
-                    }} />
-                  <output>{(step.fxValue ?? 0) > 0 ? '+' : ''}{step.fxValue ?? 0} ST</output>
+                    value={slideValue} onChange={(event) => setSlideValue(index, Number(event.target.value))} />
+                  <div className="flex items-center justify-between gap-1 text-[10px]">
+                    <button type="button" className="px-1.5 py-0.5 border border-zinc-700 text-zinc-200"
+                      onClick={() => setSlideValue(index, slideValue - 1)}>-1</button>
+                    <button type="button" className="px-1.5 py-0.5 border border-zinc-700 text-zinc-200"
+                      onClick={() => setSlideValue(index, 0)}>0</button>
+                    <button type="button" className="px-1.5 py-0.5 border border-zinc-700 text-zinc-200"
+                      onClick={() => setSlideValue(index, slideValue + 1)}>+1</button>
+                    <output className="text-cyan-200 font-bold">{formattedSlide} ST</output>
+                  </div>
                 </div>
               )}
             </div>
