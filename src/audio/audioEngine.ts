@@ -304,7 +304,7 @@ class AudioEngine {
       semitoneOffset?: number;
       loop?: boolean;
       reverse?: boolean;
-      scheduledTime?: number; // Added to support lookahead sample-accurate scheduling
+      scheduledTime?: number;
       modulation?: VoiceModulation[];
       fx?: VoiceFxCommand;
       trackIndex?: number;
@@ -410,16 +410,26 @@ class AudioEngine {
       if (change.fx) this.fxPool.applyTableOpcode(slot, change.fx, time);
       if (change.fx?.code === 'PS') {
         const slideSemitones = clamp(change.fx.value ?? 0, -24, 24);
-        const slideRate = Math.pow(2, clamp(semitones + (change.semitoneOffset ?? 0) + slideSemitones, -48, 48) / 12);
-        source.playbackRate.setValueAtTime(slideRate, time);
+        const startSemitone = clamp(semitones + (change.semitoneOffset ?? 0), -48, 48);
+        const startRate = Math.pow(2, startSemitone / 12);
+        const slideRate = Math.pow(2, clamp(startSemitone + slideSemitones, -48, 48) / 12);
+        source.playbackRate.setValueAtTime(startRate, time);
+        rateChanges.push({ time, rate: startRate });
         const nextChange = modulation[index + 1];
         if (nextChange && Number.isFinite(nextChange.offset) && nextChange.offset > change.offset) {
-          const nextSlideSemitones = nextChange.fx?.code === 'PS'
-            ? clamp(nextChange.fx.value ?? 0, -24, 24) : 0;
-          const nextRate = Math.pow(2, clamp(semitones + (nextChange.semitoneOffset ?? 0) + nextSlideSemitones, -48, 48) / 12);
-          source.playbackRate.linearRampToValueAtTime(nextRate, targetGainTime + nextChange.offset);
+          const nextTime = targetGainTime + nextChange.offset;
+          source.playbackRate.linearRampToValueAtTime(slideRate, nextTime);
+          rateChanges.push({ time: nextTime, rate: slideRate });
+        } else {
+          const fallbackEndTime = Math.min(targetGainTime + duration, time + 0.125);
+          if (fallbackEndTime > time) {
+            source.playbackRate.linearRampToValueAtTime(slideRate, fallbackEndTime);
+            rateChanges.push({ time: fallbackEndTime, rate: slideRate });
+          } else {
+            source.playbackRate.setValueAtTime(slideRate, time);
+            rateChanges.push({ time, rate: slideRate });
+          }
         }
-        rateChanges.push({ time, rate: slideRate });
       }
       if (change.fx?.code !== 'PS' && change.semitoneOffset !== undefined && Number.isFinite(change.semitoneOffset)) {
         const rate = Math.pow(2, clamp(semitones + change.semitoneOffset, -48, 48) / 12);
@@ -432,7 +442,7 @@ class AudioEngine {
         gainChanges.push({ time, gain });
       }
     }
-    
+
     source.connect(voiceGain);
     const voiceId = this.startVoice(
       source,
@@ -770,7 +780,6 @@ class AudioEngine {
   }
 }
 
-
 /**
  * Master lookahead brickwall limiter stage for the final output bus.
  * Threshold -0.5 dBFS, hard knee, ratio 20:1, 3ms attack, 50ms release.
@@ -798,5 +807,6 @@ export function createSafetySaturationNode(audioCtx: BaseAudioContext): WaveShap
   shaper.oversample = '4x';
   return shaper;
 }
+
 export const audioEngine = new AudioEngine();
 export default audioEngine;

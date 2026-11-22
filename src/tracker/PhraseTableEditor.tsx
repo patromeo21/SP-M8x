@@ -321,7 +321,11 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
                 </button>
               )}
               {pitchSlidePopup === index && step.fx === 'PS' && (
-                <div className="table-pitch-slide-popup" role="dialog" aria-label={`Pitch slide subtick ${index + 1}`}>
+                <div
+                  className={`table-pitch-slide-popup z-30 ${row >= 10 ? 'bottom-full mb-1 top-auto' : 'top-full mt-1'}`}
+                  role="dialog"
+                  aria-label={`Pitch slide subtick ${index + 1}`}
+                >
                   <button type="button" aria-label="Close pitch slide scrubber" onClick={() => setPitchSlidePopup(null)}>×</button>
                   <input aria-label={`Pitch slide semitones subtick ${index + 1}`} type="range" min="-24" max="24" step="1"
                     value={step.fxValue ?? 0} onChange={(event) => {
