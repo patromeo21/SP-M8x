@@ -25,6 +25,13 @@ export interface SPM8xDashboardProps {
   activeStep?: number;
 }
 
+const MIN_BPM = 40;
+const MAX_BPM = 300;
+
+function clampBpm(value: number): number {
+  return Math.max(MIN_BPM, Math.min(MAX_BPM, Math.round(value * 10) / 10));
+}
+
 function collectPatternPadIds(pattern: Pattern): string[] {
   const padIds = new Set<string>();
   for (const track of pattern.tracks) {
@@ -84,6 +91,9 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
   const [projectRevision, refreshProject] = useState(0);
   const [bundleStatus, setBundleStatus] = useState('');
   const [bundleBusy, setBundleBusy] = useState(false);
+  const bpmInputRef = useRef<HTMLInputElement>(null);
+  const currentBpm = projectController.getState().settings.bpm;
+  const [bpmDraft, setBpmDraft] = useState(() => String(currentBpm));
   const bundleInputRef = useRef<HTMLInputElement>(null);
   const startGeneration = useRef(0);
   const queueGeneration = useRef(0);
@@ -91,6 +101,13 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
   if (tapTempoRef.current === null) tapTempoRef.current = { times: new Float64Array(8), count: 0, next: 0 };
   const recordingRef = useRef(false);
   recordingRef.current = armed && playing;
+
+  useEffect(() => {
+    if (document.activeElement !== bpmInputRef.current) {
+      setBpmDraft(String(currentBpm));
+    }
+  }, [currentBpm]);
+
   const stopTransport = useCallback(() => {
     startGeneration.current++;
     queueGeneration.current++;
@@ -272,10 +289,27 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
   }, [armed, countInEnabled, padBank.preparePads, paused, playing, starting]);
 
   const handleBpmChange = useCallback((bpm: number) => {
-    if (!Number.isFinite(bpm) || bpm < 40 || bpm > 300) return;
-    projectController.setBpm(bpm);
-    trackerEngine.setBpm(bpm);
+    if (!Number.isFinite(bpm)) return;
+    const clamped = clampBpm(bpm);
+    projectController.setBpm(clamped);
+    trackerEngine.setBpm(clamped);
+    setBpmDraft(String(clamped));
   }, []);
+
+  const commitBpmDraft = useCallback(() => {
+    const trimmed = bpmDraft.trim();
+    const parsed = Number(trimmed);
+    if (!trimmed || !Number.isFinite(parsed)) {
+      setBpmDraft(String(projectController.getState().settings.bpm));
+      return;
+    }
+    handleBpmChange(parsed);
+  }, [bpmDraft, handleBpmChange]);
+
+  const stepBpm = useCallback((delta: number) => {
+    const base = projectController.getState().settings.bpm;
+    handleBpmChange(base + delta);
+  }, [handleBpmChange]);
 
   const handleTapTempo = useCallback(() => {
     const ring = tapTempoRef.current;
@@ -509,15 +543,29 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
             setFillActive(false);
             trackerEngine.setFillActive(false);
           }} className={`transport-control ${fillActive ? 'text-amber-300' : 'text-zinc-500'}`}>FILL</button>
-          <label className="flex items-center gap-1">BPM
-            <input aria-label="Tempo BPM" type="number" min="40" max="300" step="0.1"
-              value={projectController.getState().settings.bpm}
-              onChange={(event) => handleBpmChange(Number(event.target.value))}
-              className="w-16 bg-zinc-950 border border-zinc-700 text-zinc-100" />
-            <input aria-label="Tempo BPM slider" type="range" min="40" max="300" step="0.1"
-              value={projectController.getState().settings.bpm}
+          <div className="flex items-center gap-1">
+            <label className="flex items-center gap-1">BPM
+              <input ref={bpmInputRef} aria-label="Tempo BPM" type="number" min={MIN_BPM} max={MAX_BPM} step="0.1"
+                value={bpmDraft}
+                onChange={(event) => setBpmDraft(event.target.value)}
+                onBlur={commitBpmDraft}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    commitBpmDraft();
+                    event.currentTarget.blur();
+                  }
+                }}
+                className="w-16 bg-zinc-950 border border-zinc-700 text-zinc-100 px-1" />
+            </label>
+            <button type="button" aria-label="Decrease BPM" onClick={() => stepBpm(-1)}
+              className="transport-control px-2">-</button>
+            <button type="button" aria-label="Increase BPM" onClick={() => stepBpm(1)}
+              className="transport-control px-2">+</button>
+            <input aria-label="Tempo BPM slider" type="range" min={MIN_BPM} max={MAX_BPM} step="0.1"
+              value={currentBpm}
               onChange={(event) => handleBpmChange(Number(event.target.value))} />
-          </label>
+          </div>
           <button type="button" className="transport-control" onClick={handleTapTempo}>TAP TEMPO</button>
           <label className="flex items-center gap-1">
             <input aria-label="Metronome" type="checkbox" checked={metronomeEnabled}

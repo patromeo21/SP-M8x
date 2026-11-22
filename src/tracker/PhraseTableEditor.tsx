@@ -87,20 +87,20 @@ export function PhraseTableEditor({
       </div>
       {mode === 'phrase'
         ? <PhraseRows key={`${pattern.id}-${trackIndex}-${pattern.length}`} pattern={pattern} patternIndex={patternIndex}
-            trackIndex={trackIndex} slots={slots} activeStep={activeStep}
+            trackIndex={trackIndex} slots={slots} activeStep={activeStep} groovePreset={groovePreset}
             playing={transportPlaying} delayedSteps={delayedSteps} transportBusy={transportBusy} contextLock={contextLock} />
         : table
           ? <TableRows key={`${table.id}-${trackIndex}`} table={table} trackIndex={trackIndex}
-              activeStep={activeStep} activeSubtick={activeSubtick} delayedSteps={delayedSteps}
+              activeStep={activeStep} activeSubtick={activeSubtick} groovePreset={groovePreset} delayedSteps={delayedSteps}
               paused={transportPaused} playing={transportPlaying} />
           : <p className="text-zinc-400">Create a reusable table, then assign it to a phrase step.</p>}
     </section>
   );
 }
 
-function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, playing, delayedSteps, transportBusy, contextLock }: {
+function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, groovePreset, playing, delayedSteps, transportBusy, contextLock }: {
   pattern: Pattern; patternIndex: number; trackIndex: number; slots: Record<string, PadSlot>; activeStep: number;
-  playing: boolean; delayedSteps: boolean[]; transportBusy: boolean; contextLock: boolean;
+  groovePreset: GroovePreset; playing: boolean; delayedSteps: boolean[]; transportBusy: boolean; contextLock: boolean;
 }) {
   const [page, setPage] = useState(0);
   const [euclideanOpen, setEuclideanOpen] = useState(false);
@@ -139,13 +139,15 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, play
         const padId = instrumentIdToPadId(step.instrumentId);
         const active = padId !== null && step.note !== '---' && step.note !== 'OFF';
         const occupied = Boolean(step.instrumentId !== null || (step.note && step.note !== '---'));
+        const isCurrent = activeStep === index;
+        const isGrooveSubAccent = playing && isCurrent && groovePreset !== '8-8' && Boolean(delayedSteps[index % 16]);
         return (
-          <div className={`phrase-row phrase-sequencer-grid ${activeStep === index ? 'is-playing' : ''} ${playing && activeStep === index && delayedSteps[index % 16] ? 'is-groove-pulse' : ''}`}
+          <div className={`phrase-row phrase-sequencer-grid ${isCurrent ? 'is-playing' : ''} ${playing && isCurrent && delayedSteps[index % 16] ? 'is-groove-pulse' : ''} ${isGrooveSubAccent ? 'is-groove-subaccent border-rose-500/80 bg-rose-950/20' : ''}`}
             key={index} data-step={index + 1}>
             <button type="button" aria-label={`Phrase step ${index + 1}`} aria-pressed={active}
               disabled={contextLock || (transportBusy && !occupied)}
               onClick={() => toggleStep(index)}
-              className={`phrase-step-toggle ${active ? 'is-active' : ''}`}>
+              className={`phrase-step-toggle ${active ? 'is-active' : ''} ${isGrooveSubAccent ? 'text-rose-300 border-rose-500' : ''}`}>
               {stepNumber(index)}
             </button>
             <select aria-label={`Phrase note step ${index + 1}`} className={fieldClass} value={step.note || '---'}
@@ -240,8 +242,9 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, play
   );
 }
 
-function TableRows({ table, trackIndex, activeStep, activeSubtick, delayedSteps, paused, playing }: {
-  table: TrackerTable; trackIndex: number; activeStep: number; activeSubtick: number; delayedSteps: boolean[]; paused: boolean; playing: boolean;
+function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset, delayedSteps, paused, playing }: {
+  table: TrackerTable; trackIndex: number; activeStep: number; activeSubtick: number; groovePreset: GroovePreset;
+  delayedSteps: boolean[]; paused: boolean; playing: boolean;
 }) {
   const [page, setPage] = useState(0);
   const [pitchSlidePopup, setPitchSlidePopup] = useState<number | null>(null);
@@ -273,10 +276,11 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, delayedSteps,
       {table.steps.slice(page * 16, page * 16 + 16).map((step, row) => {
         const index = page * 16 + row;
         const current = (playing || paused) && index === currentTick;
+        const isGrooveSubAccent = playing && current && groovePreset !== '8-8' && activeStep >= 0 && Boolean(delayedSteps[activeStep % 16]);
         return (
-          <div className={`table-row table-sequencer-grid ${current ? 'is-playing' : ''} ${playing && current && delayedSteps[activeStep % 16] ? 'is-groove-pulse' : ''}`}
+          <div className={`table-row table-sequencer-grid ${current ? 'is-playing' : ''} ${playing && current && activeStep >= 0 && delayedSteps[activeStep % 16] ? 'is-groove-pulse' : ''} ${isGrooveSubAccent ? 'is-groove-subaccent border-rose-500/80 bg-rose-950/20' : ''}`}
             key={index} data-subtick={index + 1}>
-            <span className="table-step-address" aria-label={`Table subtick ${index + 1}`}>
+            <span className={`table-step-address ${isGrooveSubAccent ? 'text-rose-300 border-rose-500' : ''}`} aria-label={`Table subtick ${index + 1}`}>
               {String(index + 1).padStart(3, '0')}
             </span>
             <select aria-label={`Table pitch subtick ${index + 1}`} className={fieldClass}

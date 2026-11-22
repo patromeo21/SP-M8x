@@ -6,6 +6,7 @@ const BAR_STEPS = 16;
 export interface GrooveMetronomePulse {
   step: number;
   downbeat: boolean;
+  subAccent?: boolean;
 }
 
 export function isGroovePreset(value: string): value is GroovePreset {
@@ -53,13 +54,30 @@ export function getGrooveDelayedSteps(preset: GroovePreset): boolean[] {
   });
 }
 
+export function getGrooveSwungSteps(preset: GroovePreset, barSteps = BAR_STEPS): boolean[] {
+  if (preset === '8-8') {
+    return Array.from({ length: barSteps }, () => false);
+  }
+  const delayed = getGrooveDelayedSteps(preset);
+  return Array.from({ length: barSteps }, (_, step) => Boolean(delayed[step % BAR_STEPS]));
+}
+
 export function getGrooveMetronomePulses(preset: GroovePreset, barSteps = BAR_STEPS): GrooveMetronomePulse[] {
   if (barSteps <= 0) return [];
   const slots = getGrooveSlots(preset, barSteps);
+  const swungSteps = getGrooveSwungSteps(preset, barSteps);
   const pulses: GrooveMetronomePulse[] = [];
   let elapsed = 0;
   for (let step = 0; step < barSteps; step++) {
-    if (elapsed % 32 === 0) pulses.push({ step, downbeat: elapsed % 128 === 0 });
+    const isBeatPulse = elapsed % 32 === 0;
+    const isSwungSubPulse = preset !== '8-8' && swungSteps[step];
+    if (isBeatPulse || isSwungSubPulse) {
+      pulses.push({
+        step,
+        downbeat: elapsed % 128 === 0,
+        subAccent: !isBeatPulse && isSwungSubPulse,
+      });
+    }
     elapsed += slots[step];
   }
   return pulses;
