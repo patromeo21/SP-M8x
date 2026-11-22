@@ -425,13 +425,8 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
       if (time === undefined) return;
       const position = trackerEngine.recordPosition(time);
       if (!position) return;
-      if (position.patternIndex !== captured.patternIndex) {
-        setTransportMessage('Gate crossed a phrase boundary — release not recorded.');
-        return;
-      }
-      if (!projectController.recordRelease(captured.patternIndex, position.step, captured.track, captured.instrumentId, position.subTickOffset)) {
-        setTransportMessage(`Step ${position.step + 1} occupied — gate release not recorded.`);
-      }
+      if (position.patternIndex !== captured.patternIndex) return;
+      projectController.recordRelease(captured.patternIndex, position.step, captured.track, captured.instrumentId, position.subTickOffset);
     };
   }, [padBank.triggerPad, padBank.getPadSettings]);
 
