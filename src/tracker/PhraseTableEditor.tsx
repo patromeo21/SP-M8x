@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { projectController, type Pattern, type PhraseLength, type TrackerTable } from '../project/projectController';
 import type { PadSlot } from '../sampler/usePadBank';
 import { getGrooveDelayedSteps, type GroovePreset } from './groovePresets';
@@ -10,6 +10,7 @@ const buttonClass = 'border border-zinc-700 px-2 py-1 text-zinc-300';
 const notes = ['C-', 'C#', 'D-', 'D#', 'E-', 'F-', 'F#', 'G-', 'G#', 'A-', 'A#', 'B-'];
 const noteName = (midi: number) => `${notes[midi % 12]}${Math.floor(midi / 12) - 1}`;
 const stepNumber = (stepIndex: number) => String(stepIndex + 1).padStart(2, '0');
+const QUICK_SPANS = [2, 4, 8, 16, 32, 64] as const;
 
 export interface EditorProps {
   slots: Record<string, PadSlot>;
@@ -45,7 +46,7 @@ export function PhraseTableEditor({
   if (!pattern) return <p role="alert">Active phrase is unavailable.</p>;
 
   return (
-    <section className={`${mode === 'phrase' ? 'phrase-panel' : 'table-panel'} relative flex-1 min-h-0 flex flex-col gap-2 p-3 bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl font-mono text-xs`}>
+    <section className={`${mode === 'phrase' ? 'phrase-panel' : 'table-panel'} relative flex-1 min-h-0 flex flex-col gap-2 p-3 bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl font-mono text-xs overflow-visible`}>
       <div className="phrase-toolbar flex items-center gap-2">
         <label className="control-block">TRK <select aria-label="Phrase track" className={fieldClass} value={trackIndex}
           onChange={(event) => projectController.setSelectedTrackIndex(Number(event.target.value))}>
@@ -248,6 +249,7 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
 }) {
   const [page, setPage] = useState(0);
   const [pitchSlidePopup, setPitchSlidePopup] = useState<number | null>(null);
+  const trackRef = useRef<HTMLDivElement | null>(null);
   const pageCount = Math.ceil(table.steps.length / 16);
   const currentTick = activeStep < 0 || table.steps.length === 0 ? -1 : (activeStep * 8 + activeSubtick) % table.steps.length;
   const cursorPage = currentTick < 0 ? -1 : Math.floor(currentTick / 16);
@@ -261,11 +263,51 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
 
   const setSlideValue = (subtickIndex: number, rawSemitones: number) => {
     const next = Math.max(-24, Math.min(24, Math.round(rawSemitones)));
-    projectController.updateTableStep(table.id, subtickIndex, { fx: 'PS', fxValue: next }, trackIndex);
+    const existingOffset = table.steps[subtickIndex]?.subTickOffset;
+    const preservedOffset = existingOffset !== undefined && Number.isFinite(existingOffset)
+      ? Math.max(-8, Math.min(8, Math.round(existingOffset)))
+      : 0;
+    projectController.updateTableStep(
+      table.id,
+      subtickIndex,
+      { reset: false, fx: 'PS', fxValue: next, subTickOffset: preservedOffset },
+      trackIndex,
+    );
+  };
+
+  const applyQuickSpan = (startSubtickIndex: number, spanTicks: number, semitones: number) => {
+    if (startSubtickIndex < 0 || startSubtickIndex >= table.steps.length) return;
+    const clampedValue = Math.max(-24, Math.min(24, Math.round(semitones)));
+    const safeSpan = Math.max(1, Math.min(64, Math.round(spanTicks)));
+    const endExclusive = Math.min(table.steps.length, startSubtickIndex + safeSpan);
+    for (let idx = startSubtickIndex; idx < endExclusive; idx++) {
+      const existingOffset = table.steps[idx]?.subTickOffset;
+      const preservedOffset = existingOffset !== undefined && Number.isFinite(existingOffset)
+        ? Math.max(-8, Math.min(8, Math.round(existingOffset)))
+        : 0;
+      projectController.updateTableStep(
+        table.id,
+        idx,
+        { reset: false, fx: 'PS', fxValue: clampedValue, subTickOffset: preservedOffset },
+        trackIndex,
+      );
+    }
+  };
+
+  const updateSlideFromClientX = (subtickIndex: number, clientX: number) => {
+    const rect = trackRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0) return;
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const semitones = Math.round((ratio * 2 - 1) * 24);
+    setSlideValue(subtickIndex, semitones);
   };
 
   return (
-    <div className="table-grid-scroll table-sequencer-list flex-1 min-h-0" aria-label="Vertical table ticks">
+    <div
+      className="table-grid-scroll table-sequencer-list flex-1 min-h-0"
+      aria-label="Vertical table ticks"
+      style={{ overflow: 'visible' }}
+    >
       <div className="table-page-controls">
         <label className="control-block">PAGE <select aria-label="Table page" className={fieldClass}
           value={page} onChange={(event) => setPage(Number(event.target.value))}>
@@ -285,10 +327,15 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
         const activeFx = step.reset ? 'OFF' : step.fx ?? 'OFF';
         const slideValue = step.fxValue ?? 0;
         const formattedSlide = `${slideValue > 0 ? '+' : ''}${slideValue}`;
-        const rampRatio = slideValue / 24;
+        const thumbPercent = ((slideValue + 24) / 48) * 100;
+        const isOpen = pitchSlidePopup === index && activeFx === 'PS';
         return (
-          <div className={`table-row table-sequencer-grid ${current ? 'is-playing' : ''} ${playing && current && activeStep >= 0 && delayedSteps[activeStep % 16] ? 'is-groove-pulse' : ''} ${isGrooveSubAccent ? 'is-groove-subaccent border-rose-500/80 bg-rose-950/20' : ''}`}
-            key={index} data-subtick={index + 1}>
+          <div
+            className={`table-row table-sequencer-grid relative ${isOpen ? 'z-30' : ''} ${current ? 'is-playing' : ''} ${playing && current && activeStep >= 0 && delayedSteps[activeStep % 16] ? 'is-groove-pulse' : ''} ${isGrooveSubAccent ? 'is-groove-subaccent border-rose-500/80 bg-rose-950/20' : ''}`}
+            key={index}
+            data-subtick={index + 1}
+            style={{ overflow: 'visible' }}
+          >
             <span className={`table-step-address ${isGrooveSubAccent ? 'text-rose-300 border-rose-500' : ''}`} aria-label={`Table subtick ${index + 1}`}>
               {String(index + 1).padStart(3, '0')}
             </span>
@@ -310,7 +357,10 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
                 {step.volume ?? 'H'}
               </button>
             </label>
-            <div className="table-fx-cell relative flex items-center gap-1">
+            <div
+              className="table-fx-cell relative flex items-center gap-1 min-w-0"
+              style={{ overflow: 'visible', position: 'relative' }}
+            >
               <select aria-label={`Table FX subtick ${index + 1}`} className={`${fieldClass} flex-1 min-w-0`}
                 value={activeFx} onChange={(event) => {
                   const fx = event.target.value as 'FL' | 'DL' | 'DR' | 'PS' | 'OFF';
@@ -324,49 +374,75 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
                 <option value="OFF">OFF</option><option value="FL">FL</option><option value="DR">DR</option><option value="DL">DL</option><option value="PS">PS</option>
               </select>
               {activeFx === 'PS' && (
-                <button type="button" className="table-pitch-slide-button px-1.5 py-0.5 border border-cyan-500/70 bg-cyan-950/60 text-cyan-200 text-[10px] shrink-0"
+                <button type="button" className="table-pitch-slide-button px-1.5 py-0.5 border-2 border-cyan-400 bg-cyan-950 text-cyan-200 text-[10px] font-bold shrink-0"
                   aria-label={`Edit pitch slide subtick ${index + 1}`}
-                  aria-expanded={pitchSlidePopup === index}
+                  aria-expanded={isOpen}
                   onClick={() => setPitchSlidePopup((open) => open === index ? null : index)}>
-                  PS {formattedSlide}
+                  {formattedSlide}
                 </button>
               )}
-              {pitchSlidePopup === index && activeFx === 'PS' && (
+              {isOpen && (
                 <div
-                  className={`table-pitch-slide-popup z-30 flex flex-col gap-1.5 p-2 rounded border border-cyan-500/70 bg-zinc-950/95 shadow-lg min-w-[180px] ${row >= 10 ? 'bottom-full mb-1 top-auto' : 'top-full mt-1'}`}
+                  className="table-pitch-slide-popup absolute left-0 top-1/2 -translate-y-1/2 z-40 flex items-center gap-1 p-1 border-2 border-cyan-400 bg-zinc-950 shadow-xl w-max max-w-[360px]"
                   role="dialog"
                   aria-label={`Pitch slide subtick ${index + 1}`}
                 >
-                  <div className="flex items-center justify-between gap-2 text-[10px]">
-                    <span className="text-cyan-300 font-bold">PS RAMP</span>
-                    <button type="button" className="px-1 border border-zinc-700 text-zinc-300"
-                      aria-label="Close pitch slide scrubber" onClick={() => setPitchSlidePopup(null)}>×</button>
+                  <button type="button" aria-label={`Decrease pitch slide subtick ${index + 1}`}
+                    className="w-6 h-7 border border-cyan-500/70 bg-zinc-900 text-cyan-200 font-black shrink-0"
+                    onClick={() => setSlideValue(index, slideValue - 1)}>-</button>
+                  <div
+                    ref={trackRef}
+                    role="slider"
+                    tabIndex={0}
+                    aria-label={`Pitch slide semitones subtick ${index + 1}`}
+                    aria-valuemin={-24}
+                    aria-valuemax={24}
+                    aria-valuenow={slideValue}
+                    onPointerDown={(event) => {
+                      event.currentTarget.setPointerCapture(event.pointerId);
+                      updateSlideFromClientX(index, event.clientX);
+                    }}
+                    onPointerMove={(event) => {
+                      if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+                      updateSlideFromClientX(index, event.clientX);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') {
+                        event.preventDefault();
+                        setSlideValue(index, slideValue - 1);
+                      } else if (event.key === 'ArrowRight' || event.key === 'ArrowUp') {
+                        event.preventDefault();
+                        setSlideValue(index, slideValue + 1);
+                      }
+                    }}
+                    className="relative flex-1 min-w-[60px] h-7 border border-zinc-600 bg-zinc-900 touch-none select-none cursor-ew-resize overflow-hidden"
+                  >
+                    <div className="absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-zinc-500/80" aria-hidden="true" />
+                    <div
+                      className="absolute inset-y-0.5 w-3 -translate-x-1/2 border border-cyan-200 bg-cyan-400"
+                      style={{ left: `${thumbPercent}%` }}
+                      aria-hidden="true"
+                    />
                   </div>
-                  <div className="h-4 w-full rounded bg-zinc-900 border border-zinc-800 px-1.5 flex items-center" aria-hidden="true">
-                    <svg viewBox="0 0 100 16" className="w-full h-3 overflow-visible">
-                      <line x1="0" y1="8" x2="100" y2="8" stroke="currentColor" className="text-zinc-700" strokeDasharray="2 2" />
-                      <line
-                        x1="0"
-                        y1="8"
-                        x2="100"
-                        y2={Math.max(1, Math.min(15, 8 - rampRatio * 7))}
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        className="text-cyan-300"
-                      />
-                    </svg>
-                  </div>
-                  <input aria-label={`Pitch slide semitones subtick ${index + 1}`} type="range" min="-24" max="24" step="1"
-                    value={slideValue} onChange={(event) => setSlideValue(index, Number(event.target.value))} />
-                  <div className="flex items-center justify-between gap-1 text-[10px]">
-                    <button type="button" className="px-1.5 py-0.5 border border-zinc-700 text-zinc-200"
-                      onClick={() => setSlideValue(index, slideValue - 1)}>-1</button>
-                    <button type="button" className="px-1.5 py-0.5 border border-zinc-700 text-zinc-200"
-                      onClick={() => setSlideValue(index, 0)}>0</button>
-                    <button type="button" className="px-1.5 py-0.5 border border-zinc-700 text-zinc-200"
-                      onClick={() => setSlideValue(index, slideValue + 1)}>+1</button>
-                    <output className="text-cyan-200 font-bold">{formattedSlide} ST</output>
-                  </div>
+                  <button type="button" aria-label={`Increase pitch slide subtick ${index + 1}`}
+                    className="w-6 h-7 border border-cyan-500/70 bg-zinc-900 text-cyan-200 font-black shrink-0"
+                    onClick={() => setSlideValue(index, slideValue + 1)}>+</button>
+                  {QUICK_SPANS.map((spanTicks) => (
+                    <button
+                      key={spanTicks}
+                      type="button"
+                      aria-label={`Apply pitch slide across ${spanTicks} subticks starting at subtick ${index + 1}`}
+                      title={`Start at subtick ${index + 1} for ${spanTicks} ticks (${formattedSlide} ST)`}
+                      className="px-1 h-7 border border-amber-500/60 bg-zinc-900 text-amber-200 text-[9px] font-bold shrink-0"
+                      onClick={() => applyQuickSpan(index, spanTicks, slideValue)}
+                    >
+                      {spanTicks}T
+                    </button>
+                  ))}
+                  <span className="px-1 text-[10px] font-bold text-cyan-200 shrink-0">{formattedSlide}</span>
+                  <button type="button" aria-label="Close pitch slide scrubber"
+                    className="w-5 h-7 border border-zinc-700 bg-zinc-900 text-zinc-300 text-[10px] shrink-0"
+                    onClick={() => setPitchSlidePopup(null)}>×</button>
                 </div>
               )}
             </div>
