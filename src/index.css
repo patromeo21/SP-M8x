@@ -398,8 +398,29 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   min-height: 38px;
   border-top: 1px solid #27272a;
 }
+
+/* Warm orange-yellow active step highlight (8-8 groove baseline) */
 .phrase-row.is-playing,
-.table-row.is-playing { background: rgba(8, 145, 178, 0.25); }
+.table-row.is-playing {
+  background: rgba(251, 191, 36, 0.2);
+  box-shadow: inset 3px 0 0 var(--m8-accent-amber);
+}
+.phrase-row.is-playing.is-groove-pulse,
+.table-row.is-playing.is-groove-pulse {
+  background: rgba(255, 107, 43, 0.24);
+  box-shadow: inset 3px 0 0 var(--m8-accent-orange);
+}
+
+/* Distinct non-8-8 swing / sub-accent differentiation */
+.phrase-row.is-playing.is-groove-subaccent,
+.table-row.is-playing.is-groove-subaccent,
+.phrase-row.is-groove-subaccent,
+.table-row.is-groove-subaccent {
+  background: rgba(244, 63, 94, 0.22);
+  border-top-color: rgba(251, 113, 133, 0.75);
+  box-shadow: inset 3px 0 0 var(--led-red);
+}
+
 .phrase-sequencer-grid {
   grid-template-columns: 2.5rem minmax(3.2rem, 0.9fr) minmax(3rem, 0.8fr) minmax(5rem, 1.2fr) minmax(3rem, 0.8fr) minmax(3.5rem, 0.8fr) minmax(3.6rem, 0.8fr);
 }
@@ -423,7 +444,17 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   text-align: center;
   touch-action: pan-y;
 }
-.phrase-step-toggle.is-active { color: #a5f3fc; background: #083344; }
+.phrase-step-toggle.is-active {
+  color: #fde68a;
+  background: rgba(251, 191, 36, 0.18);
+  border: 1px solid rgba(251, 191, 36, 0.55);
+}
+.phrase-row.is-groove-subaccent .phrase-step-toggle.is-active,
+.phrase-step-toggle.is-groove-subaccent {
+  color: #fda4af;
+  background: rgba(244, 63, 94, 0.22);
+  border-color: rgba(251, 113, 133, 0.85);
+}
 .phrase-step-toggle:disabled { opacity: 0.45; }
 .phrase-inline-volume {
   display: flex;
@@ -786,4 +817,5 @@ input,
 .pad-grid-with-pitch {
   min-width: 0;
   max-width: 100%;
-  overflow-x: hidden}
+  overflow-x: hidden;
+}
