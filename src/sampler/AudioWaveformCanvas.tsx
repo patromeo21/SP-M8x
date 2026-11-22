@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { audioEngine } from '../audio/audioEngine';
 import {
   createWaveformCanvasLayer,
   drawStaticWaveform,
@@ -14,6 +15,8 @@ import {
 export interface AudioWaveformCanvasProps {
   /** Audio buffer from the loaded sample */
   audioBuffer: AudioBuffer | null;
+  /** Optional pad ID to poll live playback position from audioEngine */
+  padId?: string;
   /** Whether the transport is currently playing */
   isPlaying: boolean;
   /** Normalized playhead position (0.0 to 1.0) */
@@ -32,8 +35,11 @@ export interface AudioWaveformCanvasProps {
   style?: React.CSSProperties;
 }
 
+const clampNorm = (value: number): number => Math.max(0, Math.min(1, value));
+
 export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
   audioBuffer,
+  padId,
   isPlaying,
   playheadNorm,
   slicePoints,
@@ -57,35 +63,40 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
   const mipmaps = mipmapResult?.buffer === audioBuffer ? mipmapResult.mipmaps : null;
   const viewStart = Math.max(0, Math.min(1 - 1e-6, viewStartNorm));
   const viewEnd = Math.max(viewStart + 1e-6, Math.min(1, viewEndNorm));
-  const sliceStart = slicePoints?.startNorm;
-  const sliceEnd = slicePoints?.endNorm;
+  const sliceStart = slicePoints ? clampNorm(Math.min(slicePoints.startNorm, slicePoints.endNorm)) : undefined;
+  const sliceEnd = slicePoints ? clampNorm(Math.max(slicePoints.startNorm, slicePoints.endNorm)) : undefined;
 
   const getPointerPosition = (event: React.PointerEvent<HTMLDivElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect();
-    return pointerXToNormalized(event.clientX, bounds.left, bounds.width, viewStart, viewEnd);
+    return clampNorm(pointerXToNormalized(event.clientX, bounds.left, bounds.width, viewStart, viewEnd));
   };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!slicePoints || !onSliceChange || event.button !== 0) return;
+    if (sliceStart === undefined || sliceEnd === undefined || !onSliceChange || event.button !== 0) return;
     const position = getPointerPosition(event);
     activeSliceHandleRef.current =
-      Math.abs(position - slicePoints.startNorm) <= Math.abs(position - slicePoints.endNorm) ? 'start' : 'end';
+      Math.abs(position - sliceStart) <= Math.abs(position - sliceEnd) ? 'start' : 'end';
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     const handle = activeSliceHandleRef.current;
-    if (!handle || !slicePoints || !onSliceChange) return;
+    if (!handle || sliceStart === undefined || sliceEnd === undefined || !onSliceChange) return;
     const position = getPointerPosition(event);
     if (handle === 'start') {
-      onSliceChange(Math.min(position, slicePoints.endNorm), slicePoints.endNorm);
+      const nextStart = Math.min(position, sliceEnd);
+      onSliceChange(nextStart, sliceEnd);
     } else {
-      onSliceChange(slicePoints.startNorm, Math.max(position, slicePoints.startNorm));
+      const nextEnd = Math.max(position, sliceStart);
+      onSliceChange(sliceStart, nextEnd);
     }
   };
 
-  const handlePointerUp = () => {
+  const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
     activeSliceHandleRef.current = null;
   };
 
@@ -162,6 +173,13 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
     if (!canvas || !layer) return;
 
     const drawOverlay = (context: Waveform2DContext) => {
+      let livePlayhead = isPlaying ? playheadRef.current : null;
+      if (isPlaying && padId && audioBuffer && audioBuffer.duration > 0) {
+        const liveSeconds = audioEngine.getPadPlaybackPosition(padId, audioBuffer);
+        if (liveSeconds !== null) {
+          livePlayhead = clampNorm(liveSeconds / audioBuffer.duration);
+        }
+      }
       drawWaveformOverlay(
         context,
         canvas.width,
@@ -171,13 +189,13 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
         sliceStart,
         sliceEnd,
         sliceMarkers,
-        isPlaying ? playheadRef.current : null,
+        livePlayhead,
       );
     };
     const renderOverlay = () => layer.render(drawOverlay);
 
     return startDemandGatedRender(renderOverlay, isPlaying);
-  }, [isPlaying, sliceStart, sliceEnd, sliceMarkers, height, viewStart, viewEnd]);
+  }, [audioBuffer, padId, isPlaying, sliceStart, sliceEnd, sliceMarkers, height, viewStart, viewEnd]);
 
   return (
     <div

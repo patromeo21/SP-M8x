@@ -82,8 +82,12 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
   }, [padEnvelopes, padBank.slots, triggerPad]);
 
   const renderWaveform = useCallback((props: Omit<AudioWaveformCanvasProps, 'audioBuffer'>) => (
-    <AudioWaveformCanvas audioBuffer={padBank.selectedPad.buffer} {...props} />
-  ), [padBank.selectedPad.buffer]);
+    <AudioWaveformCanvas
+      audioBuffer={padBank.selectedPad.buffer}
+      padId={padBank.selectedPadId}
+      {...props}
+    />
+  ), [padBank.selectedPad.buffer, padBank.selectedPadId]);
 
   const chopToBank = useCallback((padId: string, bank: (typeof BANKS)[number], count: number) =>
     chopToBankReplacingSingleSource(padBank, padId, bank, count), [padBank]);
