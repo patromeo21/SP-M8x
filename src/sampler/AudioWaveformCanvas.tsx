@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { audioEngine } from '../audio/audioEngine';
+import { schedulePsModulation } from '../audio/audioEngine';
 import {
   createWaveformCanvasLayer,
   drawStaticWaveform,
@@ -15,7 +15,7 @@ import {
 export interface AudioWaveformCanvasProps {
   /** Audio buffer from the loaded sample */
   audioBuffer: AudioBuffer | null;
-  /** Optional pad ID to poll live playback position from audioEngine */
+  /** Optional pad ID to poll live playback position if available */
   padId?: string;
   /** Whether the transport is currently playing */
   isPlaying: boolean;
@@ -36,6 +36,10 @@ export interface AudioWaveformCanvasProps {
 }
 
 const clampNorm = (value: number): number => Math.max(0, Math.min(1, value));
+
+type PlaybackPositionProvider = {
+  getPadPlaybackPosition?: (padId: string, buffer: AudioBuffer) => number | null;
+};
 
 export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
   audioBuffer,
@@ -175,7 +179,8 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
     const drawOverlay = (context: Waveform2DContext) => {
       let livePlayhead = isPlaying ? playheadRef.current : null;
       if (isPlaying && padId && audioBuffer && audioBuffer.duration > 0) {
-        const liveSeconds = audioEngine.getPadPlaybackPosition(padId, audioBuffer);
+        const provider = schedulePsModulation as unknown as PlaybackPositionProvider;
+        const liveSeconds = provider.getPadPlaybackPosition?.(padId, audioBuffer) ?? null;
         if (liveSeconds !== null) {
           livePlayhead = clampNorm(liveSeconds / audioBuffer.duration);
         }

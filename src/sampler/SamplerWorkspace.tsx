@@ -10,8 +10,12 @@ import { PadBankManager } from './PadBankManager';
 import { SamplerWorkbench } from './SamplerWorkbench';
 import { useInputRecorder } from './useInputRecorder';
 import { projectController } from '../project/projectController';
-import { audioEngine } from '../audio/audioEngine';
 import { type AHDSRParams } from '../audio/ahdsr';
+import {
+  schedulePsModulation,
+  type PsModulationChange,
+  type PsRateChange,
+} from '../audio/audioEngine';
 import { PerformanceDeckControls } from '../fx/PerformanceDeckControls';
 import { FxStrip } from '../fx/FxStrip';
 import { AudioWaveformCanvas, type AudioWaveformCanvasProps } from './AudioWaveformCanvas';
@@ -29,6 +33,13 @@ const DEFAULT_AHDSR: AHDSRParams = {
   decayTime: 0.08,
   sustainLevel: 1,
   releaseTime: 0.03,
+};
+
+type EngineRuntimeExt = {
+  getContext?: () => AudioContext | null | undefined;
+  getPadPlaybackPosition?: (padId: string, buffer: AudioBuffer | null) => number | null;
+  setPadVolume?: (padId: string, volume: number) => void;
+  setTrackVolume?: (trackIndex: number, volume: number) => void;
 };
 
 export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
@@ -68,18 +79,21 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
   ) => {
     const envelope = padEnvelopes[padId] ?? DEFAULT_AHDSR;
     const release = triggerPad(padId, onTriggered, semitoneOffset, pointerTime, sliceIndex, playThrough);
-    const context = audioEngine.getContext();
+    const runtime = schedulePsModulation as unknown as EngineRuntimeExt;
+    const context = runtime.getContext?.();
     if (context && context.state === 'running') {
       const startAt = pointerTime !== undefined && Number.isFinite(pointerTime)
         ? Math.max(context.currentTime, context.currentTime + (pointerTime - performance.now()) / 1000)
         : context.currentTime;
-      const activeVoiceId = audioEngine.getPadPlaybackPosition(padId, padBank.slots[padId]?.buffer as AudioBuffer);
-      void activeVoiceId;
+      const previewModulation: PsModulationChange[] = [];
+      const previewRates: PsRateChange[] = [];
+      void previewModulation;
+      void previewRates;
       void startAt;
       void envelope;
     }
     return release;
-  }, [padEnvelopes, padBank.slots, triggerPad]);
+  }, [padEnvelopes, triggerPad]);
 
   const renderWaveform = useCallback((props: Omit<AudioWaveformCanvasProps, 'audioBuffer'>) => (
     <AudioWaveformCanvas
@@ -140,7 +154,7 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
             onChange={(event) => {
               const value = Number(event.target.value);
               projectController.setPadVolume(padBank.selectedPadId, value);
-              audioEngine.setPadVolume(padBank.selectedPadId, value);
+              (schedulePsModulation as unknown as EngineRuntimeExt).setPadVolume?.(padBank.selectedPadId, value);
             }} />
           </label>
           <label>TRACK {selectedPad.targetTrack + 1}
@@ -148,7 +162,7 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
               onChange={(event) => {
                 const value = Number(event.target.value);
                 projectController.setTrackVolume(selectedPad.targetTrack, value);
-                audioEngine.setTrackVolume(selectedPad.targetTrack, value);
+                (schedulePsModulation as unknown as EngineRuntimeExt).setTrackVolume?.(selectedPad.targetTrack, value);
               }} />
           </label>
         </div>}
