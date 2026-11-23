@@ -175,10 +175,10 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, groo
               <span>{step.velocity ?? 127}</span>
             </label>
             <select aria-label={`Phrase FX step ${index + 1}`} className={fieldClass}
-              value={step.fx ?? 'OFF'} disabled={!padId}
-              data-filled={step.fx !== 'OFF' ? 'true' : undefined}
+              value={step.fx === 'FL' || step.fx === 'DL' ? step.fx : 'OFF'} disabled={!padId}
+              data-filled={step.fx === 'FL' || step.fx === 'DL' ? 'true' : undefined}
               onChange={(event) => projectController.updateStep(patternIndex, index, { fx: event.target.value }, trackIndex)}>
-              <option value="OFF">OFF</option><option value="FL">FL</option><option value="DR">DR</option><option value="DL">DL</option>
+              <option value="OFF">OFF</option><option value="FL">FL</option><option value="DL">DL</option>
             </select>
             <select aria-label={`Phrase table step ${index + 1}`} className={fieldClass}
               value={step.tableId ?? ''} disabled={!padId}
@@ -261,16 +261,31 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
     setPitchSlidePopup(null);
   }, [page]);
 
-  const setSlideValue = (subtickIndex: number, rawSemitones: number) => {
-    const next = Math.max(-24, Math.min(24, Math.round(rawSemitones)));
+  const getPreservedSubtickOffset = (subtickIndex: number): number => {
     const existingOffset = table.steps[subtickIndex]?.subTickOffset;
-    const preservedOffset = existingOffset !== undefined && Number.isFinite(existingOffset)
+    return existingOffset !== undefined && Number.isFinite(existingOffset)
       ? Math.max(-8, Math.min(8, Math.round(existingOffset)))
       : 0;
+  };
+
+  const setOpcodeParamValue = (subtickIndex: number, fx: 'FL' | 'DL', rawValue: number) => {
+    const clamped = Number.isFinite(rawValue)
+      ? Math.max(0, Math.min(127, Math.round(rawValue)))
+      : 64;
     projectController.updateTableStep(
       table.id,
       subtickIndex,
-      { reset: false, fx: 'PS', fxValue: next, subTickOffset: preservedOffset },
+      { reset: false, fx, fxValue: clamped, subTickOffset: getPreservedSubtickOffset(subtickIndex) },
+      trackIndex,
+    );
+  };
+
+  const setSlideValue = (subtickIndex: number, rawSemitones: number) => {
+    const next = Math.max(-24, Math.min(24, Math.round(rawSemitones)));
+    projectController.updateTableStep(
+      table.id,
+      subtickIndex,
+      { reset: false, fx: 'PS', fxValue: next, subTickOffset: getPreservedSubtickOffset(subtickIndex) },
       trackIndex,
     );
   };
@@ -281,14 +296,10 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
     const safeSpan = Math.max(1, Math.min(64, Math.round(spanTicks)));
     const endExclusive = Math.min(table.steps.length, startSubtickIndex + safeSpan);
     for (let idx = startSubtickIndex; idx < endExclusive; idx++) {
-      const existingOffset = table.steps[idx]?.subTickOffset;
-      const preservedOffset = existingOffset !== undefined && Number.isFinite(existingOffset)
-        ? Math.max(-8, Math.min(8, Math.round(existingOffset)))
-        : 0;
       projectController.updateTableStep(
         table.id,
         idx,
-        { reset: false, fx: 'PS', fxValue: clampedValue, subTickOffset: preservedOffset },
+        { reset: false, fx: 'PS', fxValue: clampedValue, subTickOffset: getPreservedSubtickOffset(idx) },
         trackIndex,
       );
     }
@@ -323,7 +334,9 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
         const index = page * 16 + row;
         const current = (playing || paused) && index === currentTick;
         const isGrooveSubAccent = playing && current && groovePreset !== '8-8' && activeStep >= 0 && Boolean(delayedSteps[activeStep % 16]);
-        const activeFx = step.reset ? 'OFF' : step.fx ?? 'OFF';
+        const rawFx = step.reset ? 'OFF' : step.fx ?? 'OFF';
+        const activeFx = rawFx === 'FL' || rawFx === 'DL' || rawFx === 'PS' ? rawFx : 'OFF';
+        const opcodeValue = Math.max(0, Math.min(127, Math.round(step.fxValue ?? 64)));
         const slideValue = step.fxValue ?? 0;
         const formattedSlide = `${slideValue > 0 ? '+' : ''}${slideValue}`;
         const thumbPercent = ((slideValue + 24) / 48) * 100;
@@ -362,16 +375,52 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
             >
               <select aria-label={`Table FX subtick ${index + 1}`} className={`${fieldClass} flex-1 min-w-0`}
                 value={activeFx} onChange={(event) => {
-                  const fx = event.target.value as 'FL' | 'DL' | 'DR' | 'PS' | 'OFF';
+                  const fx = event.target.value as 'FL' | 'DL' | 'PS' | 'OFF';
+                  const defaultValue = fx === 'PS'
+                    ? (step.fx === 'PS' ? (step.fxValue ?? 0) : 0)
+                    : fx === 'FL' || fx === 'DL'
+                      ? ((step.fx === 'FL' || step.fx === 'DL') && step.fxValue !== undefined ? opcodeValue : 64)
+                      : undefined;
                   projectController.updateTableStep(table.id, index, {
                     reset: false,
                     fx,
-                    fxValue: fx === 'PS' ? (step.fxValue ?? 0) : undefined,
+                    fxValue: defaultValue,
+                    subTickOffset: getPreservedSubtickOffset(index),
                   }, trackIndex);
                   setPitchSlidePopup(fx === 'PS' ? index : null);
                 }}>
-                <option value="OFF">OFF</option><option value="FL">FL</option><option value="DR">DR</option><option value="DL">DL</option><option value="PS">PS</option>
+                <option value="OFF">OFF</option><option value="FL">FL</option><option value="DL">DL</option><option value="PS">PS</option>
               </select>
+              {(activeFx === 'FL' || activeFx === 'DL') && (
+                <>
+                  <button
+                    type="button"
+                    className={buttonClass}
+                    aria-label={`Decrease ${activeFx === 'FL' ? 'filter' : 'delay'} value subtick ${index + 1}`}
+                    onClick={() => setOpcodeParamValue(index, activeFx, opcodeValue - 8)}
+                  >
+                    -
+                  </button>
+                  <input
+                    type="number"
+                    min={0}
+                    max={127}
+                    step={1}
+                    aria-label={`${activeFx === 'FL' ? 'Filter' : 'Delay'} value subtick ${index + 1}`}
+                    className={`${fieldClass} w-12`}
+                    value={opcodeValue}
+                    onChange={(event) => setOpcodeParamValue(index, activeFx, Number(event.target.value))}
+                  />
+                  <button
+                    type="button"
+                    className={buttonClass}
+                    aria-label={`Increase ${activeFx === 'FL' ? 'filter' : 'delay'} value subtick ${index + 1}`}
+                    onClick={() => setOpcodeParamValue(index, activeFx, opcodeValue + 8)}
+                  >
+                    +
+                  </button>
+                </>
+              )}
               {activeFx === 'PS' && (
                 <button type="button" className="table-pitch-slide-button px-1.5 py-0.5 border-2 border-cyan-400 bg-cyan-950 text-cyan-200 text-[10px] font-bold shrink-0"
                   aria-label={`Edit pitch slide subtick ${index + 1}`}
