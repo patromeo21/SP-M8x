@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { audioEngine } from '../audio/audioEngine';
 import { trackerEngine } from '../tracker/trackerEngine';
 import type { FxBus, MacroFx, RmxLength } from './fxEngine';
@@ -20,16 +20,18 @@ const lengths: RmxLength[] = [1, 2, 4];
 const deckForBus = (target: FxBus): 0 | 1 | null =>
   target === 'A' ? 0 : target === 'B' ? 1 : null;
 
+const isMacroFx = (effect: Trigger): effect is MacroFx =>
+  effect === 'filter' || effect === 'lofi' || effect === 'chorus' || effect === 'mute' || effect === 'off';
+
 export function FxStrip() {
   const [bus, setBus] = useState<FxBus>('MST');
   const [length, setLength] = useState<RmxLength>(1);
   const [pressed, setPressed] = useState<readonly Held[]>([]);
   const [error, setError] = useState('');
   const pointers = useRef(new Map<number, Held>());
-  const initialized = useRef(false);
 
   const applyLaneFx = (target: FxBus, active: MacroFx) => {
-    if (!initialized.current) return;
+    if (!audioEngine.getContext()) return;
     audioEngine.setMacroFx(target, active);
     const deck = deckForBus(target);
     if (deck !== null) {
@@ -40,13 +42,7 @@ export function FxStrip() {
   const syncBus = (target: FxBus) => {
     let active: MacroFx = 'off';
     for (const held of pointers.current.values()) {
-      if (
-        held.bus === target &&
-        held.effect !== 'rmx' &&
-        held.effect !== 'drive' &&
-        held.effect !== 'off' &&
-        held.ready
-      ) {
+      if (held.bus === target && isMacroFx(held.effect) && held.effect !== 'off' && held.ready) {
         active = held.effect;
       }
     }
@@ -57,7 +53,7 @@ export function FxStrip() {
   useEffect(() => () => {
     pointers.current.clear();
     trackerEngine.stopRmx();
-    if (initialized.current) {
+    if (audioEngine.getContext()) {
       buses.forEach((target) => {
         audioEngine.setMacroFx(target, 'off');
         const deck = deckForBus(target);
@@ -119,24 +115,25 @@ export function FxStrip() {
               event.preventDefault();
               if (pointers.current.has(event.pointerId)) return;
               if (effect === 'rmx' && [...pointers.current.values()].some((held) => held.effect === 'rmx')) return;
-              event.currentTarget.setPointerCapture(event.pointerId);
-              const held: Held = { bus, effect, ready: false };
 
               if (effect === 'rmx') {
                 if (!trackerEngine.startRmx(bus, length)) {
                   setError('START PLAYBACK BEFORE RMX');
                   return;
                 }
-                held.ready = true;
+                event.currentTarget.setPointerCapture(event.pointerId);
+                const held: Held = { bus, effect, ready: true };
                 pointers.current.set(event.pointerId, held);
                 setPressed([...pointers.current.values()]);
                 setError('');
                 return;
               }
 
+              event.currentTarget.setPointerCapture(event.pointerId);
+
               // DRIVE is intentionally sidelined until your effects prompts are reviewed
               if (effect === 'drive') {
-                held.ready = true;
+                const held: Held = { bus, effect, ready: true };
                 pointers.current.set(event.pointerId, held);
                 setPressed([...pointers.current.values()]);
                 setError('');
@@ -144,19 +141,20 @@ export function FxStrip() {
               }
 
               const pointerId = event.pointerId;
+              const held: Held = { bus, effect, ready: Boolean(audioEngine.getContext()) };
               pointers.current.set(pointerId, held);
               setPressed([...pointers.current.values()]);
               setError('');
+
               void audioEngine.initialize().then(() => {
                 if (pointers.current.get(pointerId) !== held) return;
-                initialized.current = true;
                 held.ready = true;
                 syncBus(held.bus);
               }).catch((failure: unknown) => {
                 console.error('[SP-M8x] Could not activate macro FX:', failure);
                 if (pointers.current.get(pointerId) === held) {
                   pointers.current.delete(pointerId);
-                  setPressed([...pointers.current.values()]);
+                  syncBus(held.bus);
                   setError('MACRO FX UNAVAILABLE');
                 }
               });
