@@ -1,5 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { projectController, type Pattern, type PhraseLength, type TrackerTable } from '../project/projectController';
+import {
+  projectController,
+  type Pattern,
+  type PhraseLength,
+  type PunchInFx3Code,
+  type TrackerTable,
+  type VoiceSubtickFxCode,
+} from '../project/projectController';
 import type { PadSlot } from '../sampler/usePadBank';
 import { getGrooveDelayedSteps, type GroovePreset } from './groovePresets';
 import { instrumentIdToPadId, padIdToInstrumentId } from '../sampler/padIds';
@@ -11,6 +18,8 @@ const notes = ['C-', 'C#', 'D-', 'D#', 'E-', 'F-', 'F#', 'G-', 'G#', 'A-', 'A#',
 const noteName = (midi: number) => `${notes[midi % 12]}${Math.floor(midi / 12) - 1}`;
 const stepNumber = (stepIndex: number) => String(stepIndex + 1).padStart(2, '0');
 const QUICK_SPANS = [2, 4, 8, 16, 32, 64] as const;
+const VOICE_FX_OPTIONS: readonly VoiceSubtickFxCode[] = ['OFF', 'FL', 'DL', 'PS'];
+const PUNCH_FX3_OPTIONS: readonly PunchInFx3Code[] = ['OFF', 'PM', 'LF', 'BC'];
 
 export interface EditorProps {
   slots: Record<string, PadSlot>;
@@ -26,6 +35,25 @@ export interface EditorProps {
   linkedPad?: { padId: string; name: string; playMode: string; sliActive?: boolean; sliceMarkers?: number[] };
   contextLock?: boolean;
   onToggleContextLock?: () => void;
+}
+
+function normalizeVoiceFx(raw: unknown): VoiceSubtickFxCode {
+  if (typeof raw !== 'string') return 'OFF';
+  const upper = raw.toUpperCase();
+  if (upper === 'FL' || upper === 'DL' || upper === 'PS') return upper;
+  return 'OFF';
+}
+
+function normalizePunchFx3(raw: unknown): PunchInFx3Code {
+  if (typeof raw !== 'string') return 'OFF';
+  const upper = raw.toUpperCase();
+  if (upper === 'PM' || upper === 'LF' || upper === 'BC') return upper;
+  return 'OFF';
+}
+
+function clampSubtickOffset(raw: unknown): number {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return 0;
+  return Math.max(-8, Math.min(8, Math.round(raw)));
 }
 
 export function PhraseTableEditor({
@@ -133,7 +161,7 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, groo
   return (
     <div className="phrase-grid-scroll phrase-sequencer-list flex-1 min-h-0" aria-label="Vertical phrase steps">
       <div className="phrase-grid-header phrase-sequencer-grid">
-        <span>STEP</span><span>NOTE</span><span>INST</span><span>VOL</span><span>FX</span><span>TBL</span><span>COND</span>
+        <span>STEP</span><span>NOTE</span><span>INST</span><span>VOL</span><span>FX1</span><span>FX2</span><span>FX3</span><span>MICRO</span><span>TBL</span><span>COND</span>
       </div>
       {steps.slice(page * 16, page * 16 + 16).map((step, row) => {
         const index = page * 16 + row;
@@ -142,6 +170,11 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, groo
         const occupied = Boolean(step.instrumentId !== null || (step.note && step.note !== '---'));
         const isCurrent = activeStep === index;
         const isGrooveSubAccent = playing && isCurrent && groovePreset !== '8-8' && Boolean(delayedSteps[index % 16]);
+        const fx1 = normalizeVoiceFx(step.fx);
+        const fx2 = normalizeVoiceFx(step.fx2);
+        const fx3 = normalizePunchFx3(step.fx3);
+        const microOffset = clampSubtickOffset(step.subTickOffset);
+
         return (
           <div className={`phrase-row phrase-sequencer-grid ${isCurrent ? 'is-playing' : ''} ${playing && isCurrent && delayedSteps[index % 16] ? 'is-groove-pulse' : ''} ${isGrooveSubAccent ? 'is-groove-subaccent border-rose-500/80 bg-rose-950/20' : ''}`}
             key={index} data-step={index + 1}>
@@ -174,12 +207,56 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, groo
                 onChange={(event) => projectController.updateStep(patternIndex, index, { velocity: Number(event.target.value) }, trackIndex)} />
               <span>{step.velocity ?? 127}</span>
             </label>
-            <select aria-label={`Phrase FX step ${index + 1}`} className={fieldClass}
-              value={step.fx === 'FL' || step.fx === 'DL' ? step.fx : 'OFF'} disabled={!padId}
-              data-filled={step.fx === 'FL' || step.fx === 'DL' ? 'true' : undefined}
-              onChange={(event) => projectController.updateStep(patternIndex, index, { fx: event.target.value }, trackIndex)}>
-              <option value="OFF">OFF</option><option value="FL">FL</option><option value="DL">DL</option>
+            <select aria-label={`Phrase FX1 step ${index + 1}`} className={fieldClass}
+              value={fx1} disabled={!padId}
+              data-filled={fx1 !== 'OFF' ? 'true' : undefined}
+              onChange={(event) => {
+                const nextFx = normalizeVoiceFx(event.target.value);
+                projectController.updateStep(patternIndex, index, {
+                  fx: nextFx,
+                  ...(nextFx === 'OFF' ? { fxValue: undefined } : { fxValue: step.fxValue ?? 64 }),
+                }, trackIndex);
+              }}>
+              {VOICE_FX_OPTIONS.map((code) => <option key={code} value={code}>{code}</option>)}
             </select>
+            <select aria-label={`Phrase FX2 step ${index + 1}`} className={fieldClass}
+              value={fx2} disabled={!padId}
+              data-filled={fx2 !== 'OFF' ? 'true' : undefined}
+              onChange={(event) => {
+                const nextFx2 = normalizeVoiceFx(event.target.value);
+                projectController.updateStep(patternIndex, index, {
+                  fx2: nextFx2,
+                  ...(nextFx2 === 'OFF' ? { fx2Value: undefined } : { fx2Value: step.fx2Value ?? 64 }),
+                }, trackIndex);
+              }}>
+              {VOICE_FX_OPTIONS.map((code) => <option key={code} value={code}>{code}</option>)}
+            </select>
+            <select aria-label={`Phrase FX3 step ${index + 1}`} className={fieldClass}
+              value={fx3} disabled={!padId}
+              data-filled={fx3 !== 'OFF' ? 'true' : undefined}
+              onChange={(event) => {
+                const nextFx3 = normalizePunchFx3(event.target.value);
+                projectController.updateStep(patternIndex, index, {
+                  fx3: nextFx3,
+                  ...(nextFx3 === 'OFF' ? { fx3Value: undefined } : { fx3Value: step.fx3Value ?? 64 }),
+                }, trackIndex);
+              }}>
+              {PUNCH_FX3_OPTIONS.map((code) => <option key={code} value={code}>{code}</option>)}
+            </select>
+            <div className="phrase-microtiming-control" aria-label={`Phrase microtiming step ${index + 1}`}>
+              <button type="button" aria-label={`Move step ${index + 1} earlier`} disabled={!padId}
+                onClick={() => projectController.updateStep(patternIndex, index, {
+                  subTickOffset: clampSubtickOffset(microOffset - 1),
+                }, trackIndex)}>−</button>
+              <button type="button" className="phrase-micro-zero" aria-label={`Reset step ${index + 1} microtiming to zero`} disabled={!padId}
+                onClick={() => projectController.updateStep(patternIndex, index, { subTickOffset: 0 }, trackIndex)}>
+                {microOffset === 0 ? '0' : microOffset > 0 ? `+${microOffset}` : String(microOffset)}
+              </button>
+              <button type="button" aria-label={`Move step ${index + 1} later`} disabled={!padId}
+                onClick={() => projectController.updateStep(patternIndex, index, {
+                  subTickOffset: clampSubtickOffset(microOffset + 1),
+                }, trackIndex)}>+</button>
+            </div>
             <select aria-label={`Phrase table step ${index + 1}`} className={fieldClass}
               value={step.tableId ?? ''} disabled={!padId}
               data-filled={step.tableId !== null ? 'true' : undefined}
@@ -261,13 +338,6 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
     setPitchSlidePopup(null);
   }, [page]);
 
-  const getPreservedSubtickOffset = (subtickIndex: number): number => {
-    const existingOffset = table.steps[subtickIndex]?.subTickOffset;
-    return existingOffset !== undefined && Number.isFinite(existingOffset)
-      ? Math.max(-8, Math.min(8, Math.round(existingOffset)))
-      : 0;
-  };
-
   const setOpcodeParamValue = (subtickIndex: number, fx: 'FL' | 'DL', rawValue: number) => {
     const clamped = Number.isFinite(rawValue)
       ? Math.max(0, Math.min(127, Math.round(rawValue)))
@@ -275,7 +345,7 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
     projectController.updateTableStep(
       table.id,
       subtickIndex,
-      { reset: false, fx, fxValue: clamped, subTickOffset: getPreservedSubtickOffset(subtickIndex) },
+      { reset: false, fx, fxValue: clamped },
       trackIndex,
     );
   };
@@ -285,7 +355,7 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
     projectController.updateTableStep(
       table.id,
       subtickIndex,
-      { reset: false, fx: 'PS', fxValue: next, subTickOffset: getPreservedSubtickOffset(subtickIndex) },
+      { reset: false, fx: 'PS', fxValue: next },
       trackIndex,
     );
   };
@@ -299,7 +369,7 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
       projectController.updateTableStep(
         table.id,
         idx,
-        { reset: false, fx: 'PS', fxValue: clampedValue, subTickOffset: getPreservedSubtickOffset(idx) },
+        { reset: false, fx: 'PS', fxValue: clampedValue },
         trackIndex,
       );
     }
@@ -328,15 +398,19 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
         <span className="text-zinc-400">SUBTICKS {page * 16 + 1}-{Math.min((page + 1) * 16, table.steps.length)}</span>
       </div>
       <div className="table-grid-header table-sequencer-grid">
-        <span>SUBTICK</span><span>PITCH</span><span>VOL</span><span>FX</span><span>MICRO-TIMING</span>
+        <span>SUBTICK</span><span>PITCH</span><span>VOL</span><span>FX1</span><span>FX2</span><span>FX3</span>
       </div>
       {table.steps.slice(page * 16, page * 16 + 16).map((step, row) => {
         const index = page * 16 + row;
         const current = (playing || paused) && index === currentTick;
         const isGrooveSubAccent = playing && current && groovePreset !== '8-8' && activeStep >= 0 && Boolean(delayedSteps[activeStep % 16]);
         const rawFx = step.reset ? 'OFF' : step.fx ?? 'OFF';
-        const activeFx = rawFx === 'FL' || rawFx === 'DL' || rawFx === 'PS' ? rawFx : 'OFF';
+        const activeFx = normalizeVoiceFx(rawFx);
+        const activeFx2 = normalizeVoiceFx(step.fx2);
+        const activeFx3 = normalizePunchFx3(step.fx3);
         const opcodeValue = Math.max(0, Math.min(127, Math.round(step.fxValue ?? 64)));
+        const fx2Value = Math.max(0, Math.min(127, Math.round(step.fx2Value ?? 64)));
+        const fx3Value = Math.max(0, Math.min(127, Math.round(step.fx3Value ?? 64)));
         const slideValue = step.fxValue ?? 0;
         const formattedSlide = `${slideValue > 0 ? '+' : ''}${slideValue}`;
         const thumbPercent = ((slideValue + 24) / 48) * 100;
@@ -373,9 +447,9 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
               className="table-fx-cell relative flex items-center gap-1 min-w-0"
               style={{ overflow: 'visible', position: 'relative' }}
             >
-              <select aria-label={`Table FX subtick ${index + 1}`} className={`${fieldClass} flex-1 min-w-0`}
+              <select aria-label={`Table FX1 subtick ${index + 1}`} className={`${fieldClass} flex-1 min-w-0`}
                 value={activeFx} onChange={(event) => {
-                  const fx = event.target.value as 'FL' | 'DL' | 'PS' | 'OFF';
+                  const fx = normalizeVoiceFx(event.target.value);
                   const defaultValue = fx === 'PS'
                     ? (step.fx === 'PS' ? (step.fxValue ?? 0) : 0)
                     : fx === 'FL' || fx === 'DL'
@@ -385,11 +459,10 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
                     reset: false,
                     fx,
                     fxValue: defaultValue,
-                    subTickOffset: getPreservedSubtickOffset(index),
                   }, trackIndex);
                   setPitchSlidePopup(fx === 'PS' ? index : null);
                 }}>
-                <option value="OFF">OFF</option><option value="FL">FL</option><option value="DL">DL</option><option value="PS">PS</option>
+                {VOICE_FX_OPTIONS.map((code) => <option key={code} value={code}>{code}</option>)}
               </select>
               {(activeFx === 'FL' || activeFx === 'DL') && (
                 <>
@@ -494,19 +567,31 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
                 </div>
               )}
             </div>
-            <div className="table-microtiming-control" aria-label={`Table microtiming subtick ${index + 1}`}>
-              <button type="button" aria-label={`Move subtick ${index + 1} earlier`}
-                onClick={() => projectController.updateTableStep(table.id, index, {
-                  subTickOffset: Math.max(-8, (step.subTickOffset ?? 0) - 1),
-                }, trackIndex)}>−</button>
-              <button type="button" className="table-micro-zero" aria-label={`Reset subtick ${index + 1} to zero`}
-                onClick={() => projectController.updateTableStep(table.id, index, { subTickOffset: 0 }, trackIndex)}>
-                {(step.subTickOffset ?? 0) === 0 ? '0' : (step.subTickOffset ?? 0) > 0 ? `+${step.subTickOffset}` : String(step.subTickOffset)}
-              </button>
-              <button type="button" aria-label={`Move subtick ${index + 1} later`}
-                onClick={() => projectController.updateTableStep(table.id, index, {
-                  subTickOffset: Math.min(8, (step.subTickOffset ?? 0) + 1),
-                }, trackIndex)}>+</button>
+            <div className="table-fx2-cell flex items-center gap-1 min-w-0">
+              <select aria-label={`Table FX2 subtick ${index + 1}`} className={fieldClass}
+                value={activeFx2}
+                onChange={(event) => {
+                  const nextFx2 = normalizeVoiceFx(event.target.value);
+                  projectController.updateTableStep(table.id, index, {
+                    fx2: nextFx2,
+                    fx2Value: nextFx2 === 'OFF' ? undefined : fx2Value,
+                  }, trackIndex);
+                }}>
+                {VOICE_FX_OPTIONS.map((code) => <option key={code} value={code}>{code}</option>)}
+              </select>
+            </div>
+            <div className="table-fx3-cell flex items-center gap-1 min-w-0">
+              <select aria-label={`Table FX3 subtick ${index + 1}`} className={fieldClass}
+                value={activeFx3}
+                onChange={(event) => {
+                  const nextFx3 = normalizePunchFx3(event.target.value);
+                  projectController.updateTableStep(table.id, index, {
+                    fx3: nextFx3,
+                    fx3Value: nextFx3 === 'OFF' ? undefined : fx3Value,
+                  }, trackIndex);
+                }}>
+                {PUNCH_FX3_OPTIONS.map((code) => <option key={code} value={code}>{code}</option>)}
+              </select>
             </div>
           </div>
         );
