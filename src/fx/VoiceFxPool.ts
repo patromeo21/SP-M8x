@@ -23,9 +23,19 @@ export interface VoiceFxSlot {
   padId: string | null;
 }
 
+const MIN_DELAY_SECONDS = 0.0625;
+const MAX_DELAY_SECONDS = 0.75;
+const MAX_FEEDBACK_GAIN = 0.72;
+const OPCODE_RAMP_TC = 0.005;
+
 export function holdAudioParam(param: AudioParam, time: number): void {
   if (typeof param.cancelAndHoldAtTime === 'function') param.cancelAndHoldAtTime(time);
   else param.setValueAtTime(param.value, time);
+}
+
+function normalizeOpcodeValue(rawValue: number | undefined): number {
+  if (!Number.isFinite(rawValue)) return 0.5;
+  return Math.max(0, Math.min(127, rawValue ?? 0)) / 127;
 }
 
 export class VoiceFxPool {
@@ -49,9 +59,11 @@ export class VoiceFxPool {
       filter.frequency.value = 20000;
       const curve = new Float32Array(2048);
       for (let i = 0; i < curve.length; i++) {
-        const x = 2 * i / (curve.length - 1) - 1;
+        const x = (2 * i) / (curve.length - 1) - 1;
         const magnitude = Math.abs(x);
-        curve[i] = Math.sign(x) * (magnitude <= 0.7 ? magnitude : 0.7 + 0.3 * Math.tanh((magnitude - 0.7) / 0.3));
+        curve[i] =
+          Math.sign(x) *
+          (magnitude <= 0.7 ? magnitude : 0.7 + 0.3 * Math.tanh((magnitude - 0.7) / 0.3));
       }
       shaper.curve = curve;
       delay.delayTime.value = 0.375;
@@ -61,11 +73,31 @@ export class VoiceFxPool {
       voiceGain.connect(padGain);
       padGain.connect(panner);
       panner.connect(dryGain).connect(trackGain);
-      panner.connect(filter).connect(drive).connect(shaper).connect(delay).connect(wetGain).connect(trackGain);
+      panner
+        .connect(filter)
+        .connect(drive)
+        .connect(shaper)
+        .connect(delay)
+        .connect(wetGain)
+        .connect(trackGain);
       trackGain.connect(deckGains[0]).connect(destinations[0]);
       trackGain.connect(deckGains[1]).connect(destinations[1]);
       delay.connect(feedbackGain).connect(delay);
-      return { voiceGain, padGain, panner, dryGain, wetGain, trackGain, deckGains, filter, drive, delay, feedbackGain, generationId: 0, padId: null };
+      return {
+        voiceGain,
+        padGain,
+        panner,
+        dryGain,
+        wetGain,
+        trackGain,
+        deckGains,
+        filter,
+        drive,
+        delay,
+        feedbackGain,
+        generationId: 0,
+        padId: null,
+      };
     });
   }
 
@@ -101,23 +133,59 @@ export class VoiceFxPool {
   }
 
   public applyTableOpcode(slot: VoiceFxSlot, command: TableOpcode, time: number): void {
-    if (!Number.isFinite(time) || time < 0) throw new RangeError('Table opcode time must be finite and non-negative.');
+    if (!Number.isFinite(time) || time < 0) {
+      throw new RangeError('Table opcode time must be finite and non-negative.');
+    }
     if (command.code === 'PS') return;
     if (command.code === 'OFF') {
       this.reset(slot, time);
       return;
     }
-    const value = Number.isFinite(command.value) ? Math.max(0, Math.min(127, command.value ?? 0)) / 127 : 0.5;
+
+    const norm = normalizeOpcodeValue(command.value);
+
+    if (command.code === 'FL') {
+      const cutoffHz = Math.max(20, Math.min(20000, 18000 * Math.pow(0.01, norm)));
+      const wetAmount = Math.max(0, Math.min(1, norm));
+      holdAudioParam(slot.filter.frequency, time);
+      holdAudioParam(slot.feedbackGain.gain, time);
+      holdAudioParam(slot.wetGain.gain, time);
+      slot.filter.frequency.setTargetAtTime(cutoffHz, time, OPCODE_RAMP_TC);
+      slot.feedbackGain.gain.setTargetAtTime(0, time, OPCODE_RAMP_TC);
+      slot.wetGain.gain.setTargetAtTime(wetAmount, time, OPCODE_RAMP_TC);
+      return;
+    }
+
+    if (command.code === 'DL') {
+      const delayTimeSec = Math.max(
+        MIN_DELAY_SECONDS,
+        Math.min(MAX_DELAY_SECONDS, MIN_DELAY_SECONDS + norm * (MAX_DELAY_SECONDS - MIN_DELAY_SECONDS)),
+      );
+      const feedbackAmount = Math.max(0, Math.min(MAX_FEEDBACK_GAIN, 0.1 + norm * 0.62));
+      const wetAmount = Math.max(0, Math.min(1, 0.15 + norm * 0.7));
+      holdAudioParam(slot.filter.frequency, time);
+      holdAudioParam(slot.delay.delayTime, time);
+      holdAudioParam(slot.feedbackGain.gain, time);
+      holdAudioParam(slot.wetGain.gain, time);
+      slot.filter.frequency.setTargetAtTime(20000, time, OPCODE_RAMP_TC);
+      slot.delay.delayTime.setValueAtTime(delayTimeSec, time);
+      slot.feedbackGain.gain.setTargetAtTime(feedbackAmount, time, OPCODE_RAMP_TC);
+      slot.wetGain.gain.setTargetAtTime(wetAmount, time, OPCODE_RAMP_TC);
+      return;
+    }
+
+    // Legacy 'DR' fallback branch preserved without affecting 'FL' or 'DL'
+    const driveGain = 1 + norm * 8;
     holdAudioParam(slot.wetGain.gain, time);
     holdAudioParam(slot.filter.frequency, time);
     holdAudioParam(slot.drive.gain, time);
     holdAudioParam(slot.delay.delayTime, time);
     holdAudioParam(slot.feedbackGain.gain, time);
-    slot.filter.frequency.setTargetAtTime(command.code === 'FL' ? 18000 * Math.pow(0.01, value) : 20000, time, 0.005);
-    slot.drive.gain.setTargetAtTime(command.code === 'DR' ? 1 + value * 8 : 1, time, 0.005);
-    slot.delay.delayTime.setValueAtTime(command.code === 'DL' ? 0.375 : 0, time);
-    slot.feedbackGain.gain.setTargetAtTime(command.code === 'DL' ? 0.1 + 0.7 * value : 0, time, 0.005);
-    slot.wetGain.gain.setTargetAtTime(value, time, 0.005);
+    slot.filter.frequency.setTargetAtTime(20000, time, OPCODE_RAMP_TC);
+    slot.drive.gain.setTargetAtTime(driveGain, time, OPCODE_RAMP_TC);
+    slot.delay.delayTime.setValueAtTime(0, time);
+    slot.feedbackGain.gain.setTargetAtTime(0, time, OPCODE_RAMP_TC);
+    slot.wetGain.gain.setTargetAtTime(norm, time, OPCODE_RAMP_TC);
   }
 }
 
@@ -133,8 +201,12 @@ export function applyVoiceFilter(
   resonance: number = 1.0,
   time: number = audioCtx.currentTime
 ): void {
-  if (!Number.isFinite(bipolarValue) || !Number.isFinite(resonance) ||
-      !Number.isFinite(time) || time < 0) {
+  if (
+    !Number.isFinite(bipolarValue) ||
+    !Number.isFinite(resonance) ||
+    !Number.isFinite(time) ||
+    time < 0
+  ) {
     throw new RangeError('Voice filter value, resonance, and time must be finite.');
   }
   bipolarValue = Math.max(-1, Math.min(1, bipolarValue));
