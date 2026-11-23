@@ -26,7 +26,10 @@ export interface VoiceFxSlot {
 const MIN_DELAY_SECONDS = 0.0625;
 const MAX_DELAY_SECONDS = 0.75;
 const MAX_FEEDBACK_GAIN = 0.72;
-const OPCODE_RAMP_TC = 0.005;
+const MIN_FL_CUTOFF_HZ = 120;
+const MAX_FL_CUTOFF_HZ = 18000;
+const MIN_FL_DRY_GAIN = 0.15;
+const OPCODE_RAMP_TC = 0.004;
 
 export function holdAudioParam(param: AudioParam, time: number): void {
   if (typeof param.cancelAndHoldAtTime === 'function') param.cancelAndHoldAtTime(time);
@@ -122,8 +125,10 @@ export class VoiceFxPool {
   }
 
   public reset(slot: VoiceFxSlot, time: number): void {
+    holdAudioParam(slot.dryGain.gain, time);
     holdAudioParam(slot.wetGain.gain, time);
     holdAudioParam(slot.feedbackGain.gain, time);
+    slot.dryGain.gain.setTargetAtTime(1, time, 0.008);
     slot.wetGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.008);
     slot.feedbackGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.008);
   }
@@ -145,13 +150,19 @@ export class VoiceFxPool {
     const norm = normalizeOpcodeValue(command.value);
 
     if (command.code === 'FL') {
-      const cutoffHz = Math.max(20, Math.min(20000, 18000 * Math.pow(0.01, norm)));
+      const cutoffHz = Math.max(
+        20,
+        Math.min(20000, MAX_FL_CUTOFF_HZ * Math.pow(MIN_FL_CUTOFF_HZ / MAX_FL_CUTOFF_HZ, norm)),
+      );
       const wetAmount = Math.max(0, Math.min(1, norm));
+      const dryAmount = Math.max(MIN_FL_DRY_GAIN, Math.min(1, 1 - norm * (1 - MIN_FL_DRY_GAIN)));
       holdAudioParam(slot.filter.frequency, time);
       holdAudioParam(slot.feedbackGain.gain, time);
+      holdAudioParam(slot.dryGain.gain, time);
       holdAudioParam(slot.wetGain.gain, time);
       slot.filter.frequency.setTargetAtTime(cutoffHz, time, OPCODE_RAMP_TC);
       slot.feedbackGain.gain.setTargetAtTime(0, time, OPCODE_RAMP_TC);
+      slot.dryGain.gain.setTargetAtTime(dryAmount, time, OPCODE_RAMP_TC);
       slot.wetGain.gain.setTargetAtTime(wetAmount, time, OPCODE_RAMP_TC);
       return;
     }
@@ -164,10 +175,12 @@ export class VoiceFxPool {
       const feedbackAmount = Math.max(0, Math.min(MAX_FEEDBACK_GAIN, 0.1 + norm * 0.62));
       const wetAmount = Math.max(0, Math.min(1, 0.15 + norm * 0.7));
       holdAudioParam(slot.filter.frequency, time);
+      holdAudioParam(slot.dryGain.gain, time);
       holdAudioParam(slot.delay.delayTime, time);
       holdAudioParam(slot.feedbackGain.gain, time);
       holdAudioParam(slot.wetGain.gain, time);
       slot.filter.frequency.setTargetAtTime(20000, time, OPCODE_RAMP_TC);
+      slot.dryGain.gain.setTargetAtTime(1, time, OPCODE_RAMP_TC);
       slot.delay.delayTime.setValueAtTime(delayTimeSec, time);
       slot.feedbackGain.gain.setTargetAtTime(feedbackAmount, time, OPCODE_RAMP_TC);
       slot.wetGain.gain.setTargetAtTime(wetAmount, time, OPCODE_RAMP_TC);
@@ -176,11 +189,13 @@ export class VoiceFxPool {
 
     // Legacy 'DR' fallback branch preserved without affecting 'FL' or 'DL'
     const driveGain = 1 + norm * 8;
+    holdAudioParam(slot.dryGain.gain, time);
     holdAudioParam(slot.wetGain.gain, time);
     holdAudioParam(slot.filter.frequency, time);
     holdAudioParam(slot.drive.gain, time);
     holdAudioParam(slot.delay.delayTime, time);
     holdAudioParam(slot.feedbackGain.gain, time);
+    slot.dryGain.gain.setTargetAtTime(Math.max(0.25, 1 - norm * 0.5), time, OPCODE_RAMP_TC);
     slot.filter.frequency.setTargetAtTime(20000, time, OPCODE_RAMP_TC);
     slot.drive.gain.setTargetAtTime(driveGain, time, OPCODE_RAMP_TC);
     slot.delay.delayTime.setValueAtTime(0, time);
