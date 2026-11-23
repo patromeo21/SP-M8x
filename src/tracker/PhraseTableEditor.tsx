@@ -306,7 +306,6 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
     <div
       className="table-grid-scroll table-sequencer-list flex-1 min-h-0"
       aria-label="Vertical table ticks"
-      style={{ overflow: 'visible' }}
     >
       <div className="table-page-controls">
         <label className="control-block">PAGE <select aria-label="Table page" className={fieldClass}
