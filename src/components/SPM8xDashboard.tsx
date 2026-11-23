@@ -51,6 +51,11 @@ function collectPatternPadIds(pattern: Pattern): string[] {
 
 export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'phrase', activeStep = -1 }) => {
   const [currentTab, setCurrentTab] = useState<WorkspaceTab>(initialTab);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [stagedCtrl, setStagedCtrl] = useState<[number, number, number]>([0, 0, 0]);
+  const [confirmedCtrl, setConfirmedCtrl] = useState<[number, number, number]>([0, 0, 0]);
+  const [tubeWarmthStaged, setTubeWarmthStaged] = useState(0);
+  const [tubeWarmthConfirmed, setTubeWarmthConfirmed] = useState(0);
   const [contextLock, setContextLock] = useState(false);
   const padBank = usePadBank();
   const selectedPadContext: EditorProps['linkedPad'] = padBank.selectedPad ? {
@@ -430,6 +435,20 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
     };
   }, [padBank.triggerPad, padBank.getPadSettings]);
 
+  const setStagedCtrlValue = useCallback((index: 0 | 1 | 2, rawValue: number) => {
+    const clamped = Math.max(0, Math.min(100, Math.round(rawValue)));
+    setStagedCtrl((prev) => {
+      const next: [number, number, number] = [...prev] as [number, number, number];
+      next[index] = clamped;
+      return next;
+    });
+  }, []);
+
+  const confirmStagedDrawerValues = useCallback(() => {
+    setConfirmedCtrl([...stagedCtrl] as [number, number, number]);
+    setTubeWarmthConfirmed(tubeWarmthStaged);
+  }, [stagedCtrl, tubeWarmthStaged]);
+
   if (projectController.isReadOnly()) {
     return <main className="app-shell bg-black text-rose-300 p-6 font-mono" role="alert">
       PROJECT COULD NOT BE LOADED — EDITING DISABLED. EXISTING DATA WAS NOT OVERWRITTEN.
@@ -448,6 +467,8 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
             className={`px-3 py-1 text-[10px] font-bold tracking-wider rounded uppercase border ${currentTab === tab ? 'text-[var(--accent-phrase)] border-[var(--accent-phrase)] bg-cyan-950/40' : 'text-zinc-500 border-transparent'}`}>[ {tab} ]</button>)}
         </nav>
         <div className="flex flex-wrap items-center gap-1">
+          <button type="button" className="transport-control" aria-expanded={drawerOpen} aria-label="Toggle FX and menu drawer"
+            onClick={() => setDrawerOpen((open) => !open)}>{drawerOpen ? 'CLOSE DRAWER' : 'DRAWER'}</button>
           <button type="button" className="transport-control" onClick={handleUndo}
             disabled={!projectController.canUndo()} aria-label="Undo" title="Undo (Ctrl/Cmd+Z)">UNDO</button>
           <button type="button" className="transport-control" onClick={handleRedo}
@@ -465,7 +486,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
           {bundleStatus && <span role={bundleStatus.includes('FAILED') ? 'alert' : 'status'} className="text-[9px] text-cyan-300">{bundleStatus}</span>}
         </div>
       </header>
-      <main className={`workspace-main ${currentTab === 'table' ? 'workspace-main-table' : ''} flex-1 flex overflow-hidden p-3 gap-3 bg-[var(--bg-shell-deep)]`}>
+      <main className={`workspace-main relative ${currentTab === 'table' ? 'workspace-main-table' : ''} flex-1 flex overflow-hidden p-3 gap-3 bg-[var(--bg-shell-deep)]`}>
         {currentTab === 'phrase'
           ? <div className="phrase-workspace">
               <PhraseTableEditor slots={padBank.slots} activeStep={visibleStep}
@@ -497,6 +518,46 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
                       </label>)}
                   </div>}
               </section>}
+        {drawerOpen && (
+          <aside aria-label="FX and menu drawer" className="spm8x-popout-drawer">
+            <div>
+              <strong>FX / MENU DRAWER</strong>
+              <button type="button" onClick={() => setDrawerOpen(false)}>HIDE</button>
+            </div>
+            <div>
+              {([0, 1, 2] as const).map((idx) => (
+                <label key={idx}>
+                  CTRL {idx + 1} (STAGED {stagedCtrl[idx]} / LIVE {confirmedCtrl[idx]})
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={stagedCtrl[idx]}
+                    onChange={(event) => setStagedCtrlValue(idx, Number(event.target.value))}
+                  />
+                </label>
+              ))}
+            </div>
+            <div>
+              <label>
+                TUBE AMP WARMTH (STAGED {tubeWarmthStaged} / LIVE {tubeWarmthConfirmed})
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={tubeWarmthStaged}
+                  onChange={(event) => setTubeWarmthStaged(Math.max(0, Math.min(100, Number(event.target.value))))}
+                />
+              </label>
+            </div>
+            <div>
+              <span>MASTER BUS CHAIN: GLUE -&gt; TAPE -&gt; LIMITER -&gt; SAFETY</span>
+              <button type="button" onClick={confirmStagedDrawerValues}>CONFIRM STAGED</button>
+            </div>
+          </aside>
+        )}
       </main>
       <footer className="flex items-center justify-between px-4 py-2 bg-[var(--bg-canvas)] border-t border-[var(--border-grid)] text-[10px] text-zinc-400 shrink-0">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
