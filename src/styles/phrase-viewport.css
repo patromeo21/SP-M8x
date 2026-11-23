@@ -1,4 +1,6 @@
 .app-shell {
+  display: flex;
+  flex-direction: column;
   height: 100vh;
   height: 100dvh;
   min-height: 0;
@@ -6,8 +8,12 @@
 }
 
 .workspace-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 .workspace-nav {
@@ -44,7 +50,12 @@
 }
 
 .workspace-main-table {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
   padding: 0;
+  overflow: hidden;
 }
 
 .workspace-main-table > .table-panel {
@@ -326,21 +337,28 @@
     grid-template-columns: repeat(4, minmax(0, 1fr));
     grid-template-rows: repeat(4, minmax(0, 1fr)) auto;
   }
+
+  .workspace-main-table,
+  .workspace-main-table > .table-panel {
+    flex: 1 1 0;
+    min-height: 0;
+    height: auto;
+  }
 }
 
-/* Ensure Table view panel expands and lets .table-grid-scroll fill height cleanly */
+/* Ensure Table view panel expands and lets .table-grid-scroll scroll all 16 subticks */
 .table-panel {
   display: flex;
   flex-direction: column;
   flex: 1 1 0;
   min-height: 0;
-  height: 100%;
+  height: auto;
 }
 
 .table-panel > .table-grid-scroll {
   flex: 1 1 0;
   min-height: 0;
-  height: 100%;
+  height: auto;
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
