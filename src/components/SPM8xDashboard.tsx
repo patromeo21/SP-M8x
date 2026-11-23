@@ -53,9 +53,9 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
   const [currentTab, setCurrentTab] = useState<WorkspaceTab>(initialTab);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [stagedCtrl, setStagedCtrl] = useState<[number, number, number]>([0, 0, 0]);
-  const [confirmedCtrl, setConfirmedCtrl] = useState<[number, number, number]>([0, 0, 0]);
-  const [tubeWarmthStaged, setTubeWarmthStaged] = useState(0);
-  const [tubeWarmthConfirmed, setTubeWarmthConfirmed] = useState(0);
+  const [confirmedCtrl, setConfirmedCtrl] = useState<[number, number, number]>(() => audioEngine.getConfirmedCtrl());
+  const [tubeWarmthStaged, setTubeWarmthStaged] = useState(() => audioEngine.getTubeWarmth());
+  const [tubeWarmthConfirmed, setTubeWarmthConfirmed] = useState(() => audioEngine.getTubeWarmth());
   const [contextLock, setContextLock] = useState(false);
   const padBank = usePadBank();
   const selectedPadContext: EditorProps['linkedPad'] = padBank.selectedPad ? {
@@ -445,8 +445,12 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
   }, []);
 
   const confirmStagedDrawerValues = useCallback(() => {
-    setConfirmedCtrl([...stagedCtrl] as [number, number, number]);
-    setTubeWarmthConfirmed(tubeWarmthStaged);
+    const nextCtrl: [number, number, number] = [...stagedCtrl] as [number, number, number];
+    const nextWarmth = Math.max(0, Math.min(100, Math.round(tubeWarmthStaged)));
+    audioEngine.setConfirmedCtrl(nextCtrl);
+    audioEngine.setTubeWarmth(nextWarmth);
+    setConfirmedCtrl(audioEngine.getConfirmedCtrl());
+    setTubeWarmthConfirmed(audioEngine.getTubeWarmth());
   }, [stagedCtrl, tubeWarmthStaged]);
 
   if (projectController.isReadOnly()) {

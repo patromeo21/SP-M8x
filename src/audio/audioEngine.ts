@@ -77,6 +77,9 @@ function scheduleAdsr(
 class AudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
+  private tubeWarmthGain: GainNode | null = null;
+  private tubeWarmthPercent = 0;
+  private confirmedCtrl: [number, number, number] = [0, 0, 0];
   private metronomeOscillator: OscillatorNode | null = null;
   private metronomeGain: GainNode | null = null;
   private masterOutput: AudioNode | null = null;
@@ -105,6 +108,11 @@ class AudioEngine {
       this.ctx = new AudioContextClass({ latencyHint: 'interactive' });
       this.masterGain = this.ctx.createGain();
       this.masterGain.gain.setValueAtTime(this.masterVolume, this.ctx.currentTime);
+      this.tubeWarmthGain = this.ctx.createGain();
+      this.tubeWarmthGain.gain.setValueAtTime(
+        this.computeTubeWarmthGain(this.tubeWarmthPercent),
+        this.ctx.currentTime,
+      );
       this.metronomeOscillator = this.ctx.createOscillator();
       this.metronomeOscillator.type = 'square';
       this.metronomeOscillator.frequency.setValueAtTime(880, this.ctx.currentTime);
@@ -114,7 +122,7 @@ class AudioEngine {
       this.metronomeOscillator.start();
 
       // SP-M8x master chain:
-      // masterGain -> glue compressor -> tape saturation -> hard limiter -> safety clamp -> out
+      // masterGain -> tubeWarmthGain -> glue compressor -> tape saturation -> hard limiter -> safety clamp -> out
       const glue = this.ctx.createDynamicsCompressor();
       glue.threshold.value = -12;
       glue.knee.value = 6;
@@ -124,7 +132,7 @@ class AudioEngine {
       const tape = this.ctx.createWaveShaper();
       tape.curve = makeTapeSaturationCurve(3.5);
       tape.oversample = '2x';
-      this.masterGain.connect(glue).connect(tape);
+      this.masterGain.connect(this.tubeWarmthGain).connect(glue).connect(tape);
       const limiter = createMasterLimiterNode(this.ctx);
       tape.connect(limiter);
       const safetyShaper = createSafetySaturationNode(this.ctx);
@@ -168,6 +176,36 @@ class AudioEngine {
     }
 
     return this.ctx;
+  }
+
+  private computeTubeWarmthGain(warmthPercent: number): number {
+    const normalized = clamp(warmthPercent, 0, 100) / 100;
+    return 1 + normalized * 0.25;
+  }
+
+  public setTubeWarmth(warmthPercent: number): void {
+    const clamped = Math.round(clamp(warmthPercent, 0, 100));
+    this.tubeWarmthPercent = clamped;
+    if (!this.ctx || !this.tubeWarmthGain) return;
+    const now = this.ctx.currentTime;
+    holdAudioParam(this.tubeWarmthGain.gain, now);
+    this.tubeWarmthGain.gain.setTargetAtTime(this.computeTubeWarmthGain(clamped), now, 0.015);
+  }
+
+  public getTubeWarmth(): number {
+    return this.tubeWarmthPercent;
+  }
+
+  public setConfirmedCtrl(values: [number, number, number]): void {
+    this.confirmedCtrl = [
+      Math.round(clamp(values[0], 0, 100)),
+      Math.round(clamp(values[1], 0, 100)),
+      Math.round(clamp(values[2], 0, 100)),
+    ];
+  }
+
+  public getConfirmedCtrl(): [number, number, number] {
+    return [...this.confirmedCtrl] as [number, number, number];
   }
 
   public getContext(): AudioContext | null {
