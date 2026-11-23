@@ -1,6 +1,7 @@
 /**
  * SP-M8x Hybrid Music Production Suite
  * projectController.ts — Single Source of Truth for Global State & Hybrid Persistence
+ * Anchor: SPM8X-FX-ANCHOR-01 (fix/ipad-viewport)
  */
 
 import { UndoRedoStack, type UndoableProjectData } from './undoStack';
@@ -8,6 +9,9 @@ import { validateStepEvent, type StepEvent } from './stepModel';
 import { validateConditionalTrig, type ConditionalTrig } from '../tracker/stepTypes';
 
 export type BankId = 'A' | 'B' | 'C' | 'D';
+
+export type VoiceSubtickFxCode = 'PS' | 'FL' | 'DL' | 'OFF';
+export type PunchInFx3Code = 'PM' | 'LF' | 'BC' | 'OFF';
 
 export interface PadProjectData {
   id: string; // e.g. "A1"
@@ -26,6 +30,10 @@ export interface TrackerStepItem {
   instrumentId: number | null;
   fx?: string;
   fxValue?: number;
+  fx2?: VoiceSubtickFxCode | string;
+  fx2Value?: number;
+  fx3?: PunchInFx3Code;
+  fx3Value?: number;
   subTickOffset?: number;
   velocity?: number;
   tableId?: number | null;
@@ -38,8 +46,12 @@ export interface TableStep {
   pitch: number | null;
   volume: number | null;
   reset?: boolean;
-  fx?: 'FL' | 'DL' | 'DR' | 'PS' | 'OFF';
+  fx?: VoiceSubtickFxCode | 'DR';
   fxValue?: number;
+  fx2?: VoiceSubtickFxCode;
+  fx2Value?: number;
+  fx3?: PunchInFx3Code;
+  fx3Value?: number;
   subTickOffset?: number;
 }
 
@@ -97,6 +109,9 @@ const TABLE_PAGE_TICKS = 128;
 const TABLE_PAGES = 4;
 const MAX_RECORDED_EVENTS_PER_STEP = 3;
 
+const VALID_VOICE_FX_CODES = new Set<string>(['PS', 'FL', 'DL', 'OFF']);
+const VALID_PUNCH_FX3_CODES = new Set<string>(['PM', 'LF', 'BC', 'OFF']);
+
 function isPhraseLength(value: number): value is PhraseLength {
   return value === 16 || value === 32 || value === 64;
 }
@@ -117,6 +132,30 @@ function validTrack(index: number): boolean {
 
 function validateVolume(volume: number): void {
   if (!Number.isFinite(volume) || volume < 0 || volume > 1) throw new Error('Track volume must be between 0 and 1.');
+}
+
+function validateFxSlotValue(value: unknown, label: string): void {
+  if (value === undefined) return;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 127) {
+    throw new Error(`Invalid ${label} value: must be between 0 and 127.`);
+  }
+}
+
+function normalizeFx2Code(raw: unknown): VoiceSubtickFxCode | undefined {
+  if (raw === undefined || raw === '' || raw === null) return undefined;
+  if (typeof raw !== 'string') throw new Error('Invalid FX2 opcode.');
+  const upper = raw.toUpperCase();
+  if (upper === 'DR') return undefined; // DRIVE permanently retired
+  if (!VALID_VOICE_FX_CODES.has(upper)) throw new Error(`Invalid FX2 opcode: ${raw}`);
+  return upper as VoiceSubtickFxCode;
+}
+
+function normalizeFx3Code(raw: unknown): PunchInFx3Code | undefined {
+  if (raw === undefined || raw === '' || raw === null) return undefined;
+  if (typeof raw !== 'string') throw new Error('Invalid FX3 opcode.');
+  const upper = raw.toUpperCase();
+  if (!VALID_PUNCH_FX3_CODES.has(upper)) throw new Error(`Invalid FX3 opcode: ${raw}`);
+  return upper as PunchInFx3Code;
 }
 
 function migrateStep(value: unknown): TrackerStepItem {
@@ -145,8 +184,19 @@ function migrateStep(value: unknown): TrackerStepItem {
   if (step.trig !== undefined && !validateConditionalTrig(step.trig)) {
     throw new Error('Invalid phrase step condition.');
   }
+  validateFxSlotValue(step.fxValue, 'FX1');
+  const normalizedFx2 = normalizeFx2Code(step.fx2);
+  validateFxSlotValue(step.fx2Value, 'FX2');
+  const normalizedFx3 = normalizeFx3Code(step.fx3);
+  validateFxSlotValue(step.fx3Value, 'FX3');
   const { sampleId: _sampleId, ...rest } = step;
-  return { ...rest, note: step.note, instrumentId: instrumentId as number | null };
+  return {
+    ...rest,
+    note: step.note,
+    instrumentId: instrumentId as number | null,
+    ...(normalizedFx2 !== undefined ? { fx2: normalizedFx2 } : { fx2: undefined }),
+    ...(normalizedFx3 !== undefined ? { fx3: normalizedFx3 } : { fx3: undefined }),
+  };
 }
 
 function migrateProject(state: ProjectState): boolean {
@@ -230,9 +280,9 @@ function migrateProject(state: ProjectState): boolean {
       if (!isPhraseLength(storedLength) || storedLength < pattern.length) throw new Error('Invalid phrase track length.');
       pattern.tracks.forEach((track, index) => {
         if (!track || track.id !== index || !Array.isArray(track.steps) || track.steps.length !== storedLength) throw new Error('Invalid phrase track.');
-        track.steps.forEach((step) => {
+        track.steps.forEach((step, stepIdx) => {
           if ('sampleId' in (step ?? {})) throw new Error('Legacy sample ID in phrase track.');
-          migrateStep(step);
+          track.steps[stepIdx] = migrateStep(step);
         });
       });
     }
@@ -340,7 +390,7 @@ class ProjectController {
   private getDefaultState(): ProjectState {
     const initialPads: Record<string, PadProjectData> = {};
     const banks: BankId[] = ['A', 'B', 'C', 'D'];
-    
+
     banks.forEach((bank) => {
       for (let i = 1; i <= 16; i++) {
         const padId = `${bank}${i}`;
@@ -441,7 +491,7 @@ class ProjectController {
 
   private notify(recordHistory = true): void {
     if (recordHistory) this.undoStack.push(this.state);
-    this.saveToLocalStorage(); // Auto-save on every state change
+    this.saveToLocalStorage();
     this.notifyListeners();
   }
 
@@ -456,7 +506,7 @@ class ProjectController {
       },
       tracker: { patterns, tables: snapshot.tracker.tables },
     };
-    migrateProject(candidate); // Validates before anything is replaced.
+    migrateProject(candidate);
     this.state = candidate;
   }
 
@@ -640,7 +690,10 @@ class ProjectController {
     const previous = track.steps[stepIndex];
     const invalidatesRecordedEvents = Boolean(previous.events?.length) && (
       stepData.note !== undefined || stepData.instrumentId !== undefined || stepData.subTickOffset !== undefined ||
-      stepData.velocity !== undefined || stepData.sliceIndex !== undefined || stepData.fx !== undefined || stepData.fxValue !== undefined
+      stepData.velocity !== undefined || stepData.sliceIndex !== undefined ||
+      stepData.fx !== undefined || stepData.fxValue !== undefined ||
+      stepData.fx2 !== undefined || stepData.fx2Value !== undefined ||
+      stepData.fx3 !== undefined || stepData.fx3Value !== undefined
     );
     const updated = {
       ...previous,
@@ -650,8 +703,7 @@ class ProjectController {
       ...(invalidatesRecordedEvents ? { events: undefined } : {}),
     };
     if ('sampleId' in updated) throw new Error('Legacy sample ID in phrase track.');
-    migrateStep(updated);
-    track.steps[stepIndex] = updated;
+    track.steps[stepIndex] = migrateStep(updated);
     this.notify();
   }
 
@@ -663,7 +715,20 @@ class ProjectController {
     for (const index of new Set(stepIndices)) {
       const step = track.steps[index];
       if ((!step.note || step.note === '---') && step.instrumentId === null && step.events === undefined) continue;
-      track.steps[index] = { ...step, note: '---', instrumentId: null, subTickOffset: 0, velocity: undefined, tableId: null, sliceIndex: undefined, events: undefined };
+      track.steps[index] = {
+        ...step,
+        note: '---',
+        instrumentId: null,
+        subTickOffset: 0,
+        velocity: undefined,
+        tableId: null,
+        sliceIndex: undefined,
+        events: undefined,
+        fx2: undefined,
+        fx2Value: undefined,
+        fx3: undefined,
+        fx3Value: undefined,
+      };
       changed = true;
     }
     if (changed) this.notify();
@@ -687,19 +752,19 @@ class ProjectController {
     this.assertWritable();
     this.getTrack(patternIndex, preferredTrack);
     this.validateStepIndex(patternIndex, stepIndex);
-    migrateStep(event);
+    const validatedEvent = migrateStep(event);
     if ('sampleId' in event) throw new Error('Legacy sample ID in phrase track.');
-    if (!event.note || event.note === '---' || event.instrumentId === null) throw new Error('Invalid recorded note.');
-    const velocity = event.velocity ?? 127;
+    if (!validatedEvent.note || validatedEvent.note === '---' || validatedEvent.instrumentId === null) throw new Error('Invalid recorded note.');
+    const velocity = validatedEvent.velocity ?? 127;
     if (!Number.isInteger(velocity) || velocity < 0 || velocity > 127) throw new Error('Invalid velocity.');
     const pattern = this.state.tracker.patterns[patternIndex];
     const track = pattern.tracks[this.selectedTrackIndex];
     const step = track.steps[stepIndex];
-    if (step.instrumentId === event.instrumentId && step.note === event.note && step.sliceIndex === event.sliceIndex &&
-        (step.subTickOffset ?? 0) === (event.subTickOffset ?? 0)) {
+    if (step.instrumentId === validatedEvent.instrumentId && step.note === validatedEvent.note && step.sliceIndex === validatedEvent.sliceIndex &&
+        (step.subTickOffset ?? 0) === (validatedEvent.subTickOffset ?? 0)) {
       track.steps[stepIndex] = { ...step, velocity, events: undefined };
     } else {
-      track.steps[stepIndex] = { ...event, velocity, events: undefined };
+      track.steps[stepIndex] = { ...validatedEvent, velocity, events: undefined };
     }
     this.notify();
     return this.selectedTrackIndex;
@@ -710,9 +775,9 @@ class ProjectController {
     const track = this.getTrack(patternIndex, this.selectedTrackIndex);
     this.validateStepIndex(patternIndex, stepIndex);
     validateStepEvent(recordedEvent);
-    migrateStep(event);
-    if (!event.note || event.note === '---' || event.instrumentId === null) throw new Error('Invalid recorded note.');
-    const velocity = event.velocity ?? recordedEvent.velocity;
+    const validatedEvent = migrateStep(event);
+    if (!validatedEvent.note || validatedEvent.note === '---' || validatedEvent.instrumentId === null) throw new Error('Invalid recorded note.');
+    const velocity = validatedEvent.velocity ?? recordedEvent.velocity;
     if (!Number.isInteger(velocity) || velocity < 0 || velocity > 127) throw new Error('Invalid velocity.');
 
     const previous = track.steps[stepIndex];
@@ -723,14 +788,14 @@ class ProjectController {
       : [...previousEvents.slice(1), eventToRecord];
     const updated = {
       ...previous,
-      note: event.note,
-      instrumentId: event.instrumentId,
-      subTickOffset: event.subTickOffset,
+      note: validatedEvent.note,
+      instrumentId: validatedEvent.instrumentId,
+      subTickOffset: validatedEvent.subTickOffset,
       velocity,
-      ...(event.sliceIndex === undefined ? {} : { sliceIndex: event.sliceIndex }),
+      ...(validatedEvent.sliceIndex === undefined ? {} : { sliceIndex: validatedEvent.sliceIndex }),
       events,
     };
-    if (event.sliceIndex === undefined) delete updated.sliceIndex;
+    if (validatedEvent.sliceIndex === undefined) delete updated.sliceIndex;
     track.steps[stepIndex] = updated;
     this.notify();
     return this.selectedTrackIndex;
@@ -871,7 +936,16 @@ class ProjectController {
         (!Number.isInteger(changes.subTickOffset) || changes.subTickOffset < -8 || changes.subTickOffset > 8)) {
       throw new Error('Table microtiming must be -8 to 8.');
     }
-    Object.assign(step, changes);
+    validateFxSlotValue(changes.fxValue, 'Table FX1');
+    const normalizedFx2 = 'fx2' in changes ? normalizeFx2Code(changes.fx2) : step.fx2;
+    validateFxSlotValue(changes.fx2Value, 'Table FX2');
+    const normalizedFx3 = 'fx3' in changes ? normalizeFx3Code(changes.fx3) : step.fx3;
+    validateFxSlotValue(changes.fx3Value, 'Table FX3');
+    Object.assign(step, {
+      ...changes,
+      ...('fx2' in changes ? { fx2: normalizedFx2 } : {}),
+      ...('fx3' in changes ? { fx3: normalizedFx3 } : {}),
+    });
     this.notify();
   }
 
@@ -884,7 +958,7 @@ class ProjectController {
     let changed = false;
     for (const index of new Set(stepIndices)) {
       const step = table.steps[index];
-      if (!step || (step.pitch === null && !step.reset && !step.fx && step.subTickOffset === undefined)) continue;
+      if (!step || (step.pitch === null && !step.reset && !step.fx && !step.fx2 && !step.fx3 && step.subTickOffset === undefined)) continue;
       table.steps[index] = { pitch: null, volume: step.volume };
       changed = true;
     }
