@@ -1,7 +1,6 @@
 /**
  * SP-M8x Hybrid Music Production Suite
  * projectController.ts — Single Source of Truth for Global State & Hybrid Persistence
- * Anchor: SPM8X-FX-ANCHOR-01 (fix/ipad-viewport)
  */
 
 import { UndoRedoStack, type UndoableProjectData } from './undoStack';
@@ -10,8 +9,9 @@ import { validateConditionalTrig, type ConditionalTrig } from '../tracker/stepTy
 
 export type BankId = 'A' | 'B' | 'C' | 'D';
 
-export type VoiceSubtickFxCode = 'PS' | 'FL' | 'DL' | 'OFF';
-export type PunchInFx3Code = 'PM' | 'LF' | 'BC' | 'OFF';
+export type VoiceSlotFxCode = 'FL' | 'DL' | 'PS' | 'OFF';
+export type PunchInSlotFxCode = 'PM' | 'LF' | 'BC' | 'OFF';
+export type StepFxCode = VoiceSlotFxCode | PunchInSlotFxCode | '00' | string;
 
 export interface PadProjectData {
   id: string; // e.g. "A1"
@@ -28,11 +28,14 @@ export interface PadProjectData {
 export interface TrackerStepItem {
   note: string;
   instrumentId: number | null;
+  /** FX1: Subtick/voice shaping slot (PS, FL, DL, OFF). */
   fx?: string;
   fxValue?: number;
-  fx2?: VoiceSubtickFxCode | string;
+  /** FX2: Secondary subtick/voice shaping slot (PS, FL, DL, OFF). */
+  fx2?: VoiceSlotFxCode | '';
   fx2Value?: number;
-  fx3?: PunchInFx3Code;
+  /** FX3: Grid-recordable punch-in slot (PM, LF, BC, OFF). */
+  fx3?: PunchInSlotFxCode | '';
   fx3Value?: number;
   subTickOffset?: number;
   velocity?: number;
@@ -46,11 +49,14 @@ export interface TableStep {
   pitch: number | null;
   volume: number | null;
   reset?: boolean;
-  fx?: VoiceSubtickFxCode | 'DR';
+  /** FX1: Subtick/voice shaping slot (PS, FL, DL, OFF). */
+  fx?: 'FL' | 'DL' | 'PS' | 'OFF';
   fxValue?: number;
-  fx2?: VoiceSubtickFxCode;
+  /** FX2: Secondary subtick/voice shaping slot (PS, FL, DL, OFF). */
+  fx2?: 'FL' | 'DL' | 'PS' | 'OFF';
   fx2Value?: number;
-  fx3?: PunchInFx3Code;
+  /** FX3: Grid-recordable punch-in slot (PM, LF, BC, OFF). */
+  fx3?: PunchInSlotFxCode;
   fx3Value?: number;
   subTickOffset?: number;
 }
@@ -109,8 +115,8 @@ const TABLE_PAGE_TICKS = 128;
 const TABLE_PAGES = 4;
 const MAX_RECORDED_EVENTS_PER_STEP = 3;
 
-const VALID_VOICE_FX_CODES = new Set<string>(['PS', 'FL', 'DL', 'OFF']);
-const VALID_PUNCH_FX3_CODES = new Set<string>(['PM', 'LF', 'BC', 'OFF']);
+const VOICE_SLOT_CODES = new Set<string>(['FL', 'DL', 'PS', 'OFF']);
+const PUNCH_IN_SLOT_CODES = new Set<string>(['PM', 'LF', 'BC', 'OFF']);
 
 function isPhraseLength(value: number): value is PhraseLength {
   return value === 16 || value === 32 || value === 64;
@@ -134,28 +140,29 @@ function validateVolume(volume: number): void {
   if (!Number.isFinite(volume) || volume < 0 || volume > 1) throw new Error('Track volume must be between 0 and 1.');
 }
 
-function validateFxSlotValue(value: unknown, label: string): void {
-  if (value === undefined) return;
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 127) {
-    throw new Error(`Invalid ${label} value: must be between 0 and 127.`);
+function sanitizeFxSlotValue(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error('Invalid FX parameter value.');
   }
+  return Math.max(0, Math.min(127, Math.round(value)));
 }
 
-function normalizeFx2Code(raw: unknown): VoiceSubtickFxCode | undefined {
-  if (raw === undefined || raw === '' || raw === null) return undefined;
-  if (typeof raw !== 'string') throw new Error('Invalid FX2 opcode.');
-  const upper = raw.toUpperCase();
-  if (upper === 'DR') return undefined; // DRIVE permanently retired
-  if (!VALID_VOICE_FX_CODES.has(upper)) throw new Error(`Invalid FX2 opcode: ${raw}`);
-  return upper as VoiceSubtickFxCode;
+function sanitizeVoiceSlotCode(code: unknown): VoiceSlotFxCode | '' | undefined {
+  if (code === undefined) return undefined;
+  if (typeof code !== 'string') throw new Error('Invalid FX1/FX2 opcode.');
+  if (code === '' || code === '00') return '';
+  if (code === 'DR') return 'OFF';
+  if (!VOICE_SLOT_CODES.has(code)) throw new Error(`Invalid FX1/FX2 opcode: ${code}`);
+  return code as VoiceSlotFxCode;
 }
 
-function normalizeFx3Code(raw: unknown): PunchInFx3Code | undefined {
-  if (raw === undefined || raw === '' || raw === null) return undefined;
-  if (typeof raw !== 'string') throw new Error('Invalid FX3 opcode.');
-  const upper = raw.toUpperCase();
-  if (!VALID_PUNCH_FX3_CODES.has(upper)) throw new Error(`Invalid FX3 opcode: ${raw}`);
-  return upper as PunchInFx3Code;
+function sanitizePunchInSlotCode(code: unknown): PunchInSlotFxCode | '' | undefined {
+  if (code === undefined) return undefined;
+  if (typeof code !== 'string') throw new Error('Invalid FX3 punch-in opcode.');
+  if (code === '' || code === '00') return '';
+  if (!PUNCH_IN_SLOT_CODES.has(code)) throw new Error(`Invalid FX3 punch-in opcode: ${code}`);
+  return code as PunchInSlotFxCode;
 }
 
 function migrateStep(value: unknown): TrackerStepItem {
@@ -184,18 +191,23 @@ function migrateStep(value: unknown): TrackerStepItem {
   if (step.trig !== undefined && !validateConditionalTrig(step.trig)) {
     throw new Error('Invalid phrase step condition.');
   }
-  validateFxSlotValue(step.fxValue, 'FX1');
-  const normalizedFx2 = normalizeFx2Code(step.fx2);
-  validateFxSlotValue(step.fx2Value, 'FX2');
-  const normalizedFx3 = normalizeFx3Code(step.fx3);
-  validateFxSlotValue(step.fx3Value, 'FX3');
+  const fx1 = typeof step.fx === 'string' && step.fx === 'DR' ? 'OFF' : step.fx;
+  const fx1Value = sanitizeFxSlotValue(step.fxValue);
+  const fx2 = sanitizeVoiceSlotCode(step.fx2);
+  const fx2Value = sanitizeFxSlotValue(step.fx2Value);
+  const fx3 = sanitizePunchInSlotCode(step.fx3);
+  const fx3Value = sanitizeFxSlotValue(step.fx3Value);
   const { sampleId: _sampleId, ...rest } = step;
   return {
     ...rest,
     note: step.note,
     instrumentId: instrumentId as number | null,
-    ...(normalizedFx2 !== undefined ? { fx2: normalizedFx2 } : { fx2: undefined }),
-    ...(normalizedFx3 !== undefined ? { fx3: normalizedFx3 } : { fx3: undefined }),
+    ...(fx1 !== undefined ? { fx: fx1 as string } : {}),
+    ...(fx1Value !== undefined ? { fxValue: fx1Value } : {}),
+    ...(fx2 !== undefined ? { fx2 } : {}),
+    ...(fx2Value !== undefined ? { fx2Value } : {}),
+    ...(fx3 !== undefined ? { fx3 } : {}),
+    ...(fx3Value !== undefined ? { fx3Value } : {}),
   };
 }
 
@@ -304,7 +316,19 @@ function normalizeTablePages(state: ProjectState): boolean {
     } else if (!validTrack(table.trackIndex)) {
       throw new Error('Invalid table track index.');
     }
-    if (table.steps.length === TABLE_PAGE_TICKS * TABLE_PAGES) continue;
+    if (table.steps.length === TABLE_PAGE_TICKS * TABLE_PAGES) {
+      for (const step of table.steps) {
+        if ((step.fx as string | undefined) === 'DR') {
+          step.fx = 'OFF';
+          changed = true;
+        }
+        if ((step.fx2 as string | undefined) === 'DR') {
+          step.fx2 = 'OFF';
+          changed = true;
+        }
+      }
+      continue;
+    }
     const previous = table.steps;
     const steps = Array.from({ length: TABLE_PAGE_TICKS * TABLE_PAGES }, (): TableStep => ({ pitch: null, volume: null }));
     if (previous.length === 16) {
@@ -491,7 +515,7 @@ class ProjectController {
 
   private notify(recordHistory = true): void {
     if (recordHistory) this.undoStack.push(this.state);
-    this.saveToLocalStorage();
+    this.saveToLocalStorage(); // Auto-save on every state change
     this.notifyListeners();
   }
 
@@ -506,7 +530,7 @@ class ProjectController {
       },
       tracker: { patterns, tables: snapshot.tracker.tables },
     };
-    migrateProject(candidate);
+    migrateProject(candidate); // Validates before anything is replaced.
     this.state = candidate;
   }
 
@@ -715,20 +739,7 @@ class ProjectController {
     for (const index of new Set(stepIndices)) {
       const step = track.steps[index];
       if ((!step.note || step.note === '---') && step.instrumentId === null && step.events === undefined) continue;
-      track.steps[index] = {
-        ...step,
-        note: '---',
-        instrumentId: null,
-        subTickOffset: 0,
-        velocity: undefined,
-        tableId: null,
-        sliceIndex: undefined,
-        events: undefined,
-        fx2: undefined,
-        fx2Value: undefined,
-        fx3: undefined,
-        fx3Value: undefined,
-      };
+      track.steps[index] = { ...step, note: '---', instrumentId: null, subTickOffset: 0, velocity: undefined, tableId: null, sliceIndex: undefined, events: undefined };
       changed = true;
     }
     if (changed) this.notify();
@@ -752,19 +763,19 @@ class ProjectController {
     this.assertWritable();
     this.getTrack(patternIndex, preferredTrack);
     this.validateStepIndex(patternIndex, stepIndex);
-    const validatedEvent = migrateStep(event);
+    const normalizedEvent = migrateStep(event);
     if ('sampleId' in event) throw new Error('Legacy sample ID in phrase track.');
-    if (!validatedEvent.note || validatedEvent.note === '---' || validatedEvent.instrumentId === null) throw new Error('Invalid recorded note.');
-    const velocity = validatedEvent.velocity ?? 127;
+    if (!normalizedEvent.note || normalizedEvent.note === '---' || normalizedEvent.instrumentId === null) throw new Error('Invalid recorded note.');
+    const velocity = normalizedEvent.velocity ?? 127;
     if (!Number.isInteger(velocity) || velocity < 0 || velocity > 127) throw new Error('Invalid velocity.');
     const pattern = this.state.tracker.patterns[patternIndex];
     const track = pattern.tracks[this.selectedTrackIndex];
     const step = track.steps[stepIndex];
-    if (step.instrumentId === validatedEvent.instrumentId && step.note === validatedEvent.note && step.sliceIndex === validatedEvent.sliceIndex &&
-        (step.subTickOffset ?? 0) === (validatedEvent.subTickOffset ?? 0)) {
+    if (step.instrumentId === normalizedEvent.instrumentId && step.note === normalizedEvent.note && step.sliceIndex === normalizedEvent.sliceIndex &&
+        (step.subTickOffset ?? 0) === (normalizedEvent.subTickOffset ?? 0)) {
       track.steps[stepIndex] = { ...step, velocity, events: undefined };
     } else {
-      track.steps[stepIndex] = { ...validatedEvent, velocity, events: undefined };
+      track.steps[stepIndex] = { ...normalizedEvent, velocity, events: undefined };
     }
     this.notify();
     return this.selectedTrackIndex;
@@ -775,9 +786,9 @@ class ProjectController {
     const track = this.getTrack(patternIndex, this.selectedTrackIndex);
     this.validateStepIndex(patternIndex, stepIndex);
     validateStepEvent(recordedEvent);
-    const validatedEvent = migrateStep(event);
-    if (!validatedEvent.note || validatedEvent.note === '---' || validatedEvent.instrumentId === null) throw new Error('Invalid recorded note.');
-    const velocity = validatedEvent.velocity ?? recordedEvent.velocity;
+    const normalizedEvent = migrateStep(event);
+    if (!normalizedEvent.note || normalizedEvent.note === '---' || normalizedEvent.instrumentId === null) throw new Error('Invalid recorded note.');
+    const velocity = normalizedEvent.velocity ?? recordedEvent.velocity;
     if (!Number.isInteger(velocity) || velocity < 0 || velocity > 127) throw new Error('Invalid velocity.');
 
     const previous = track.steps[stepIndex];
@@ -788,14 +799,14 @@ class ProjectController {
       : [...previousEvents.slice(1), eventToRecord];
     const updated = {
       ...previous,
-      note: validatedEvent.note,
-      instrumentId: validatedEvent.instrumentId,
-      subTickOffset: validatedEvent.subTickOffset,
+      note: normalizedEvent.note,
+      instrumentId: normalizedEvent.instrumentId,
+      subTickOffset: normalizedEvent.subTickOffset,
       velocity,
-      ...(validatedEvent.sliceIndex === undefined ? {} : { sliceIndex: validatedEvent.sliceIndex }),
+      ...(normalizedEvent.sliceIndex === undefined ? {} : { sliceIndex: normalizedEvent.sliceIndex }),
       events,
     };
-    if (validatedEvent.sliceIndex === undefined) delete updated.sliceIndex;
+    if (normalizedEvent.sliceIndex === undefined) delete updated.sliceIndex;
     track.steps[stepIndex] = updated;
     this.notify();
     return this.selectedTrackIndex;
@@ -895,8 +906,8 @@ class ProjectController {
       Object.entries(step).every(([key, value]) => key === 'note' || key === 'instrumentId' ||
         value == null || (key === 'subTickOffset' && value === 0) || (key === 'fx' && value === ''));
     if (!empty) return false;
-    migrateStep({ note: 'OFF', instrumentId, subTickOffset });
-    track.steps[stepIndex] = { note: 'OFF', instrumentId, subTickOffset };
+    const releaseStep = migrateStep({ note: 'OFF', instrumentId, subTickOffset });
+    track.steps[stepIndex] = releaseStep;
     this.notify();
     return true;
   }
@@ -936,16 +947,22 @@ class ProjectController {
         (!Number.isInteger(changes.subTickOffset) || changes.subTickOffset < -8 || changes.subTickOffset > 8)) {
       throw new Error('Table microtiming must be -8 to 8.');
     }
-    validateFxSlotValue(changes.fxValue, 'Table FX1');
-    const normalizedFx2 = 'fx2' in changes ? normalizeFx2Code(changes.fx2) : step.fx2;
-    validateFxSlotValue(changes.fx2Value, 'Table FX2');
-    const normalizedFx3 = 'fx3' in changes ? normalizeFx3Code(changes.fx3) : step.fx3;
-    validateFxSlotValue(changes.fx3Value, 'Table FX3');
-    Object.assign(step, {
-      ...changes,
-      ...('fx2' in changes ? { fx2: normalizedFx2 } : {}),
-      ...('fx3' in changes ? { fx3: normalizedFx3 } : {}),
-    });
+    const sanitizedChanges: Partial<TableStep> = { ...changes };
+    if ((sanitizedChanges.fx as string | undefined) === 'DR') sanitizedChanges.fx = 'OFF';
+    if ((sanitizedChanges.fx2 as string | undefined) === 'DR') sanitizedChanges.fx2 = 'OFF';
+    if (sanitizedChanges.fx !== undefined && sanitizedChanges.fx !== null && !VOICE_SLOT_CODES.has(sanitizedChanges.fx)) {
+      throw new Error(`Invalid Table FX1 opcode: ${String(sanitizedChanges.fx)}`);
+    }
+    if (sanitizedChanges.fx2 !== undefined && sanitizedChanges.fx2 !== null && !VOICE_SLOT_CODES.has(sanitizedChanges.fx2)) {
+      throw new Error(`Invalid Table FX2 opcode: ${String(sanitizedChanges.fx2)}`);
+    }
+    if (sanitizedChanges.fx3 !== undefined && sanitizedChanges.fx3 !== null && !PUNCH_IN_SLOT_CODES.has(sanitizedChanges.fx3)) {
+      throw new Error(`Invalid Table FX3 punch-in opcode: ${String(sanitizedChanges.fx3)}`);
+    }
+    if (sanitizedChanges.fxValue !== undefined) sanitizedChanges.fxValue = sanitizeFxSlotValue(sanitizedChanges.fxValue);
+    if (sanitizedChanges.fx2Value !== undefined) sanitizedChanges.fx2Value = sanitizeFxSlotValue(sanitizedChanges.fx2Value);
+    if (sanitizedChanges.fx3Value !== undefined) sanitizedChanges.fx3Value = sanitizeFxSlotValue(sanitizedChanges.fx3Value);
+    Object.assign(step, sanitizedChanges);
     this.notify();
   }
 
