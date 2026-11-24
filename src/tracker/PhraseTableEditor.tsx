@@ -161,7 +161,7 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, groo
   return (
     <div className="phrase-grid-scroll phrase-sequencer-list flex-1 min-h-0" aria-label="Vertical phrase steps">
       <div className="phrase-grid-header phrase-sequencer-grid">
-        <span>STEP</span><span>NOTE</span><span>INST</span><span>VOL</span><span>FX1</span><span>FX2</span><span>FX3</span><span>MICRO</span><span>TBL</span><span>COND</span>
+        <span>STEP</span><span>MICRO</span><span>TBL</span><span>NOTE</span><span>INST</span><span>VOL</span><span>FX1</span><span>FX2</span><span>FX3</span><span>COND</span>
       </div>
       {steps.slice(page * 16, page * 16 + 16).map((step, row) => {
         const index = page * 16 + row;
@@ -184,6 +184,29 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, groo
               className={`phrase-step-toggle ${active ? 'is-active' : ''} ${isGrooveSubAccent ? 'text-rose-300 border-rose-500' : ''}`}>
               {stepNumber(index)}
             </button>
+            <div className="phrase-microtiming-control" aria-label={`Phrase microtiming step ${index + 1}`}>
+              <button type="button" aria-label={`Move step ${index + 1} earlier`} disabled={!padId}
+                onClick={() => projectController.updateStep(patternIndex, index, {
+                  subTickOffset: clampSubtickOffset(microOffset - 1),
+                }, trackIndex)}>−</button>
+              <button type="button" className="phrase-micro-zero" aria-label={`Reset step ${index + 1} microtiming to zero`} disabled={!padId}
+                onClick={() => projectController.updateStep(patternIndex, index, { subTickOffset: 0 }, trackIndex)}>
+                {microOffset === 0 ? '0' : microOffset > 0 ? `+${microOffset}` : String(microOffset)}
+              </button>
+              <button type="button" aria-label={`Move step ${index + 1} later`} disabled={!padId}
+                onClick={() => projectController.updateStep(patternIndex, index, {
+                  subTickOffset: clampSubtickOffset(microOffset + 1),
+                }, trackIndex)}>+</button>
+            </div>
+            <select aria-label={`Phrase table step ${index + 1}`} className={fieldClass}
+              value={step.tableId ?? ''} disabled={!padId}
+              data-filled={step.tableId !== null ? 'true' : undefined}
+              onChange={(event) => projectController.updateStep(patternIndex, index, {
+                tableId: event.target.value ? Number(event.target.value) : null,
+              }, trackIndex)}>
+              <option value="">---</option>
+              {projectController.getTables(trackIndex).map((table) => <option key={table.id} value={table.id}>{table.name}</option>)}
+            </select>
             <select aria-label={`Phrase note step ${index + 1}`} className={fieldClass} value={step.note || '---'}
               disabled={!padId} onChange={(event) => projectController.updateStep(patternIndex, index, { note: event.target.value }, trackIndex)}
               data-filled={step.note && step.note !== '---' ? 'true' : undefined}>
@@ -242,29 +265,6 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, groo
                 }, trackIndex);
               }}>
               {PUNCH_FX3_OPTIONS.map((code) => <option key={code} value={code}>{code}</option>)}
-            </select>
-            <div className="phrase-microtiming-control" aria-label={`Phrase microtiming step ${index + 1}`}>
-              <button type="button" aria-label={`Move step ${index + 1} earlier`} disabled={!padId}
-                onClick={() => projectController.updateStep(patternIndex, index, {
-                  subTickOffset: clampSubtickOffset(microOffset - 1),
-                }, trackIndex)}>−</button>
-              <button type="button" className="phrase-micro-zero" aria-label={`Reset step ${index + 1} microtiming to zero`} disabled={!padId}
-                onClick={() => projectController.updateStep(patternIndex, index, { subTickOffset: 0 }, trackIndex)}>
-                {microOffset === 0 ? '0' : microOffset > 0 ? `+${microOffset}` : String(microOffset)}
-              </button>
-              <button type="button" aria-label={`Move step ${index + 1} later`} disabled={!padId}
-                onClick={() => projectController.updateStep(patternIndex, index, {
-                  subTickOffset: clampSubtickOffset(microOffset + 1),
-                }, trackIndex)}>+</button>
-            </div>
-            <select aria-label={`Phrase table step ${index + 1}`} className={fieldClass}
-              value={step.tableId ?? ''} disabled={!padId}
-              data-filled={step.tableId !== null ? 'true' : undefined}
-              onChange={(event) => projectController.updateStep(patternIndex, index, {
-                tableId: event.target.value ? Number(event.target.value) : null,
-              }, trackIndex)}>
-              <option value="">---</option>
-              {projectController.getTables(trackIndex).map((table) => <option key={table.id} value={table.id}>{table.name}</option>)}
             </select>
             <select aria-label={`Phrase condition step ${index + 1}`} className={fieldClass}
               value={step.trig?.fillOnly ? 'FILL' : step.trig?.cycleCondition ?? ''}
