@@ -10,11 +10,17 @@ import { MacroFxBus, type FxBus, type MacroFx } from '../fx/fxEngine';
 import { makeSafetyClampCurve, makeTapeSaturationCurve } from '../fx/dspMath';
 import { scheduleAHDSR, validateAHDSR, type AHDSRParams } from './ahdsr';
 import { DEFAULT_HARDWARE_ADSR, normalizeAdsrEnvelope, type AdsrEnvelope } from '../types';
+import type { PunchInSlotFxCode } from '../project/projectController';
 
 declare global {
   interface Window {
     webkitAudioContext?: typeof AudioContext;
   }
+}
+
+export interface PunchInCommand {
+  code: PunchInSlotFxCode;
+  value?: number;
 }
 
 export interface ActiveVoice {
@@ -44,6 +50,8 @@ export interface VoiceModulation {
   semitoneOffset?: number;
   volume?: number;
   fx?: VoiceFxCommand;
+  fx2?: VoiceFxCommand;
+  punchIn?: PunchInCommand;
 }
 
 const normalizePadKey = (padId: string | number): string => String(padId);
@@ -366,6 +374,37 @@ class AudioEngine {
     return reversed;
   }
 
+  private applyPunchInAt(
+    voiceGain: GainNode,
+    baseVolume: number,
+    punchIn: PunchInCommand | undefined,
+    time: number,
+    gainChanges: { time: number; gain: number }[],
+  ): void {
+    if (!punchIn) return;
+    if (punchIn.code === 'OFF') {
+      holdAudioParam(voiceGain.gain, time);
+      voiceGain.gain.setValueAtTime(baseVolume, time);
+      gainChanges.push({ time, gain: baseVolume });
+      return;
+    }
+    if (punchIn.code === 'PM') {
+      holdAudioParam(voiceGain.gain, time);
+      voiceGain.gain.setValueAtTime(0, time);
+      gainChanges.push({ time, gain: 0 });
+      return;
+    }
+    const depth = clamp((punchIn.value ?? 64) / 127, 0, 1);
+    const scaledGain =
+      punchIn.code === 'LF'
+        ? baseVolume * (1 - depth * 0.2)
+        : baseVolume * (1 - depth * 0.35);
+    const clampedGain = clamp(scaledGain, 0, 1);
+    holdAudioParam(voiceGain.gain, time);
+    voiceGain.gain.setValueAtTime(clampedGain, time);
+    gainChanges.push({ time, gain: clampedGain });
+  }
+
   public triggerPad(
     padId: string | number,
     options: {
@@ -378,6 +417,8 @@ class AudioEngine {
       scheduledTime?: number;
       modulation?: VoiceModulation[];
       fx?: VoiceFxCommand;
+      fx2?: VoiceFxCommand;
+      punchIn?: PunchInCommand;
       trackIndex?: number;
       gated?: boolean;
       padVolume?: number;
@@ -486,12 +527,21 @@ class AudioEngine {
     }
     const rateChanges: { time: number; rate: number }[] = [];
     if (options.fx) this.fxPool.applyTableOpcode(slot, options.fx, targetGainTime);
+    if (options.fx2 && options.fx2.code !== options.fx?.code) {
+      this.fxPool.applyTableOpcode(slot, options.fx2, targetGainTime);
+    }
+    if (options.punchIn) {
+      this.applyPunchInAt(voiceGain, volume, options.punchIn, targetGainTime, gainChanges);
+    }
     const modulation = [...(options.modulation ?? [])].sort((a, b) => a.offset - b.offset);
     for (let index = 0; index < modulation.length; index++) {
       const change = modulation[index];
       if (!Number.isFinite(change.offset) || change.offset < 0) continue;
       const time = targetGainTime + change.offset;
       if (change.fx) this.fxPool.applyTableOpcode(slot, change.fx, time);
+      if (change.fx2 && change.fx2.code !== change.fx?.code) {
+        this.fxPool.applyTableOpcode(slot, change.fx2, time);
+      }
       if (change.fx?.code === 'PS') {
         const slideSemitones = clamp(change.fx.value ?? 0, -24, 24);
         const startSemitone = clamp(semitones + (change.semitoneOffset ?? 0), -48, 48);
@@ -528,6 +578,9 @@ class AudioEngine {
         const gain = volume * clamp(change.volume, 0, 1);
         voiceGain.gain.setValueAtTime(gain, time);
         gainChanges.push({ time, gain });
+      }
+      if (change.punchIn) {
+        this.applyPunchInAt(voiceGain, volume, change.punchIn, time, gainChanges);
       }
     }
 

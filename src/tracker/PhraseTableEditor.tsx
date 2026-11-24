@@ -3,9 +3,9 @@ import {
   projectController,
   type Pattern,
   type PhraseLength,
-  type PunchInFx3Code,
+  type PunchInSlotFxCode,
   type TrackerTable,
-  type VoiceSubtickFxCode,
+  type VoiceSlotFxCode,
 } from '../project/projectController';
 import type { PadSlot } from '../sampler/usePadBank';
 import { getGrooveDelayedSteps, type GroovePreset } from './groovePresets';
@@ -18,8 +18,8 @@ const notes = ['C-', 'C#', 'D-', 'D#', 'E-', 'F-', 'F#', 'G-', 'G#', 'A-', 'A#',
 const noteName = (midi: number) => `${notes[midi % 12]}${Math.floor(midi / 12) - 1}`;
 const stepNumber = (stepIndex: number) => String(stepIndex + 1).padStart(2, '0');
 const QUICK_SPANS = [2, 4, 8, 16, 32, 64] as const;
-const VOICE_FX_OPTIONS: readonly VoiceSubtickFxCode[] = ['OFF', 'FL', 'DL', 'PS'];
-const PUNCH_FX3_OPTIONS: readonly PunchInFx3Code[] = ['OFF', 'PM', 'LF', 'BC'];
+const VOICE_FX_OPTIONS: readonly VoiceSlotFxCode[] = ['OFF', 'FL', 'DL', 'PS'];
+const PUNCH_FX3_OPTIONS: readonly PunchInSlotFxCode[] = ['OFF', 'PM', 'LF', 'BC'];
 
 export interface EditorProps {
   slots: Record<string, PadSlot>;
@@ -37,14 +37,14 @@ export interface EditorProps {
   onToggleContextLock?: () => void;
 }
 
-function normalizeVoiceFx(raw: unknown): VoiceSubtickFxCode {
+function normalizeVoiceFx(raw: unknown): VoiceSlotFxCode {
   if (typeof raw !== 'string') return 'OFF';
   const upper = raw.toUpperCase();
   if (upper === 'FL' || upper === 'DL' || upper === 'PS') return upper;
   return 'OFF';
 }
 
-function normalizePunchFx3(raw: unknown): PunchInFx3Code {
+function normalizePunchFx3(raw: unknown): PunchInSlotFxCode {
   if (typeof raw !== 'string') return 'OFF';
   const upper = raw.toUpperCase();
   if (upper === 'PM' || upper === 'LF' || upper === 'BC') return upper;

@@ -3,13 +3,13 @@
  * trackerBridge.ts — Connects Tracker Playhead Steps to Sampler Audio Triggers
  */
 
-import { audioEngine } from '../audio/audioEngine';
+import { audioEngine, type PunchInCommand } from '../audio/audioEngine';
 import {
   projectController,
   type Pattern,
-  type PunchInFx3Code,
+  type PunchInSlotFxCode,
   type TrackerStepItem,
-  type VoiceSubtickFxCode,
+  type VoiceSlotFxCode,
 } from '../project/projectController';
 import type { VoiceFxCommand } from '../fx/VoiceFxPool';
 import type { StepEvent } from '../project/stepModel';
@@ -59,17 +59,17 @@ function noteOffset(note: string): number {
   return (Number(match[3]) + 1) * 12 + semitones[match[1]] + (match[2] === '#' ? 1 : 0) - 60;
 }
 
-function normalizeVoiceFxCode(raw: unknown): VoiceSubtickFxCode | undefined {
+function normalizeVoiceFxCode(raw: unknown): VoiceSlotFxCode | undefined {
   if (typeof raw !== 'string' || raw === '' || raw === '00') return undefined;
   const upper = raw.toUpperCase();
   if (upper === 'DR') return 'OFF';
-  return VOICE_FX_CODES.has(upper) ? (upper as VoiceSubtickFxCode) : undefined;
+  return VOICE_FX_CODES.has(upper) ? (upper as VoiceSlotFxCode) : undefined;
 }
 
-function normalizePunchInFx3Code(raw: unknown): PunchInFx3Code | undefined {
+function normalizePunchInFx3Code(raw: unknown): PunchInSlotFxCode | undefined {
   if (typeof raw !== 'string' || raw === '' || raw === '00') return undefined;
   const upper = raw.toUpperCase();
-  return PUNCH_IN_FX3_CODES.has(upper) ? (upper as PunchInFx3Code) : undefined;
+  return PUNCH_IN_FX3_CODES.has(upper) ? (upper as PunchInSlotFxCode) : undefined;
 }
 
 function clampFxValue(raw: unknown): number | undefined {
@@ -79,6 +79,13 @@ function clampFxValue(raw: unknown): number | undefined {
 
 function toVoiceFxCommand(rawCode: unknown, rawValue: unknown): VoiceFxCommand | undefined {
   const code = normalizeVoiceFxCode(rawCode);
+  if (!code) return undefined;
+  const value = clampFxValue(rawValue);
+  return value === undefined ? { code } : { code, value };
+}
+
+function toPunchInCommand(rawCode: unknown, rawValue: unknown): PunchInCommand | undefined {
+  const code = normalizePunchInFx3Code(rawCode);
   if (!code) return undefined;
   const value = clampFxValue(rawValue);
   return value === undefined ? { code } : { code, value };
@@ -189,8 +196,6 @@ class TrackerBridge {
 
     const fx1Code = normalizeVoiceFxCode(event?.fx ?? step.fx);
     const fx2Code = normalizeVoiceFxCode(step.fx2);
-    const fx3Code = normalizePunchInFx3Code(step.fx3);
-    const fx3Value = clampFxValue(step.fx3Value);
 
     const hasExplicitVoiceOff = !event && (fx1Code === 'OFF' || fx2Code === 'OFF');
     if (hasExplicitVoiceOff) {
@@ -241,24 +246,16 @@ class TrackerBridge {
         const offsetSec = ((tick - startTick + microOffset / 8) * stepDuration) / 8;
         const tickFx1 = item.reset ? { code: 'OFF' as const } : toVoiceFxCommand(item.fx, item.fxValue);
         const tickFx2 = toVoiceFxCommand(item.fx2, item.fx2Value);
-        const tickFx3Code = normalizePunchInFx3Code(item.fx3);
-        const tickFx3Value = clampFxValue(item.fx3Value);
+        const tickPunchIn = toPunchInCommand(item.fx3, item.fx3Value);
 
-        if (item.pitch !== null || item.volume !== null || tickFx1 || tickFx2 || tickFx3Code) {
+        if (item.pitch !== null || item.volume !== null || tickFx1 || tickFx2 || tickPunchIn) {
           modulation.push({
             offset: offsetSec,
             ...(item.pitch === null ? {} : { semitoneOffset: item.pitch }),
             ...(item.volume === null ? {} : { volume: item.volume / 127 }),
             ...(tickFx1 ? { fx: tickFx1 } : {}),
             ...(tickFx2 ? { fx2: tickFx2 } : {}),
-            ...(tickFx3Code
-              ? {
-                  punchIn: {
-                    code: tickFx3Code,
-                    ...(tickFx3Value === undefined ? {} : { value: tickFx3Value }),
-                  },
-                }
-              : {}),
+            ...(tickPunchIn ? { punchIn: tickPunchIn } : {}),
           });
         }
       }
@@ -276,6 +273,7 @@ class TrackerBridge {
     const fx2Cmd = !event ? toVoiceFxCommand(step.fx2, step.fx2Value) : undefined;
     const primaryVoiceFx: VoiceFxCommand | undefined =
       fx1Cmd && fx1Cmd.code !== 'OFF' ? fx1Cmd : fx2Cmd;
+    const punchInCmd = !event ? toPunchInCommand(step.fx3, step.fx3Value) : undefined;
 
     const voiceId = audioEngine.triggerPad(padId, {
       sliceStart:
@@ -303,14 +301,7 @@ class TrackerBridge {
       modulation: modulation.length ? modulation : undefined,
       fx: primaryVoiceFx,
       ...(fx2Cmd && primaryVoiceFx !== fx2Cmd ? { fx2: fx2Cmd } : {}),
-      ...(fx3Code
-        ? {
-            punchIn: {
-              code: fx3Code,
-              ...(fx3Value === undefined ? {} : { value: fx3Value }),
-            },
-          }
-        : {}),
+      ...(punchInCmd ? { punchIn: punchInCmd } : {}),
     });
 
     this.prunePending();
