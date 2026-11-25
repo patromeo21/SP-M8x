@@ -1,6 +1,6 @@
 /**
  * SP-M8x Hybrid Music Production Suite
- * fx/VoiceFxPool.ts — Voice effect management pool
+ * fx/VoiceFxPool.ts — Voice/subtick effect management pool (FX1 / FX2)
  */
 
 export type VoiceFxCode = 'FL' | 'DL' | 'PS' | 'OFF';
@@ -38,6 +38,14 @@ const OPCODE_RAMP_TC = 0.004;
 export function holdAudioParam(param: AudioParam, time: number): void {
   if (typeof param.cancelAndHoldAtTime === 'function') param.cancelAndHoldAtTime(time);
   else param.setValueAtTime(param.value, time);
+}
+
+/**
+ * Retires legacy 'DR' to 'OFF' and normalizes unknown/non-canonical codes to 'OFF'.
+ */
+export function sanitizeVoiceFxCode(raw: unknown): VoiceFxCode {
+  if (raw === 'FL' || raw === 'DL' || raw === 'PS' || raw === 'OFF') return raw;
+  return 'OFF';
 }
 
 function normalizeOpcodeValue(rawValue: number | undefined): number {
@@ -170,15 +178,16 @@ export class VoiceFxPool {
     if (!Number.isFinite(time) || time < 0) {
       throw new RangeError('Table opcode time must be finite and non-negative.');
     }
-    if (command.code === 'PS') return;
-    if (command.code === 'OFF') {
+    const safeCode = sanitizeVoiceFxCode(command.code);
+    if (safeCode === 'PS') return;
+    if (safeCode === 'OFF') {
       this.reset(slot, time);
       return;
     }
 
     const norm = normalizeOpcodeValue(command.value);
 
-    if (command.code === 'FL') {
+    if (safeCode === 'FL') {
       const cutoffHz = Math.max(
         20,
         Math.min(20000, MAX_FL_CUTOFF_HZ * Math.pow(MIN_FL_CUTOFF_HZ / MAX_FL_CUTOFF_HZ, norm)),
@@ -196,7 +205,7 @@ export class VoiceFxPool {
       return;
     }
 
-    if (command.code === 'DL') {
+    if (safeCode === 'DL') {
       const delayTimeSec = Math.max(
         MIN_DELAY_SECONDS,
         Math.min(MAX_DELAY_SECONDS, MIN_DELAY_SECONDS + norm * (MAX_DELAY_SECONDS - MIN_DELAY_SECONDS)),
