@@ -4,10 +4,10 @@
  */
 
 import React, { useCallback, useState } from 'react';
-import { BANKS, type PadBankApi } from './usePadBank';
+import { BANKS, type PadBankApi, type PadSlot } from './usePadBank';
 import { chopToBankReplacingSingleSource } from './chopToBank';
 import { PadBankManager } from './PadBankManager';
-import { SamplerWorkbench } from './SamplerWorkbench';
+import SamplerWorkbench from './SamplerWorkbench';
 import { useInputRecorder } from './useInputRecorder';
 import { projectController } from '../project/projectController';
 import { audioEngine } from '../audio/audioEngine';
@@ -21,6 +21,7 @@ export interface SamplerWorkspaceProps {
   recorder: ReturnType<typeof useInputRecorder>;
   triggerPad?: PadBankApi['triggerPad'];
   compact?: boolean;
+  pad?: PadSlot;
 }
 
 const DEFAULT_AHDSR: AHDSRParams = {
@@ -36,89 +37,174 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
   recorder,
   triggerPad = padBank.triggerPad,
   compact = false,
+  pad,
 }) => {
   const [volumeOpen, setVolumeOpen] = useState(false);
   const [ahdsrOpen, setAhdsrOpen] = useState(false);
   const [padEnvelopes, setPadEnvelopes] = useState<Record<string, AHDSRParams>>({});
   const project = projectController.getState();
   const selectedPad = project.sampler.pads[padBank.selectedPadId];
+  const activePadSlot = pad ?? padBank.selectedPad;
   const trackVolume = project.settings.trackVolumes?.[selectedPad.targetTrack] ?? 1;
   const activeAhdsr = padEnvelopes[padBank.selectedPadId] ?? DEFAULT_AHDSR;
 
-  const updateAhdsr = useCallback((patch: Partial<AHDSRParams>) => {
+  const updateAhdsr = useCallback(
+    (patch: Partial<AHDSRParams>) => {
+      setPadEnvelopes((prev) => {
+        const current = prev[padBank.selectedPadId] ?? DEFAULT_AHDSR;
+        return {
+          ...prev,
+          [padBank.selectedPadId]: {
+            ...current,
+            ...patch,
+          },
+        };
+      });
+    },
+    [padBank.selectedPadId],
+  );
+
+  const resetPadAdsr = useCallback((padId: string) => {
     setPadEnvelopes((prev) => {
-      const current = prev[padBank.selectedPadId] ?? DEFAULT_AHDSR;
-      return {
-        ...prev,
-        [padBank.selectedPadId]: {
-          ...current,
-          ...patch,
-        },
-      };
+      if (!(padId in prev)) return prev;
+      const next = { ...prev };
+      delete next[padId];
+      return next;
     });
-  }, [padBank.selectedPadId]);
+  }, []);
 
-  const handleTriggerPad = useCallback<PadBankApi['triggerPad']>((
-    padId,
-    onTriggered,
-    semitoneOffset,
-    pointerTime,
-    sliceIndex,
-    playThrough,
-  ) => {
-    const release = triggerPad(padId, onTriggered, semitoneOffset, pointerTime, sliceIndex, playThrough);
-    const context = audioEngine.getContext();
-    if (context && context.state === 'running') {
-      const buffer = padBank.slots[padId]?.buffer as AudioBuffer | undefined;
-      if (buffer) {
-        audioEngine.getPadPlaybackPosition(padId, buffer);
+  const resetPadsAdsr = useCallback((padIds: readonly string[]) => {
+    setPadEnvelopes((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const padId of padIds) {
+        if (padId in next) {
+          delete next[padId];
+          changed = true;
+        }
       }
-    }
-    return release;
-  }, [padBank.slots, triggerPad]);
+      return changed ? next : prev;
+    });
+  }, []);
 
-  const renderWaveform = useCallback((props: Omit<AudioWaveformCanvasProps, 'audioBuffer'>) => (
-    <AudioWaveformCanvas
-      audioBuffer={padBank.selectedPad.buffer}
-      padId={padBank.selectedPadId}
-      {...props}
-    />
-  ), [padBank.selectedPad.buffer, padBank.selectedPadId]);
+  const handleDeletePads = useCallback<PadBankApi['deletePads']>(
+    async (padIds) => {
+      await padBank.deletePads(padIds);
+      resetPadsAdsr(padIds);
+    },
+    [padBank, resetPadsAdsr],
+  );
 
-  const chopToBank = useCallback((padId: string, bank: (typeof BANKS)[number], count: number) =>
-    chopToBankReplacingSingleSource(padBank, padId, bank, count), [padBank]);
+  const handleLoadSample = useCallback<PadBankApi['loadSample']>(
+    (padId, buffer, name, audio) => {
+      const result = padBank.loadSample(padId, buffer, name, audio);
+      resetPadAdsr(padId);
+      return result;
+    },
+    [padBank, resetPadAdsr],
+  );
+
+  const handleTriggerPad = useCallback<PadBankApi['triggerPad']>(
+    (padId, onTriggered, semitoneOffset, pointerTime, sliceIndex, playThrough) => {
+      const release = triggerPad(padId, onTriggered, semitoneOffset, pointerTime, sliceIndex, playThrough);
+      const context = audioEngine.getContext();
+      if (context && context.state === 'running') {
+        const buffer = padBank.slots[padId]?.buffer as AudioBuffer | undefined;
+        if (buffer) {
+          audioEngine.getPadPlaybackPosition(padId, buffer);
+        }
+      }
+      return release;
+    },
+    [padBank.slots, triggerPad],
+  );
+
+  const renderWaveform = useCallback(
+    (props: Omit<AudioWaveformCanvasProps, 'audioBuffer'>) => (
+      <AudioWaveformCanvas
+        audioBuffer={activePadSlot.buffer}
+        padId={activePadSlot.id}
+        {...props}
+      />
+    ),
+    [activePadSlot.buffer, activePadSlot.id],
+  );
+
+  const chopToBank = useCallback(
+    (padId: string, bank: (typeof BANKS)[number], count: number) =>
+      chopToBankReplacingSingleSource(padBank, padId, bank, count),
+    [padBank],
+  );
 
   return (
     <div className={`${compact ? 'sampler-compact' : 'sampler-full'} flex-1 grid gap-3 overflow-hidden min-h-0`}>
       <div className="sampler-full-pads bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl p-3 shadow-xl flex flex-col gap-2 min-h-0">
         <div className="flex items-center justify-between border-b border-[var(--border-grid)] pb-2">
           <span className="text-[10px] font-bold text-[var(--accent-phrase)] tracking-wider">PAD BANKS</span>
-          <label className="control-block">TRK
-            <select aria-label="Selected pad target track" className="bg-zinc-950 text-zinc-300"
+          <label className="control-block">
+            TRK
+            <select
+              aria-label="Selected pad target track"
+              className="bg-zinc-950 text-zinc-300"
               value={selectedPad.targetTrack}
-              onChange={(event) => projectController.setPadTargetTrack(padBank.selectedPadId, Number(event.target.value))}>
-              {Array.from({ length: 8 }, (_, index) => <option key={index} value={index}>{index + 1}</option>)}
+              onChange={(event) =>
+                projectController.setPadTargetTrack(padBank.selectedPadId, Number(event.target.value))
+              }
+            >
+              {Array.from({ length: 8 }, (_, index) => (
+                <option key={index} value={index}>
+                  {index + 1}
+                </option>
+              ))}
             </select>
           </label>
-          <label className="control-block">CHOKE
-            <select aria-label="Pad choke group" className="bg-zinc-950 text-zinc-300"
+          <label className="control-block">
+            CHOKE
+            <select
+              aria-label="Pad choke group"
+              className="bg-zinc-950 text-zinc-300"
               value={selectedPad.chokeGroup ?? ''}
-              onChange={(event) => projectController.setPadChokeGroup(padBank.selectedPadId, event.target.value ? Number(event.target.value) : null)}>
+              onChange={(event) =>
+                projectController.setPadChokeGroup(
+                  padBank.selectedPadId,
+                  event.target.value ? Number(event.target.value) : null,
+                )
+              }
+            >
               <option value="">OFF</option>
-              {Array.from({ length: 8 }, (_, index) => <option key={index} value={index + 1}>{index + 1}</option>)}
+              {Array.from({ length: 8 }, (_, index) => (
+                <option key={index} value={index + 1}>
+                  {index + 1}
+                </option>
+              ))}
             </select>
           </label>
-          <button type="button" className="compact-block-button" aria-label="Toggle pad and track volume controls"
-            aria-expanded={volumeOpen} onClick={() => setVolumeOpen((open) => !open)}>VOL</button>
-          <button type="button" className="compact-block-button" aria-label="Toggle AHDSR envelope controls"
-            aria-expanded={ahdsrOpen} onClick={() => setAhdsrOpen((open) => !open)}>AHDSR</button>
+          <button
+            type="button"
+            className="compact-block-button"
+            aria-label="Toggle pad and track volume controls"
+            aria-expanded={volumeOpen}
+            onClick={() => setVolumeOpen((open) => !open)}
+          >
+            VOL
+          </button>
+          <button
+            type="button"
+            className="compact-block-button"
+            aria-label="Toggle AHDSR envelope controls"
+            aria-expanded={ahdsrOpen}
+            onClick={() => setAhdsrOpen((open) => !open)}
+          >
+            AHDSR
+          </button>
           <div className="flex gap-1">
             {BANKS.map((bank) => (
               <button
                 key={bank}
                 type="button"
                 onClick={() => padBank.setActiveBank(bank)}
-                aria-label={`Bank ${bank}`} title={`Bank ${bank}`}
+                aria-label={`Bank ${bank}`}
+                title={`Bank ${bank}`}
                 className={`bank-block text-[9px] px-2 py-0.5 font-bold ${
                   padBank.activeBank === bank ? 'bg-cyan-900 text-cyan-200' : 'bg-zinc-900 text-zinc-400'
                 }`}
@@ -130,56 +216,117 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
         </div>
         {compact && <PerformanceDeckControls />}
         <FxStrip />
-        {volumeOpen && <div className="volume-drawer">
-          <label>PAD {padBank.selectedPadId}
-            <input aria-label="Selected pad volume" type="range" min="0" max="1" step="0.01" value={selectedPad.volume}
-            onChange={(event) => {
-              const value = Number(event.target.value);
-              projectController.setPadVolume(padBank.selectedPadId, value);
-              audioEngine.setPadVolume(padBank.selectedPadId, value);
-            }} />
-          </label>
-          <label>TRACK {selectedPad.targetTrack + 1}
-            <input aria-label="Selected track volume" type="range" min="0" max="1" step="0.01" value={trackVolume}
-              onChange={(event) => {
-                const value = Number(event.target.value);
-                projectController.setTrackVolume(selectedPad.targetTrack, value);
-                audioEngine.setTrackVolume(selectedPad.targetTrack, value);
-              }} />
-          </label>
-        </div>}
+        {volumeOpen && (
+          <div className="volume-drawer">
+            <label>
+              PAD {padBank.selectedPadId}
+              <input
+                aria-label="Selected pad volume"
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={selectedPad.volume}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  projectController.setPadVolume(padBank.selectedPadId, value);
+                  audioEngine.setPadVolume(padBank.selectedPadId, value);
+                }}
+              />
+            </label>
+            <label>
+              TRACK {selectedPad.targetTrack + 1}
+              <input
+                aria-label="Selected track volume"
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={trackVolume}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  projectController.setTrackVolume(selectedPad.targetTrack, value);
+                  audioEngine.setTrackVolume(selectedPad.targetTrack, value);
+                }}
+              />
+            </label>
+          </div>
+        )}
         {ahdsrOpen && (
-          <div className="ahdsr-drawer grid grid-cols-5 gap-2 p-2 rounded border border-zinc-800 bg-zinc-950/90 text-[10px]" aria-label="Pad AHDSR envelope controls">
+          <div
+            className="ahdsr-drawer grid grid-cols-6 gap-2 p-2 rounded border border-zinc-800 bg-zinc-950/90 text-[10px]"
+            aria-label="Pad AHDSR envelope controls"
+          >
             <label className="flex flex-col gap-1">
               <span>ATK {Math.round(activeAhdsr.attackTime * 1000)}ms</span>
-              <input aria-label="Envelope attack time" type="range" min="0" max="2" step="0.005"
+              <input
+                aria-label="Envelope attack time"
+                type="range"
+                min="0"
+                max="2"
+                step="0.005"
                 value={activeAhdsr.attackTime}
-                onChange={(event) => updateAhdsr({ attackTime: Number(event.target.value) })} />
+                onChange={(event) => updateAhdsr({ attackTime: Number(event.target.value) })}
+              />
             </label>
             <label className="flex flex-col gap-1">
               <span>HOLD {Math.round(activeAhdsr.holdTime * 1000)}ms</span>
-              <input aria-label="Envelope hold time" type="range" min="0" max="2" step="0.005"
+              <input
+                aria-label="Envelope hold time"
+                type="range"
+                min="0"
+                max="2"
+                step="0.005"
                 value={activeAhdsr.holdTime}
-                onChange={(event) => updateAhdsr({ holdTime: Number(event.target.value) })} />
+                onChange={(event) => updateAhdsr({ holdTime: Number(event.target.value) })}
+              />
             </label>
             <label className="flex flex-col gap-1">
               <span>DEC {Math.round(activeAhdsr.decayTime * 1000)}ms</span>
-              <input aria-label="Envelope decay time" type="range" min="0.005" max="3" step="0.005"
+              <input
+                aria-label="Envelope decay time"
+                type="range"
+                min="0.005"
+                max="3"
+                step="0.005"
                 value={activeAhdsr.decayTime}
-                onChange={(event) => updateAhdsr({ decayTime: Number(event.target.value) })} />
+                onChange={(event) => updateAhdsr({ decayTime: Number(event.target.value) })}
+              />
             </label>
             <label className="flex flex-col gap-1">
               <span>SUS {Math.round(activeAhdsr.sustainLevel * 100)}%</span>
-              <input aria-label="Envelope sustain level" type="range" min="0" max="1" step="0.01"
+              <input
+                aria-label="Envelope sustain level"
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
                 value={activeAhdsr.sustainLevel}
-                onChange={(event) => updateAhdsr({ sustainLevel: Number(event.target.value) })} />
+                onChange={(event) => updateAhdsr({ sustainLevel: Number(event.target.value) })}
+              />
             </label>
             <label className="flex flex-col gap-1">
               <span>REL {Math.round(activeAhdsr.releaseTime * 1000)}ms</span>
-              <input aria-label="Envelope release time" type="range" min="0.005" max="3" step="0.005"
+              <input
+                aria-label="Envelope release time"
+                type="range"
+                min="0.005"
+                max="3"
+                step="0.005"
                 value={activeAhdsr.releaseTime}
-                onChange={(event) => updateAhdsr({ releaseTime: Number(event.target.value) })} />
+                onChange={(event) => updateAhdsr({ releaseTime: Number(event.target.value) })}
+              />
             </label>
+            <div className="flex items-center justify-end">
+              <button
+                type="button"
+                aria-label="Reset AHDSR envelope to default"
+                className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-200"
+                onClick={() => resetPadAdsr(padBank.selectedPadId)}
+              >
+                RESET
+              </button>
+            </div>
           </div>
         )}
         <PadBankManager
@@ -191,28 +338,37 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
           setPadPlayMode={padBank.setPadPlayMode}
           setChromaticRootOffset={padBank.setChromaticRootOffset}
           triggerPad={handleTriggerPad}
-          deletePads={padBank.deletePads}
+          deletePads={handleDeletePads}
           copyPad={padBank.copyPad}
           storageReady={padBank.storageReady}
           updatePad={padBank.updatePad}
-          sliActive={selectedPad.sliActive && padBank.selectedPad.sliceMarkers.length >= 2 && padBank.padPlayMode === 'BANK_64'}
-          setSliActive={(active) => projectController.updatePadMetadata(padBank.selectedPadId, { sliActive: active })}
+          sliActive={
+            selectedPad.sliActive &&
+            activePadSlot.sliceMarkers.length >= 2 &&
+            padBank.padPlayMode === 'BANK_64'
+          }
+          setSliActive={(active) =>
+            projectController.updatePadMetadata(padBank.selectedPadId, { sliActive: active })
+          }
         />
       </div>
-      {!compact && <SamplerWorkbench
-        pad={padBank.selectedPad}
-        onUpdatePad={padBank.updatePad}
-        onPreviewRange={padBank.previewRange}
-        onLoadSample={padBank.loadSample}
-        getPadSettings={padBank.getPadSettings}
-        recordingStatus={recorder.status}
-        onRecord={recorder.toggle}
-        storageReady={padBank.storageReady}
-        activeBank={padBank.activeBank}
-        onChop={chopToBank}
-        onGenerateSliceMarkers={padBank.generateSliceMarkers}
-        renderWaveform={renderWaveform}
-      />}
+      {!compact && (
+        <SamplerWorkbench
+          pad={activePadSlot}
+          onUpdatePad={padBank.updatePad}
+          onPreviewRange={padBank.previewRange}
+          onLoadSample={handleLoadSample}
+          getPadSettings={padBank.getPadSettings}
+          recordingStatus={recorder.status}
+          onRecord={recorder.toggle}
+          storageReady={padBank.storageReady}
+          activeBank={padBank.activeBank}
+          onChop={chopToBank}
+          onGenerateSliceMarkers={padBank.generateSliceMarkers}
+          renderWaveform={renderWaveform}
+          onResetPadAdsr={resetPadAdsr}
+        />
+      )}
     </div>
   );
 };
