@@ -11,6 +11,16 @@ import type { PadSlot } from '../sampler/usePadBank';
 import { getGrooveDelayedSteps, type GroovePreset } from './groovePresets';
 import { instrumentIdToPadId, padIdToInstrumentId } from '../sampler/padIds';
 import { generateEuclideanSteps } from './euclideanGenerator';
+import {
+  closeMagnifier,
+  createInitialTableWindowState,
+  latchTableRowToMicroOffset,
+  openSubtickMagnifier,
+  setTablePage,
+  syncPlayheadToTableWindow,
+  type TableWindowState,
+  type ViewportRect,
+} from '../table/tableWindowState';
 
 const fieldClass = 'phrase-cell-control bg-zinc-950 border border-zinc-700 text-zinc-100';
 const buttonClass = 'border border-zinc-700 px-2 py-1 text-zinc-300';
@@ -35,6 +45,8 @@ export interface EditorProps {
   linkedPad?: { padId: string; name: string; playMode: string; sliActive?: boolean; sliceMarkers?: number[] };
   contextLock?: boolean;
   onToggleContextLock?: () => void;
+  tableWindow?: TableWindowState;
+  onTableWindowChange?: (next: TableWindowState) => void;
 }
 
 function normalizeVoiceFx(raw: unknown): VoiceSlotFxCode {
@@ -57,20 +69,54 @@ function clampSubtickOffset(raw: unknown): number {
 }
 
 export function PhraseTableEditor({
-  slots, activeStep, activeSubtick, groovePreset, transportPlaying, transportPaused, transportBusy, mode, queuedPatternIndex, onSelectPattern,
-  linkedPad, contextLock = false, onToggleContextLock,
+  slots,
+  activeStep,
+  activeSubtick,
+  groovePreset,
+  transportPlaying,
+  transportPaused,
+  transportBusy,
+  mode,
+  queuedPatternIndex,
+  onSelectPattern,
+  linkedPad,
+  contextLock = false,
+  onToggleContextLock,
+  tableWindow: externalTableWindow,
+  onTableWindowChange,
 }: EditorProps) {
   const [tableId, setTableId] = useState<number | null>(null);
   const [trackIndex, setTrackIndex] = useState(() => projectController.getSelectedTrackIndex());
+  const [internalTableWindow, setInternalTableWindow] = useState<TableWindowState>(() =>
+    createInitialTableWindowState(null),
+  );
+
   useEffect(() => projectController.subscribe(() => {
     setTrackIndex(projectController.getSelectedTrackIndex());
   }), []);
+
   const state = projectController.getState();
   const patternIndex = state.settings.activePatternIndex;
   const pattern = state.tracker.patterns[patternIndex];
   const tables = projectController.getTables(trackIndex);
   const table = tables.find((item) => item.id === tableId) ?? tables[0];
   const delayedSteps = useMemo(() => getGrooveDelayedSteps(groovePreset), [groovePreset]);
+
+  const tableWindow = externalTableWindow ?? internalTableWindow;
+  const updateTableWindow = (updater: (prev: TableWindowState) => TableWindowState) => {
+    if (onTableWindowChange) {
+      onTableWindowChange(updater(tableWindow));
+    } else {
+      setInternalTableWindow((prev) => updater(prev));
+    }
+  };
+
+  useEffect(() => {
+    if (mode !== 'table' && tableWindow.magnifier.isOpen) {
+      updateTableWindow((prev) => closeMagnifier(prev));
+    }
+  }, [mode, tableWindow.magnifier.isOpen]);
+
   if (!pattern) return <p role="alert">Active phrase is unavailable.</p>;
 
   return (
@@ -96,12 +142,26 @@ export function PhraseTableEditor({
         ) : (
           <>
             <label className="control-block">TBL <select aria-label="Active table" className={fieldClass} value={table?.id ?? ''}
-              onChange={(event) => setTableId(Number(event.target.value))}>
+              onChange={(event) => {
+                const nextId = Number(event.target.value);
+                setTableId(nextId);
+                updateTableWindow((prev) => closeMagnifier({
+                  ...prev,
+                  tableId: Number.isFinite(nextId) && nextId > 0 ? String(nextId) : null,
+                }));
+              }}>
               {!table && <option value="">NONE</option>}
               {tables.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select></label>
             <button type="button" aria-label="New table" className={buttonClass}
-              onClick={() => setTableId(projectController.createTable(trackIndex))}>＋</button>
+              onClick={() => {
+                const createdId = projectController.createTable(trackIndex);
+                setTableId(createdId);
+                updateTableWindow((prev) => closeMagnifier({
+                  ...prev,
+                  tableId: String(createdId),
+                }));
+              }}>＋</button>
             <button type="button" className={buttonClass} aria-label="Toggle table context lock"
               aria-pressed={contextLock} disabled={!linkedPad} onClick={onToggleContextLock}>
               {contextLock ? 'PAD LOCK' : 'LINK PAD'}
@@ -115,21 +175,67 @@ export function PhraseTableEditor({
         )}
       </div>
       {mode === 'phrase'
-        ? <PhraseRows key={`${pattern.id}-${trackIndex}-${pattern.length}`} pattern={pattern} patternIndex={patternIndex}
-            trackIndex={trackIndex} slots={slots} activeStep={activeStep} groovePreset={groovePreset}
-            playing={transportPlaying} delayedSteps={delayedSteps} transportBusy={transportBusy} contextLock={contextLock} />
+        ? <PhraseRows
+            key={`${pattern.id}-${trackIndex}-${pattern.length}`}
+            pattern={pattern}
+            patternIndex={patternIndex}
+            trackIndex={trackIndex}
+            slots={slots}
+            activeStep={activeStep}
+            groovePreset={groovePreset}
+            playing={transportPlaying}
+            delayedSteps={delayedSteps}
+            transportBusy={transportBusy}
+            contextLock={contextLock}
+            onLatchMicroStep={(phraseStepIndex, microOffset) =>
+              updateTableWindow((prev) =>
+                latchTableRowToMicroOffset(prev, phraseStepIndex, microOffset, 8),
+              )
+            }
+          />
         : table
-          ? <TableRows key={`${table.id}-${trackIndex}`} table={table} trackIndex={trackIndex}
-              activeStep={activeStep} activeSubtick={activeSubtick} groovePreset={groovePreset} delayedSteps={delayedSteps}
-              paused={transportPaused} playing={transportPlaying} />
+          ? <TableRows
+              key={`${table.id}-${trackIndex}`}
+              table={table}
+              trackIndex={trackIndex}
+              activeStep={activeStep}
+              activeSubtick={activeSubtick}
+              groovePreset={groovePreset}
+              delayedSteps={delayedSteps}
+              paused={transportPaused}
+              playing={transportPlaying}
+              tableWindow={tableWindow}
+              onUpdateTableWindow={updateTableWindow}
+            />
           : <p className="text-zinc-400">Create a reusable table, then assign it to a phrase step.</p>}
     </section>
   );
 }
 
-function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, groovePreset, playing, delayedSteps, transportBusy, contextLock }: {
-  pattern: Pattern; patternIndex: number; trackIndex: number; slots: Record<string, PadSlot>; activeStep: number;
-  groovePreset: GroovePreset; playing: boolean; delayedSteps: boolean[]; transportBusy: boolean; contextLock: boolean;
+function PhraseRows({
+  pattern,
+  patternIndex,
+  trackIndex,
+  slots,
+  activeStep,
+  groovePreset,
+  playing,
+  delayedSteps,
+  transportBusy,
+  contextLock,
+  onLatchMicroStep,
+}: {
+  pattern: Pattern;
+  patternIndex: number;
+  trackIndex: number;
+  slots: Record<string, PadSlot>;
+  activeStep: number;
+  groovePreset: GroovePreset;
+  playing: boolean;
+  delayedSteps: boolean[];
+  transportBusy: boolean;
+  contextLock: boolean;
+  onLatchMicroStep: (phraseStepIndex: number, microOffset: number) => void;
 }) {
   const [page, setPage] = useState(0);
   const [euclideanOpen, setEuclideanOpen] = useState(false);
@@ -156,6 +262,12 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, groo
         velocity: step?.velocity ?? 127,
       }, trackIndex);
     }
+  };
+
+  const applyMicroOffset = (index: number, rawOffset: number) => {
+    const nextOffset = clampSubtickOffset(rawOffset);
+    projectController.updateStep(patternIndex, index, { subTickOffset: nextOffset }, trackIndex);
+    onLatchMicroStep(index, nextOffset);
   };
 
   return (
@@ -186,17 +298,13 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, groo
             </button>
             <div className="phrase-microtiming-control" aria-label={`Phrase microtiming step ${index + 1}`}>
               <button type="button" aria-label={`Move step ${index + 1} earlier`} disabled={!padId}
-                onClick={() => projectController.updateStep(patternIndex, index, {
-                  subTickOffset: clampSubtickOffset(microOffset - 1),
-                }, trackIndex)}>−</button>
+                onClick={() => applyMicroOffset(index, microOffset - 1)}>−</button>
               <button type="button" className="phrase-micro-zero" aria-label={`Reset step ${index + 1} microtiming to zero`} disabled={!padId}
-                onClick={() => projectController.updateStep(patternIndex, index, { subTickOffset: 0 }, trackIndex)}>
+                onClick={() => applyMicroOffset(index, 0)}>
                 {microOffset === 0 ? '0' : microOffset > 0 ? `+${microOffset}` : String(microOffset)}
               </button>
               <button type="button" aria-label={`Move step ${index + 1} later`} disabled={!padId}
-                onClick={() => projectController.updateStep(patternIndex, index, {
-                  subTickOffset: clampSubtickOffset(microOffset + 1),
-                }, trackIndex)}>+</button>
+                onClick={() => applyMicroOffset(index, microOffset + 1)}>+</button>
             </div>
             <select aria-label={`Phrase table step ${index + 1}`} className={fieldClass}
               value={step.tableId ?? ''} disabled={!padId}
@@ -320,20 +428,43 @@ function PhraseRows({ pattern, patternIndex, trackIndex, slots, activeStep, groo
   );
 }
 
-function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset, delayedSteps, paused, playing }: {
-  table: TrackerTable; trackIndex: number; activeStep: number; activeSubtick: number; groovePreset: GroovePreset;
-  delayedSteps: boolean[]; paused: boolean; playing: boolean;
+function TableRows({
+  table,
+  trackIndex,
+  activeStep,
+  activeSubtick,
+  groovePreset,
+  delayedSteps,
+  paused,
+  playing,
+  tableWindow,
+  onUpdateTableWindow,
+}: {
+  table: TrackerTable;
+  trackIndex: number;
+  activeStep: number;
+  activeSubtick: number;
+  groovePreset: GroovePreset;
+  delayedSteps: boolean[];
+  paused: boolean;
+  playing: boolean;
+  tableWindow: TableWindowState;
+  onUpdateTableWindow: (updater: (prev: TableWindowState) => TableWindowState) => void;
 }) {
-  const [page, setPage] = useState(0);
   const [pitchSlidePopup, setPitchSlidePopup] = useState<number | null>(null);
   const trackRef = useRef<HTMLDivElement | null>(null);
-  const pageCount = Math.ceil(table.steps.length / 16);
+  const pageCount = Math.max(1, Math.ceil(table.steps.length / 16));
   const currentTick = activeStep < 0 || table.steps.length === 0 ? -1 : (activeStep * 8 + activeSubtick) % table.steps.length;
   const cursorPage = currentTick < 0 ? -1 : Math.floor(currentTick / 16);
+  const page = tableWindow.followPlayhead && (playing || paused) && cursorPage >= 0
+    ? Math.max(0, Math.min(pageCount - 1, cursorPage))
+    : Math.max(0, Math.min(pageCount - 1, tableWindow.pageIndex));
 
   useEffect(() => {
-    if ((playing || paused) && cursorPage >= 0) setPage(cursorPage);
-  }, [cursorPage, paused, playing]);
+    if (!tableWindow.followPlayhead || !(playing || paused) || currentTick < 0) return;
+    onUpdateTableWindow((prev) => syncPlayheadToTableWindow(prev, currentTick, playing));
+  }, [tableWindow.followPlayhead, playing, paused, currentTick, onUpdateTableWindow]);
+
   useEffect(() => {
     setPitchSlidePopup(null);
   }, [page]);
@@ -383,19 +514,50 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
     setSlideValue(subtickIndex, semitones);
   };
 
+  const toggleMagnifierForRow = (subtickIndex: number, buttonEl: HTMLElement) => {
+    setPitchSlidePopup(null);
+    onUpdateTableWindow((prev) => {
+      if (prev.magnifier.isOpen && prev.magnifier.anchorTableStep === subtickIndex) {
+        return closeMagnifier(prev);
+      }
+      const rect = buttonEl.getBoundingClientRect();
+      const anchorRect: ViewportRect = {
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+        height: rect.height,
+      };
+      const viewport = {
+        width: typeof window !== 'undefined' ? window.innerWidth : 1024,
+        height: typeof window !== 'undefined' ? window.innerHeight : 768,
+      };
+      return openSubtickMagnifier(prev, subtickIndex, subtickIndex, anchorRect, viewport);
+    });
+  };
+
+  const latched = tableWindow.latchedIndicator;
+
   return (
     <div
-      className="table-grid-scroll table-sequencer-list flex-1 min-h-0"
+      className="table-grid-scroll table-sequencer-list relative flex-1 min-h-0"
       aria-label="Vertical table ticks"
     >
-      <div className="table-page-controls">
+      <div className="table-page-controls flex flex-wrap items-center gap-2">
         <label className="control-block">PAGE <select aria-label="Table page" className={fieldClass}
-          value={page} onChange={(event) => setPage(Number(event.target.value))}>
+          value={page} onChange={(event) => {
+            const nextPage = Number(event.target.value);
+            onUpdateTableWindow((prev) => setTablePage(prev, nextPage));
+          }}>
           {Array.from({ length: pageCount }, (_, index) => <option key={index} value={index}>
             {index + 1} · {index * 16 + 1}-{Math.min((index + 1) * 16, table.steps.length)}
           </option>)}
         </select></label>
         <span className="text-zinc-400">SUBTICKS {page * 16 + 1}-{Math.min((page + 1) * 16, table.steps.length)}</span>
+        {latched && (
+          <span role="status" className="text-cyan-300">
+            LATCHED PHR S{latched.phraseStepIndex + 1} ({latched.microOffset >= 0 ? `+${latched.microOffset}` : latched.microOffset}) -&gt; TBL {latched.latchedTableStep + 1}
+          </span>
+        )}
       </div>
       <div className="table-grid-header table-sequencer-grid">
         <span>SUBTICK</span><span>PITCH</span><span>VOL</span><span>FX1</span><span>FX2</span><span>FX3</span>
@@ -415,16 +577,31 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
         const formattedSlide = `${slideValue > 0 ? '+' : ''}${slideValue}`;
         const thumbPercent = ((slideValue + 24) / 48) * 100;
         const isOpen = pitchSlidePopup === index && activeFx === 'PS';
+        const isLatchedRow = latched?.latchedTableStep === index;
+        const isMagnifierAnchor = tableWindow.magnifier.isOpen && tableWindow.magnifier.anchorTableStep === index;
+
         return (
           <div
             className={`table-row table-sequencer-grid relative ${isOpen ? 'z-30' : ''} ${current ? 'is-playing' : ''} ${playing && current && activeStep >= 0 && delayedSteps[activeStep % 16] ? 'is-groove-pulse' : ''} ${isGrooveSubAccent ? 'is-groove-subaccent border-rose-500/80 bg-rose-950/20' : ''}`}
             key={index}
             data-subtick={index + 1}
+            data-latched={isLatchedRow ? 'true' : undefined}
             style={{ overflow: 'visible' }}
           >
-            <span className={`table-step-address ${isGrooveSubAccent ? 'text-rose-300 border-rose-500' : ''}`} aria-label={`Table subtick ${index + 1}`}>
-              {String(index + 1).padStart(3, '0')}
-            </span>
+            <div className="flex items-center gap-1 min-w-0">
+              <span className={`table-step-address ${isGrooveSubAccent ? 'text-rose-300 border-rose-500' : ''}`} aria-label={`Table subtick ${index + 1}`}>
+                {String(index + 1).padStart(3, '0')}
+              </span>
+              <button
+                type="button"
+                aria-label={`Magnify subticks around ${index + 1}`}
+                aria-pressed={isMagnifierAnchor}
+                className={`${buttonClass} px-1 py-0.5 text-[10px]`}
+                onClick={(event) => toggleMagnifierForRow(index, event.currentTarget)}
+              >
+                MAG
+              </button>
+            </div>
             <select aria-label={`Table pitch subtick ${index + 1}`} className={fieldClass}
               value={step.pitch ?? ''} onChange={(event) => projectController.updateTableStep(table.id, index, {
                 pitch: event.target.value === '' ? null : Number(event.target.value),
@@ -596,6 +773,53 @@ function TableRows({ table, trackIndex, activeStep, activeSubtick, groovePreset,
           </div>
         );
       })}
+      {tableWindow.magnifier.isOpen && (
+        <div
+          role="dialog"
+          aria-label="Subtick magnifier"
+          className="subtick-magnifier-popover fixed z-50 bg-zinc-950 border border-cyan-400 p-2 shadow-xl"
+          style={{
+            top: `${Math.round(tableWindow.magnifier.position.top)}px`,
+            left: `${Math.round(tableWindow.magnifier.position.left)}px`,
+          }}
+        >
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <span className="text-cyan-300">
+              SUBTICK MAGNIFIER ({tableWindow.magnifier.anchorTableStep + 1})
+            </span>
+            <button
+              type="button"
+              aria-label="Close subtick magnifier"
+              className={buttonClass}
+              onClick={() => onUpdateTableWindow((prev) => closeMagnifier(prev))}
+            >
+              ×
+            </button>
+          </div>
+          <div className="flex items-center gap-1 flex-wrap">
+            {tableWindow.magnifier.visibleSubticks.map((subtickIdx) => {
+              const rowItem = table.steps[subtickIdx];
+              const isCenter = subtickIdx === tableWindow.magnifier.anchorTableStep;
+              return (
+                <button
+                  key={subtickIdx}
+                  type="button"
+                  aria-label={`Select subtick ${subtickIdx + 1}`}
+                  className={`${buttonClass} ${isCenter ? 'border-cyan-400 text-cyan-300' : ''}`}
+                  onClick={() => {
+                    const targetPage = Math.floor(subtickIdx / 16);
+                    onUpdateTableWindow((prev) =>
+                      closeMagnifier(setTablePage(prev, targetPage)),
+                    );
+                  }}
+                >
+                  {String(subtickIdx + 1).padStart(3, '0')}:{rowItem?.fx && rowItem.fx !== 'OFF' ? rowItem.fx : rowItem?.pitch ?? '—'}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
