@@ -1,16 +1,46 @@
-/**
- * SP-M8x Hybrid Music Production Suite
- * PadBankManager.tsx — 4x4 live pad grid for the active bank (A-D)
- */
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { BANKS, type PadBankApi, type PadSlot } from './usePadBank';
+import type { BankId } from '../project/projectController';
+import type { PadPlayMode } from './chromatic';
+import { projectController } from '../project/projectController';
+import { padIdToInstrumentId } from './padIds';
 
-import React, { useEffect, useRef, useState } from 'react';
-import { PADS_PER_BANK, formatPadLabel, type PadBankApi } from './usePadBank';
-import { chromaticNote, chromaticOffset } from './chromatic';
+export type { PadPlayMode };
 
-export type PadBankManagerProps = Pick<
-  PadBankApi,
-  'slots' | 'activeBank' | 'selectedPadId' | 'padPlayMode' | 'chromaticRootOffset' | 'setPadPlayMode' | 'setChromaticRootOffset' | 'triggerPad' | 'deletePads' | 'copyPad' | 'storageReady' | 'updatePad'
-> & { sliActive: boolean; setSliActive: (active: boolean) => void };
+export interface PadBankManagerProps {
+  slots: Record<string, PadSlot>;
+  activeBank: BankId;
+  selectedPadId: string;
+  padPlayMode: PadPlayMode;
+  chromaticRootOffset: number;
+  setPadPlayMode: (mode: PadPlayMode) => void;
+  setChromaticRootOffset: (offset: number) => void;
+  triggerPad: PadBankApi['triggerPad'];
+  deletePads: PadBankApi['deletePads'];
+  copyPad: PadBankApi['copyPad'];
+  storageReady: boolean;
+  updatePad: PadBankApi['updatePad'];
+  sliActive: boolean;
+  setSliActive: (active: boolean) => void;
+  onClearPad?: (padId: string) => void;
+  isEraseHeld?: boolean;
+  onToggleEraseHold?: (held: boolean, targetPadId?: string | null) => void;
+  isRecording?: boolean;
+  activePatternIndex?: number;
+  activeStepIndex?: number;
+  activeSubtickIndex?: number;
+}
+
+const BANK_PAD_INDICES = Array.from({ length: 16 }, (_, index) => index + 1);
+
+function getBankPadIds(bank: BankId): string[] {
+  return BANK_PAD_INDICES.map((index) => `${bank}${index}`);
+}
+
+function formatSemitoneLabel(semitoneOffset: number): string {
+  if (semitoneOffset === 0) return 'ROOT 0';
+  return semitoneOffset > 0 ? `+${semitoneOffset} ST` : `${semitoneOffset} ST`;
+}
 
 export const PadBankManager: React.FC<PadBankManagerProps> = ({
   slots,
@@ -27,224 +57,325 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
   updatePad,
   sliActive,
   setSliActive,
+  onClearPad,
+  isEraseHeld = false,
+  onToggleEraseHold,
+  isRecording = false,
+  activePatternIndex,
+  activeStepIndex,
+  activeSubtickIndex,
 }) => {
-  // Each finger is tracked by pointerId so simultaneous touches light and release independently.
-  const activePointers = useRef(new Map<number, { padId: string; release: (pointerTime?: number) => void }>());
-  const gridRef = useRef<HTMLDivElement>(null);
-  const [pressedPads, setPressedPads] = useState<ReadonlySet<string>>(new Set());
-  const [selecting, setSelecting] = useState(false);
-  const [copying, setCopying] = useState(false);
-  const [copySource, setCopySource] = useState<string | null>(null);
-  const [copyError, setCopyError] = useState('');
-  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
-  const [confirming, setConfirming] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [error, setError] = useState('');
+  const [deleteMode, setDeleteMode] = useState(false);
+  const [selectedForDelete, setSelectedForDelete] = useState<string[]>([]);
+  const [confirmPending, setConfirmPending] = useState(false);
+  const [copySourcePadId, setCopySourcePadId] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState('');
+  const [localEraseHeld, setLocalEraseHeld] = useState(false);
 
-  const syncPressed = () => setPressedPads(new Set(Array.from(activePointers.current.values(), ({ padId }) => padId)));
+  const effectiveEraseHeld = onToggleEraseHold ? isEraseHeld : localEraseHeld;
+  const bankPadIds = useMemo(() => getBankPadIds(activeBank), [activeBank]);
 
   useEffect(() => {
-    const pointers = activePointers.current;
-    setPressedPads(new Set());
-    return () => {
-      for (const { release } of pointers.values()) release();
-      pointers.clear();
-    };
-  }, [activeBank, padPlayMode]);
+    setConfirmPending(false);
+  }, [selectedForDelete]);
 
   useEffect(() => {
-    const grid = gridRef.current;
-    if (!grid) return;
-    const preventDrag = (event: Event) => {
-      if (event.type === 'touchmove' && event.target instanceof Element && event.target.closest('.pad-pitch-control')) return;
-      if (event.cancelable) event.preventDefault();
-    };
-    grid.addEventListener('touchmove', preventDrag, { passive: false });
-    grid.addEventListener('dragstart', preventDrag);
-    grid.addEventListener('selectstart', preventDrag);
-    return () => {
-      grid.removeEventListener('touchmove', preventDrag);
-      grid.removeEventListener('dragstart', preventDrag);
-      grid.removeEventListener('selectstart', preventDrag);
-    };
+    setDeleteMode(false);
+    setSelectedForDelete([]);
+    setConfirmPending(false);
+    setCopySourcePadId(null);
+  }, [activeBank]);
+
+  const setEraseState = useCallback(
+    (held: boolean, targetPadId?: string | null) => {
+      if (onToggleEraseHold) {
+        onToggleEraseHold(held, targetPadId);
+        return;
+      }
+      setLocalEraseHeld(held);
+      projectController.setLiveEraseHold(held, targetPadId);
+    },
+    [onToggleEraseHold],
+  );
+
+  const toggleDeleteSelection = useCallback((padId: string) => {
+    setSelectedForDelete((prev) =>
+      prev.includes(padId) ? prev.filter((id) => id !== padId) : [...prev, padId],
+    );
   }, []);
 
-  const toggleSelection = (padId: string) => {
-    if (!slots[padId].sampleKey || deleting || confirming) return;
-    setSelected((previous) => {
-      const next = new Set(previous);
-      if (next.has(padId)) next.delete(padId); else next.add(padId);
-      return next;
-    });
-  };
+  const handleConfirmDelete = useCallback(async () => {
+    if (selectedForDelete.length === 0) return;
+    const targets = [...selectedForDelete];
+    await deletePads(targets);
+    setSelectedForDelete([]);
+    setConfirmPending(false);
+    setDeleteMode(false);
+    setStatusMessage(`DELETED ${targets.join(', ')}`);
+  }, [deletePads, selectedForDelete]);
 
-  const handlePointerDown = (event: React.PointerEvent<HTMLButtonElement>, padId: string, index: number) => {
-    if (activePointers.current.has(event.pointerId)) return;
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    if (copying) {
-      if (!copySource) {
-        if (slots[padId].sampleKey) setCopySource(padId);
-      } else if (padId === copySource) {
-        setCopySource(null);
-      } else if (!slots[padId].sampleKey) {
-        setCopyError('');
-        void copyPad(copySource, padId).then(() => setCopySource(null)).catch((failure: unknown) => {
-          setCopyError(failure instanceof Error ? failure.message : 'Could not copy pad.');
-        });
+  const handleClearPadClick = useCallback(() => {
+    const targetPadId = selectedPadId || bankPadIds[0];
+    if (!targetPadId) return;
+    if (onClearPad) {
+      onClearPad(targetPadId);
+      setStatusMessage(`CLEARED ${targetPadId} & RESET AHDSR`);
+      return;
+    }
+    const patternIndex =
+      activePatternIndex ?? projectController.getState().settings.activePatternIndex;
+    const cleared = projectController.clearPadSteps(patternIndex, targetPadId);
+    projectController.resetPadAdsr(targetPadId, 'pad-cleared');
+    setStatusMessage(`CLEARED ${cleared} ON ${targetPadId} & RESET AHDSR`);
+  }, [activePatternIndex, bankPadIds, onClearPad, selectedPadId]);
+
+  const handlePadPress = useCallback(
+    (padId: string, padIndex: number) => {
+      if (deleteMode) {
+        toggleDeleteSelection(padId);
+        return;
       }
-      return;
-    }
-    if (selecting) {
-      toggleSelection(padId);
-      return;
-    }
-    const slice = sliActive && padPlayMode === 'BANK_64' && index < 10
-      ? Math.min(index + 1, slots[selectedPadId].sliceMarkers.length - 1) : undefined;
-    const source = slice !== undefined ? selectedPadId : padPlayMode === 'CHROMATIC_16' ? selectedPadId : padId;
-    const pitch = padPlayMode === 'CHROMATIC_16' ? chromaticOffset(index, chromaticRootOffset) : 0;
-    activePointers.current.set(event.pointerId, { padId, release: triggerPad(source, undefined, pitch, event.timeStamp, slice, sliActive) });
-    syncPressed();
-  };
 
-  const handlePointerEnd = (event: React.PointerEvent<HTMLButtonElement>) => {
-    const active = activePointers.current.get(event.pointerId);
-    if (!active) return;
-    active.release(event.timeStamp);
-    activePointers.current.delete(event.pointerId);
-    syncPressed();
-  };
+      if (copySourcePadId) {
+        if (copySourcePadId !== padId) {
+          void Promise.resolve(copyPad(copySourcePadId, padId)).then(() => {
+            setStatusMessage(`COPIED ${copySourcePadId} -> ${padId}`);
+          });
+        }
+        setCopySourcePadId(null);
+        return;
+      }
+
+      const instrumentId = padIdToInstrumentId(padId);
+      const semitoneOffset =
+        padPlayMode === 'CHROMATIC_16' ? chromaticRootOffset + (padIndex - 1) : 0;
+
+      if (effectiveEraseHeld) {
+        const state = projectController.getState();
+        const patternIndex = activePatternIndex ?? state.settings.activePatternIndex;
+        const eraseState = projectController.setLiveEraseHold(true, padId);
+        const canEraseNow =
+          !(eraseState.isRecording && eraseState.activeBus === 'MST');
+        if (canEraseNow && typeof activeStepIndex === 'number' && activeStepIndex >= 0) {
+          const erased = projectController.erasePadAtStep(
+            patternIndex,
+            activeStepIndex,
+            padId,
+            activeSubtickIndex,
+          );
+          setStatusMessage(
+            erased
+              ? `ERASED ${padId} @ STEP ${activeStepIndex + 1}${isRecording ? ' (LIVE REC)' : ''}`
+              : `NO ${padId} EVENT AT STEP ${activeStepIndex + 1}`,
+          );
+          return;
+        }
+        if (!canEraseNow) {
+          setStatusMessage('MST BUS ACTIVE — LIVE STEP ERASE BLOCKED');
+          return;
+        }
+      }
+
+      void triggerPad(
+        padId,
+        undefined,
+        semitoneOffset,
+        undefined,
+        sliActive ? padIndex : undefined,
+        false,
+      );
+
+      if (instrumentId !== null && effectiveEraseHeld) {
+        projectController.setLiveEraseTargetPad(padId);
+      }
+    },
+    [
+      activePatternIndex,
+      activeStepIndex,
+      activeSubtickIndex,
+      chromaticRootOffset,
+      copyPad,
+      copySourcePadId,
+      deleteMode,
+      effectiveEraseHeld,
+      isRecording,
+      padPlayMode,
+      sliActive,
+      toggleDeleteSelection,
+      triggerPad,
+    ],
+  );
 
   return (
-    <div className="pad-bank-manager flex flex-col flex-1 min-h-0 gap-1">
-      <div className="pad-utility-bar flex items-center justify-between gap-1 text-[9px]">
-        <button type="button" aria-label="Toggle chromatic pad mode" aria-pressed={padPlayMode === 'CHROMATIC_16'}
-          className="touch-none rounded border border-zinc-700 px-2 py-1 text-zinc-300"
-          onPointerDown={(event) => {
-            event.preventDefault();
-            event.currentTarget.setPointerCapture(event.pointerId);
-            setSelecting(false); setConfirming(false); setCopying(false); setCopySource(null);
-            setPadPlayMode(padPlayMode === 'BANK_64' ? 'CHROMATIC_16' : 'BANK_64');
-          }}>
-          {padPlayMode === 'CHROMATIC_16' ? 'CHROMATIC' : 'BANK'}
-        </button>
-        <button type="button" aria-label="Toggle slice mode" aria-pressed={sliActive}
-          disabled={padPlayMode !== 'BANK_64' || slots[selectedPadId].sliceMarkers.length < 2}
-          className={`touch-none rounded border px-2 py-1 disabled:opacity-40 ${sliActive ? 'sli-active' : 'border-zinc-700 text-zinc-300'}`}
-          onClick={() => { setSelecting(false); setConfirming(false); setCopying(false); setCopySource(null); setSliActive(!sliActive); }}>
-          SLI
-        </button>
-        {padPlayMode === 'CHROMATIC_16' && <label>ROOT
-          <select aria-label="Chromatic root offset" value={chromaticRootOffset}
-            className="bg-zinc-950 text-zinc-300" onChange={(event) => setChromaticRootOffset(Number(event.target.value))}>
-            {Array.from({ length: 49 }, (_, i) => i - 24).map((value) =>
-              <option key={value} value={value}>{value > 0 ? `+${value}` : value}</option>)}
-          </select>
-        </label>}
-        <button type="button" disabled={padPlayMode === 'CHROMATIC_16' || !storageReady || deleting} onClick={() => {
-          setSelecting(!selecting); setCopying(false); setCopyError(''); setSelected(new Set()); setConfirming(false); setError('');
-        }} className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-300 disabled:opacity-40">
-          {selecting ? 'CANCEL' : 'DEL'}
-        </button>
-        {!selecting &&         <button type="button" disabled={padPlayMode === 'CHROMATIC_16' || !storageReady} aria-pressed={copying} onPointerDown={(event) => {
-          event.preventDefault();
-          event.currentTarget.setPointerCapture(event.pointerId);
-          setCopying(!copying); setCopySource(null); setCopyError('');
-        }} className={`rounded border px-2 py-1 disabled:opacity-40 ${copying ? 'border-cyan-600 text-cyan-300' : 'border-zinc-700 text-zinc-300'}`}>
-          {copying ? 'CANCEL COPY' : 'COPY'}
-        </button>}
-        {selecting && <button type="button" disabled={!selected.size || deleting} onClick={() => setConfirming(true)}
-          className="rounded border border-rose-800 bg-rose-950 px-2 py-1 text-rose-300 disabled:opacity-40">
-          DELETE {selected.size}
-        </button>}
-      </div>
-      {padPlayMode === 'CHROMATIC_16' && <div role="status" className="text-[9px] text-zinc-400">
-        SOURCE {formatPadLabel(selectedPadId)}{slots[selectedPadId].sampleKey ? '' : ' — SELECT A LOADED PAD IN BANK MODE'}
-      </div>}
-      {copying && <div role={copyError ? 'alert' : 'status'} className={`text-[9px] ${copyError ? 'text-rose-300' : 'text-zinc-400'}`}>
-        {copyError || (copySource ? `SOURCE ${formatPadLabel(copySource)} · SWITCH BANK, THEN TAP AN EMPTY DESTINATION` : 'TAP A LOADED SOURCE PAD')}
-      </div>}
-      {confirming && <div role="dialog" aria-label="Confirm pad deletion" className="pad-delete-dialog">
-        <div className="pad-delete-dialog-panel">
-          <strong>DELETE {selected.size} PAD{selected.size === 1 ? '' : 'S'}?</strong>
-          <span>{Array.from(selected).map(formatPadLabel).join(', ')}</span>
-          <span>This cannot be undone.</span>
-          {error && <span role="alert" className="text-rose-300">{error}</span>}
-          <div className="flex justify-end gap-2">
-            <button type="button" disabled={deleting} onClick={() => { setConfirming(false); setError(''); }}
-              className="rounded border border-zinc-700 px-3 py-2">CANCEL</button>
-            <button type="button" disabled={deleting} onClick={() => {
-              setDeleting(true); setError('');
-              void deletePads(Array.from(selected)).then(() => {
-                setSelected(new Set()); setConfirming(false); setSelecting(false);
-              }).catch((failure: unknown) => {
-                setError(failure instanceof Error ? failure.message : 'Could not delete pads.');
-              }).finally(() => setDeleting(false));
-            }} className="rounded border border-rose-700 bg-rose-950 px-3 py-2 text-rose-200">
-              {deleting ? 'DELETING' : 'CONFIRM DELETE'}
-            </button>
-          </div>
-        </div>
-      </div>}
-      <div ref={gridRef} className="pad-grid pad-grid-with-pitch grid grid-cols-4 gap-1.5 flex-1 min-h-0 aspect-square w-full max-h-full">
-      {Array.from({ length: PADS_PER_BANK }, (_, i) => {
-        const padId = `${activeBank}${i + 1}`;
-        const isSlice = sliActive && padPlayMode === 'BANK_64' && i < 10 && !copying && !selecting;
-        const slot = slots[padPlayMode === 'CHROMATIC_16' || isSlice ? selectedPadId : padId];
-        const hasSample = slot.sampleKey !== null;
-        const isSelected = selecting ? selected.has(padId) : padPlayMode === 'BANK_64' && padId === selectedPadId;
-        const isPressed = pressedPads.has(padId);
-
-        return (
+    <div className="pad-bank-manager flex flex-col gap-2 min-h-0">
+      <div className="pad-utility-bar flex flex-wrap items-center justify-between gap-1 text-[9px] font-mono">
+        <div className="flex items-center gap-1">
           <button
-            key={padId}
-            data-pad-id={padId}
-            data-pressed={isPressed || undefined}
             type="button"
-            aria-pressed={selecting ? isSelected : undefined}
-            onClick={(event) => {
-              if (selecting && event.detail === 0) toggleSelection(padId);
-            }}
-            onPointerDown={(event) => handlePointerDown(event, padId, i)}
-            onPointerUp={handlePointerEnd}
-            onPointerCancel={handlePointerEnd}
-            onLostPointerCapture={handlePointerEnd}
-            onContextMenu={(event) => event.preventDefault()}
-            className={`pad-trigger touch-none select-none min-h-[44px] border rounded p-1.5 flex flex-col justify-between text-left text-[9px] transition-all duration-75 ${
-              isPressed
-                ? 'bg-[var(--accent-phrase)] border-[var(--accent-phrase)] text-zinc-950 scale-95 shadow-[0_0_12px_rgba(34,211,238,0.7)]'
-                : copying && copySource === padId
-                ? 'bg-cyan-950 border-cyan-400 text-cyan-200'
-                : isSelected
-                ? 'bg-zinc-900 border-[var(--accent-phrase)] shadow-[0_0_8px_rgba(34,211,238,0.3)]'
-                : 'bg-zinc-950 border-zinc-800 hover:border-cyan-500/50'
+            disabled={!storageReady || !selectedPadId}
+            aria-label={`Clear pad ${selectedPadId}`}
+            onClick={handleClearPadClick}
+            className="compact-block-button px-2 py-0.5 font-bold text-amber-300 disabled:opacity-40"
+          >
+            CLR
+          </button>
+          <button
+            type="button"
+            aria-pressed={effectiveEraseHeld}
+            aria-label="Hold to erase pad steps or subticks"
+            onClick={() => setEraseState(!effectiveEraseHeld, selectedPadId || null)}
+            className={`compact-block-button px-2 py-0.5 font-bold ${
+              effectiveEraseHeld ? 'bg-rose-900 text-rose-200' : 'text-zinc-300'
             }`}
           >
-            <span className="pad-label-row flex w-full items-center justify-between font-bold">
-              <span className={`pad-label ${isPressed ? 'text-zinc-900' : 'text-zinc-500'}`}>{isSlice ? `SLI ${String(Math.min(i + 1, slot.sliceMarkers.length - 1)).padStart(2, '0')}` : padPlayMode === 'CHROMATIC_16' ? chromaticNote(chromaticOffset(i, chromaticRootOffset)) : formatPadLabel(padId)}</span>
-              {hasSample && (
-                <span className={`pad-mode-label text-[8px] ${isPressed ? 'text-zinc-900' : 'text-[var(--accent-phrase)]'}`}>
-                  {selecting && isSelected ? 'SELECTED' : slot.playbackMode === 'one-shot' ? 'ONE' : slot.playbackMode.toUpperCase()}
-                </span>
-              )}
-            </span>
-            <span
-              className={`pad-sample-label text-[8px] truncate max-w-full ${
-                isPressed ? 'text-zinc-900' : hasSample ? 'text-zinc-200' : 'text-zinc-600'
+            ERASE
+          </button>
+          <button
+            type="button"
+            disabled={!storageReady}
+            onClick={() => {
+              setDeleteMode((prev) => !prev);
+              setConfirmPending(false);
+              setSelectedForDelete([]);
+            }}
+            className={`compact-block-button px-2 py-0.5 font-bold ${
+              deleteMode ? 'bg-rose-950 text-rose-300' : 'text-zinc-300'
+            }`}
+          >
+            {deleteMode ? 'CANCEL DEL' : 'DEL'}
+          </button>
+          {deleteMode && selectedForDelete.length > 0 && !confirmPending && (
+            <button
+              type="button"
+              onClick={() => setConfirmPending(true)}
+              className="compact-block-button px-2 py-0.5 font-bold text-rose-300"
+            >
+              DELETE {selectedForDelete.length}
+            </button>
+          )}
+          {deleteMode && confirmPending && (
+            <button
+              type="button"
+              onClick={() => void handleConfirmDelete()}
+              className="compact-block-button bg-rose-900 px-2 py-0.5 font-bold text-rose-100"
+            >
+              CONFIRM DELETE
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={!storageReady || !selectedPadId}
+            onClick={() => {
+              if (copySourcePadId === selectedPadId) {
+                setCopySourcePadId(null);
+              } else {
+                setCopySourcePadId(selectedPadId);
+                setStatusMessage(`SELECT TARGET PAD TO COPY ${selectedPadId}`);
+              }
+            }}
+            className={`compact-block-button px-2 py-0.5 font-bold ${
+              copySourcePadId ? 'bg-cyan-900 text-cyan-200' : 'text-zinc-300'
+            }`}
+          >
+            {copySourcePadId ? `COPY ${copySourcePadId}…` : 'COPY'}
+          </button>
+          <button
+            type="button"
+            aria-pressed={sliActive}
+            onClick={() => setSliActive(!sliActive)}
+            className={`compact-block-button px-2 py-0.5 font-bold ${
+              sliActive ? 'bg-cyan-900 text-cyan-200' : 'text-zinc-400'
+            }`}
+          >
+            SLI
+          </button>
+        </div>
+
+        <div className="flex items-center gap-1">
+          {(['BANK_64', 'CHROMATIC_16', 'CHORD'] as PadPlayMode[]).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setPadPlayMode(mode)}
+              className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                padPlayMode === mode ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-900 text-zinc-400'
               }`}
             >
-              {slot.loading ? 'LOADING...' : slot.name}
-            </span>
-          </button>
-        );
-      })}
-      <label className="pad-pitch-control">PITCH
-        <input aria-label="Selected pad pitch in semitones" type="range" min="-12" max="12" step="1"
-          value={slots[selectedPadId].pitch} disabled={!slots[selectedPadId].sampleKey || deleting}
-          onChange={(event) => updatePad(selectedPadId, { pitch: Number(event.target.value) })} />
-        <output>{slots[selectedPadId].pitch > 0 ? '+' : ''}{slots[selectedPadId].pitch} ST</output>
-      </label>
+              {mode === 'BANK_64' ? 'PAD' : mode === 'CHROMATIC_16' ? 'CHR' : 'CHD'}
+            </button>
+          ))}
+          {padPlayMode === 'CHROMATIC_16' && (
+            <div className="flex items-center gap-1 ml-1">
+              <button
+                type="button"
+                aria-label="Transpose chromatic root down"
+                onClick={() => setChromaticRootOffset(chromaticRootOffset - 1)}
+                className="px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-300"
+              >
+                -
+              </button>
+              <span className="text-zinc-300">{formatSemitoneLabel(chromaticRootOffset)}</span>
+              <button
+                type="button"
+                aria-label="Transpose chromatic root up"
+                onClick={() => setChromaticRootOffset(chromaticRootOffset + 1)}
+                className="px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-300"
+              >
+                +
+              </button>
+            </div>
+          )}
+        </div>
       </div>
+
+      <div className="pad-grid grid grid-cols-4 gap-1.5">
+        {bankPadIds.map((padId, idx) => {
+          const padIndex = idx + 1;
+          const slot = slots[padId];
+          const isSelected = padId === selectedPadId;
+          const isMarkedForDelete = selectedForDelete.includes(padId);
+          const isCopySource = copySourcePadId === padId;
+          const hasSample = Boolean(slot?.buffer || slot?.sampleKey);
+
+          return (
+            <button
+              key={padId}
+              type="button"
+              onClick={() => handlePadPress(padId, padIndex)}
+              aria-label={`Pad ${padId}`}
+              className={`pad-tile rounded border p-2 text-left font-mono transition ${
+                isMarkedForDelete
+                  ? 'border-rose-500 bg-rose-950/60 text-rose-200'
+                  : isCopySource
+                    ? 'border-cyan-400 bg-cyan-950/60 text-cyan-200'
+                    : isSelected
+                      ? 'border-amber-400 bg-zinc-800/90 text-zinc-100'
+                      : hasSample
+                        ? 'border-zinc-700 bg-zinc-900/90 text-zinc-200'
+                        : 'border-zinc-800 bg-zinc-950/70 text-zinc-500'
+              }`}
+            >
+              <div className="flex items-center justify-between text-[9px] font-bold">
+                <span>{padId}</span>
+                <span>
+                  {padPlayMode === 'CHROMATIC_16'
+                    ? formatSemitoneLabel(chromaticRootOffset + idx)
+                    : ''}
+                </span>
+              </div>
+              <div className="truncate text-[9px] mt-0.5">
+                {slot?.name || `EMPTY ${padId}`}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {statusMessage && (
+        <div role="status" className="text-[9px] font-mono text-amber-300">
+          {statusMessage}
+        </div>
+      )}
     </div>
   );
 };

@@ -104,6 +104,15 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
     [padBank, resetPadAdsr],
   );
 
+  const handleClearPad = useCallback(
+    (padId: string) => {
+      const activePatternIndex = projectController.getState().settings.activePatternIndex;
+      projectController.clearPadSteps(activePatternIndex, padId);
+      resetPadAdsr(padId);
+    },
+    [resetPadAdsr],
+  );
+
   const handleTriggerPad = useCallback<PadBankApi['triggerPad']>(
     (padId, onTriggered, semitoneOffset, pointerTime, sliceIndex, playThrough) => {
       const release = triggerPad(padId, onTriggered, semitoneOffset, pointerTime, sliceIndex, playThrough);
@@ -342,6 +351,7 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
           copyPad={padBank.copyPad}
           storageReady={padBank.storageReady}
           updatePad={padBank.updatePad}
+          onClearPad={handleClearPad}
           sliActive={
             selectedPad.sliActive &&
             activePadSlot.sliceMarkers.length >= 2 &&
