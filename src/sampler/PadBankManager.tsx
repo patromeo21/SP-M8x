@@ -25,6 +25,7 @@ export interface PadBankManagerProps {
   onClearPad?: (padId: string) => void;
   isEraseHeld?: boolean;
   onToggleEraseHold?: (held: boolean, targetPadId?: string | null) => void;
+  isTransportPlaying?: boolean;
   isRecording?: boolean;
   activePatternIndex?: number;
   activeStepIndex?: number;
@@ -60,6 +61,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
   onClearPad,
   isEraseHeld = false,
   onToggleEraseHold,
+  isTransportPlaying = false,
   isRecording = false,
   activePatternIndex,
   activeStepIndex,
@@ -90,10 +92,10 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
     (held: boolean, targetPadId?: string | null) => {
       if (onToggleEraseHold) {
         onToggleEraseHold(held, targetPadId);
-        return;
+      } else {
+        setLocalEraseHeld(held);
       }
-      setLocalEraseHeld(held);
-      projectController.setLiveEraseHold(held, targetPadId);
+      projectController.setLiveEraseHold(held, targetPadId ?? null);
     },
     [onToggleEraseHold],
   );
@@ -154,26 +156,46 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
         const state = projectController.getState();
         const patternIndex = activePatternIndex ?? state.settings.activePatternIndex;
         const eraseState = projectController.setLiveEraseHold(true, padId);
-        const canEraseNow =
-          !(eraseState.isRecording && eraseState.activeBus === 'MST');
-        if (canEraseNow && typeof activeStepIndex === 'number' && activeStepIndex >= 0) {
+        const recordingActive = isRecording || eraseState.isRecording;
+        const blockedByMasterBus = recordingActive && eraseState.activeBus === 'MST';
+
+        if (blockedByMasterBus) {
+          setStatusMessage('MST BUS ACTIVE — LIVE STEP ERASE BLOCKED');
+          return;
+        }
+
+        if (
+          isTransportPlaying &&
+          typeof activeStepIndex === 'number' &&
+          activeStepIndex >= 0
+        ) {
           const erased = projectController.erasePadAtStep(
             patternIndex,
             activeStepIndex,
             padId,
             activeSubtickIndex,
           );
+          const subtickLabel =
+            typeof activeSubtickIndex === 'number' && activeSubtickIndex >= 0
+              ? ` SUB ${activeSubtickIndex + 1}`
+              : '';
           setStatusMessage(
             erased
-              ? `ERASED ${padId} @ STEP ${activeStepIndex + 1}${isRecording ? ' (LIVE REC)' : ''}`
-              : `NO ${padId} EVENT AT STEP ${activeStepIndex + 1}`,
+              ? `ERASED ${padId} @ STEP ${activeStepIndex + 1}${subtickLabel}${recordingActive ? ' (LIVE REC)' : ''}`
+              : `NO ${padId} EVENT AT STEP ${activeStepIndex + 1}${subtickLabel}`,
           );
           return;
         }
-        if (!canEraseNow) {
-          setStatusMessage('MST BUS ACTIVE — LIVE STEP ERASE BLOCKED');
-          return;
+
+        if (instrumentId !== null) {
+          projectController.setLiveEraseTargetPad(padId);
         }
+        setStatusMessage(
+          isTransportPlaying
+            ? `ERASE ARMED FOR ${padId} — WAITING FOR ACTIVE STEP`
+            : `ERASE ARMED FOR ${padId} (TRANSPORT STOPPED)`,
+        );
+        return;
       }
 
       void triggerPad(
@@ -184,10 +206,6 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
         sliActive ? padIndex : undefined,
         false,
       );
-
-      if (instrumentId !== null && effectiveEraseHeld) {
-        projectController.setLiveEraseTargetPad(padId);
-      }
     },
     [
       activePatternIndex,
@@ -199,6 +217,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
       deleteMode,
       effectiveEraseHeld,
       isRecording,
+      isTransportPlaying,
       padPlayMode,
       sliActive,
       toggleDeleteSelection,
