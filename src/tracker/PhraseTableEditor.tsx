@@ -773,53 +773,56 @@ function TableRows({
           </div>
         );
       })}
-      {tableWindow.magnifier.isOpen && (
-        <div
-          role="dialog"
-          aria-label="Subtick magnifier"
-          className="subtick-magnifier-popover fixed z-50 bg-zinc-950 border border-cyan-400 p-2 shadow-xl"
-          style={{
-            top: `${Math.round(tableWindow.magnifier.position.top)}px`,
-            left: `${Math.round(tableWindow.magnifier.position.left)}px`,
-          }}
-        >
-          <div className="flex items-center justify-between gap-2 mb-1">
-            <span className="text-cyan-300">
-              SUBTICK MAGNIFIER ({tableWindow.magnifier.anchorTableStep + 1})
-            </span>
-            <button
-              type="button"
-              aria-label="Close subtick magnifier"
-              className={buttonClass}
-              onClick={() => onUpdateTableWindow((prev) => closeMagnifier(prev))}
-            >
-              ×
-            </button>
+      {tableWindow.magnifier.isOpen && tableWindow.magnifier.anchorTableStep !== null && (() => {
+        const anchorStep = tableWindow.magnifier.anchorTableStep;
+        return (
+          <div
+            role="dialog"
+            aria-label="Subtick magnifier"
+            className="subtick-magnifier-popover fixed z-50 bg-zinc-950 border border-cyan-400 p-2 shadow-xl"
+            style={{
+              top: `${Math.round(tableWindow.magnifier.position.top)}px`,
+              left: `${Math.round(tableWindow.magnifier.position.left)}px`,
+            }}
+          >
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <span className="text-cyan-300">
+                SUBTICK MAGNIFIER ({anchorStep + 1})
+              </span>
+              <button
+                type="button"
+                aria-label="Close subtick magnifier"
+                className={buttonClass}
+                onClick={() => onUpdateTableWindow((prev) => closeMagnifier(prev))}
+              >
+                ×
+              </button>
+            </div>
+            <div className="flex items-center gap-1 flex-wrap">
+              {tableWindow.magnifier.visibleSubticks.map((subtickIdx) => {
+                const rowItem = table.steps[subtickIdx];
+                const isCenter = subtickIdx === anchorStep;
+                return (
+                  <button
+                    key={subtickIdx}
+                    type="button"
+                    aria-label={`Select subtick ${subtickIdx + 1}`}
+                    className={`${buttonClass} ${isCenter ? 'border-cyan-400 text-cyan-300' : ''}`}
+                    onClick={() => {
+                      const targetPage = Math.floor(subtickIdx / 16);
+                      onUpdateTableWindow((prev) =>
+                        closeMagnifier(setTablePage(prev, targetPage)),
+                      );
+                    }}
+                  >
+                    {String(subtickIdx + 1).padStart(3, '0')}:{rowItem?.fx && rowItem.fx !== 'OFF' ? rowItem.fx : rowItem?.pitch ?? '—'}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          <div className="flex items-center gap-1 flex-wrap">
-            {tableWindow.magnifier.visibleSubticks.map((subtickIdx) => {
-              const rowItem = table.steps[subtickIdx];
-              const isCenter = subtickIdx === tableWindow.magnifier.anchorTableStep;
-              return (
-                <button
-                  key={subtickIdx}
-                  type="button"
-                  aria-label={`Select subtick ${subtickIdx + 1}`}
-                  className={`${buttonClass} ${isCenter ? 'border-cyan-400 text-cyan-300' : ''}`}
-                  onClick={() => {
-                    const targetPage = Math.floor(subtickIdx / 16);
-                    onUpdateTableWindow((prev) =>
-                      closeMagnifier(setTablePage(prev, targetPage)),
-                    );
-                  }}
-                >
-                  {String(subtickIdx + 1).padStart(3, '0')}:{rowItem?.fx && rowItem.fx !== 'OFF' ? rowItem.fx : rowItem?.pitch ?? '—'}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
