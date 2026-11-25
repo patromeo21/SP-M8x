@@ -22,14 +22,30 @@ import {
   type ViewportRect,
 } from '../table/tableWindowState';
 
-const fieldClass = 'phrase-cell-control bg-zinc-950 border border-zinc-700 text-zinc-100';
-const buttonClass = 'border border-zinc-700 px-2 py-1 text-zinc-300';
+const fieldClass = 'phrase-cell-control bg-zinc-950 border border-zinc-700 text-zinc-100 min-w-0';
+const buttonClass = 'border border-zinc-700 px-2 py-1 text-zinc-300 shrink-0';
 const notes = ['C-', 'C#', 'D-', 'D#', 'E-', 'F-', 'F#', 'G-', 'G#', 'A-', 'A#', 'B-'];
 const noteName = (midi: number) => `${notes[midi % 12]}${Math.floor(midi / 12) - 1}`;
 const stepNumber = (stepIndex: number) => String(stepIndex + 1).padStart(2, '0');
 const QUICK_SPANS = [2, 4, 8, 16, 32, 64] as const;
 const VOICE_FX_OPTIONS: readonly VoiceSlotFxCode[] = ['OFF', 'FL', 'DL', 'PS'];
 const PUNCH_FX3_OPTIONS: readonly PunchInSlotFxCode[] = ['OFF', 'PM', 'LF', 'BC'];
+
+const PHRASE_GRID_TEMPLATE: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns:
+    '52px minmax(84px, 1fr) minmax(68px, 0.9fr) minmax(64px, 0.85fr) minmax(60px, 0.8fr) minmax(86px, 1fr) minmax(64px, 0.8fr) minmax(64px, 0.8fr) minmax(64px, 0.8fr) minmax(64px, 0.8fr)',
+  columnGap: '4px',
+  alignItems: 'center',
+};
+
+const TABLE_GRID_TEMPLATE: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns:
+    '92px minmax(72px, 0.9fr) minmax(96px, 1.1fr) minmax(110px, 1.4fr) minmax(76px, 0.9fr) minmax(76px, 0.9fr)',
+  columnGap: '6px',
+  alignItems: 'center',
+};
 
 export interface EditorProps {
   slots: Record<string, PadSlot>;
@@ -87,6 +103,8 @@ export function PhraseTableEditor({
 }: EditorProps) {
   const [tableId, setTableId] = useState<number | null>(null);
   const [trackIndex, setTrackIndex] = useState(() => projectController.getSelectedTrackIndex());
+  const [selectedClearPadIds, setSelectedClearPadIds] = useState<string[]>([]);
+  const [clearStatus, setClearStatus] = useState('');
   const [internalTableWindow, setInternalTableWindow] = useState<TableWindowState>(() =>
     createInitialTableWindowState(null),
   );
@@ -101,6 +119,10 @@ export function PhraseTableEditor({
   const tables = projectController.getTables(trackIndex);
   const table = tables.find((item) => item.id === tableId) ?? tables[0];
   const delayedSteps = useMemo(() => getGrooveDelayedSteps(groovePreset), [groovePreset]);
+  const populatedPads = useMemo(
+    () => Object.values(slots).filter((slot) => Boolean(slot.sampleKey || slot.buffer)),
+    [slots],
+  );
 
   const tableWindow = externalTableWindow ?? internalTableWindow;
   const updateTableWindow = (updater: (prev: TableWindowState) => TableWindowState) => {
@@ -117,11 +139,59 @@ export function PhraseTableEditor({
     }
   }, [mode, tableWindow.magnifier.isOpen]);
 
+  const toggleClearPad = (padId: string) => {
+    setSelectedClearPadIds((prev) =>
+      prev.includes(padId) ? prev.filter((id) => id !== padId) : [...prev, padId],
+    );
+  };
+
+  const handleClearPhrase = () => {
+    if (!pattern) return;
+    if (selectedClearPadIds.length > 0) {
+      let totalCleared = 0;
+      for (const padId of selectedClearPadIds) {
+        totalCleared += projectController.clearPadSteps(patternIndex, padId, trackIndex);
+      }
+      setClearStatus(
+        `CLEARED ${totalCleared} STEP(S) FOR ${selectedClearPadIds.join(', ')} ON TRK ${trackIndex + 1}`,
+      );
+      return;
+    }
+    const cleared = projectController.clearTrackSteps(patternIndex, trackIndex);
+    setClearStatus(`CLEARED FULL PHRASE TRK ${trackIndex + 1} (${cleared} STEP(S))`);
+  };
+
+  const handleClearTable = () => {
+    if (!table) return;
+    if (selectedClearPadIds.length > 0) {
+      const targetTableIds = new Set<number>([table.id]);
+      for (const padId of selectedClearPadIds) {
+        const instId = padIdToInstrumentId(padId);
+        if (instId === null) continue;
+        for (const phraseStep of pattern?.tracks[trackIndex]?.steps ?? []) {
+          if (phraseStep.instrumentId === instId && typeof phraseStep.tableId === 'number') {
+            targetTableIds.add(phraseStep.tableId);
+          }
+        }
+      }
+      let totalCleared = 0;
+      for (const id of targetTableIds) {
+        totalCleared += projectController.clearAllTableSteps(id, trackIndex);
+      }
+      setClearStatus(
+        `CLEARED ${totalCleared} TABLE ROW(S) FOR ${selectedClearPadIds.join(', ')}`,
+      );
+      return;
+    }
+    const cleared = projectController.clearAllTableSteps(table.id, trackIndex);
+    setClearStatus(`CLEARED FULL TABLE ${table.name} (${cleared} ROW(S))`);
+  };
+
   if (!pattern) return <p role="alert">Active phrase is unavailable.</p>;
 
   return (
     <section className={`${mode === 'phrase' ? 'phrase-panel' : 'table-panel'} relative flex-1 min-h-0 flex flex-col gap-2 p-3 bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl font-mono text-xs overflow-visible`}>
-      <div className="phrase-toolbar flex items-center gap-2">
+      <div className="phrase-toolbar flex flex-wrap items-center gap-2">
         <label className="control-block">TRK <select aria-label="Phrase track" className={fieldClass} value={trackIndex}
           onChange={(event) => projectController.setSelectedTrackIndex(Number(event.target.value))}>
           {Array.from({ length: 8 }, (_, index) => <option key={index} value={index}>{index + 1}</option>)}
@@ -138,6 +208,15 @@ export function PhraseTableEditor({
               onChange={(event) => projectController.setPatternLength(patternIndex, Number(event.target.value) as PhraseLength)}>
               {[16, 32, 64].map((length) => <option key={length} value={length}>{length}</option>)}
             </select></label>
+            <button
+              type="button"
+              className={`${buttonClass} border-amber-500/70 text-amber-300`}
+              aria-label={selectedClearPadIds.length > 0 ? 'Clear selected pads in phrase' : 'Clear full phrase'}
+              disabled={transportBusy}
+              onClick={handleClearPhrase}
+            >
+              {selectedClearPadIds.length > 0 ? `CLR PHR (${selectedClearPadIds.length})` : 'CLR PHR'}
+            </button>
           </>
         ) : (
           <>
@@ -162,6 +241,15 @@ export function PhraseTableEditor({
                   tableId: String(createdId),
                 }));
               }}>＋</button>
+            <button
+              type="button"
+              className={`${buttonClass} border-amber-500/70 text-amber-300`}
+              aria-label={selectedClearPadIds.length > 0 ? 'Clear table for selected pads' : 'Clear full table'}
+              disabled={!table}
+              onClick={handleClearTable}
+            >
+              {selectedClearPadIds.length > 0 ? `CLR TBL (${selectedClearPadIds.length})` : 'CLR TBL'}
+            </button>
             <button type="button" className={buttonClass} aria-label="Toggle table context lock"
               aria-pressed={contextLock} disabled={!linkedPad} onClick={onToggleContextLock}>
               {contextLock ? 'PAD LOCK' : 'LINK PAD'}
@@ -174,6 +262,51 @@ export function PhraseTableEditor({
           </>
         )}
       </div>
+
+      <div className="multi-pad-clear-scope flex flex-wrap items-center gap-1 text-[10px]" aria-label="Multi-pad clear selection">
+        <span className="text-zinc-400 mr-1">PAD SCOPE:</span>
+        {populatedPads.length === 0 ? (
+          <span className="text-zinc-500">ALL PADS (NO LOADED PADS)</span>
+        ) : (
+          populatedPads.map((slot) => {
+            const active = selectedClearPadIds.includes(slot.id);
+            return (
+              <button
+                key={slot.id}
+                type="button"
+                aria-pressed={active}
+                aria-label={`Select pad ${slot.id} for clear`}
+                onClick={() => toggleClearPad(slot.id)}
+                className={`px-1.5 py-0.5 border rounded font-bold ${
+                  active
+                    ? 'border-amber-400 bg-amber-950/60 text-amber-200'
+                    : 'border-zinc-800 bg-zinc-950 text-zinc-400'
+                }`}
+              >
+                {slot.id}
+              </button>
+            );
+          })
+        )}
+        {selectedClearPadIds.length > 0 && (
+          <button
+            type="button"
+            className="px-1.5 py-0.5 border border-zinc-700 rounded text-zinc-300"
+            onClick={() => {
+              setSelectedClearPadIds([]);
+              setClearStatus('');
+            }}
+          >
+            CLEAR PAD SCOPE
+          </button>
+        )}
+        {clearStatus && (
+          <span role="status" className="text-amber-300 ml-1">
+            {clearStatus}
+          </span>
+        )}
+      </div>
+
       {mode === 'phrase'
         ? <PhraseRows
             key={`${pattern.id}-${trackIndex}-${pattern.length}`}
@@ -272,8 +405,17 @@ function PhraseRows({
 
   return (
     <div className="phrase-grid-scroll phrase-sequencer-list flex-1 min-h-0" aria-label="Vertical phrase steps">
-      <div className="phrase-grid-header phrase-sequencer-grid">
-        <span>STEP</span><span>MICRO</span><span>TBL</span><span>NOTE</span><span>INST</span><span>VOL</span><span>FX1</span><span>FX2</span><span>FX3</span><span>COND</span>
+      <div className="phrase-grid-header phrase-sequencer-grid" style={PHRASE_GRID_TEMPLATE}>
+        <span>STEP</span>
+        <span>SUB</span>
+        <span>TBL</span>
+        <span>NOTE</span>
+        <span>INST</span>
+        <span>VOL</span>
+        <span>FX1</span>
+        <span>FX2</span>
+        <span>FX3</span>
+        <span>COND</span>
       </div>
       {steps.slice(page * 16, page * 16 + 16).map((step, row) => {
         const index = page * 16 + row;
@@ -288,22 +430,26 @@ function PhraseRows({
         const microOffset = clampSubtickOffset(step.subTickOffset);
 
         return (
-          <div className={`phrase-row phrase-sequencer-grid ${isCurrent ? 'is-playing' : ''} ${playing && isCurrent && delayedSteps[index % 16] ? 'is-groove-pulse' : ''} ${isGrooveSubAccent ? 'is-groove-subaccent border-rose-500/80 bg-rose-950/20' : ''}`}
-            key={index} data-step={index + 1}>
+          <div
+            className={`phrase-row phrase-sequencer-grid ${isCurrent ? 'is-playing' : ''} ${playing && isCurrent && delayedSteps[index % 16] ? 'is-groove-pulse' : ''} ${isGrooveSubAccent ? 'is-groove-subaccent border-rose-500/80 bg-rose-950/20' : ''}`}
+            style={PHRASE_GRID_TEMPLATE}
+            key={index}
+            data-step={index + 1}
+          >
             <button type="button" aria-label={`Phrase step ${index + 1}`} aria-pressed={active}
               disabled={contextLock || (transportBusy && !occupied)}
               onClick={() => toggleStep(index)}
-              className={`phrase-step-toggle ${active ? 'is-active' : ''} ${isGrooveSubAccent ? 'text-rose-300 border-rose-500' : ''}`}>
+              className={`phrase-step-toggle shrink-0 ${active ? 'is-active' : ''} ${isGrooveSubAccent ? 'text-rose-300 border-rose-500' : ''}`}>
               {stepNumber(index)}
             </button>
-            <div className="phrase-microtiming-control" aria-label={`Phrase microtiming step ${index + 1}`}>
-              <button type="button" aria-label={`Move step ${index + 1} earlier`} disabled={!padId}
+            <div className="phrase-microtiming-control flex items-center justify-between gap-0.5 min-w-0" aria-label={`Phrase subtick step ${index + 1}`}>
+              <button type="button" className="px-1 shrink-0" aria-label={`Move step ${index + 1} earlier`} disabled={!padId}
                 onClick={() => applyMicroOffset(index, microOffset - 1)}>−</button>
-              <button type="button" className="phrase-micro-zero" aria-label={`Reset step ${index + 1} microtiming to zero`} disabled={!padId}
+              <button type="button" className="phrase-micro-zero px-1 tabular-nums min-w-0 truncate" aria-label={`Reset step ${index + 1} subtick to zero`} disabled={!padId}
                 onClick={() => applyMicroOffset(index, 0)}>
                 {microOffset === 0 ? '0' : microOffset > 0 ? `+${microOffset}` : String(microOffset)}
               </button>
-              <button type="button" aria-label={`Move step ${index + 1} later`} disabled={!padId}
+              <button type="button" className="px-1 shrink-0" aria-label={`Move step ${index + 1} later`} disabled={!padId}
                 onClick={() => applyMicroOffset(index, microOffset + 1)}>+</button>
             </div>
             <select aria-label={`Phrase table step ${index + 1}`} className={fieldClass}
@@ -332,11 +478,12 @@ function PhraseRows({
               <option value="">---</option>
               {pads.map((pad) => <option key={pad.id} value={pad.id}>{pad.id}</option>)}
             </select>
-            <label className={`phrase-inline-volume ${occupied ? 'has-value' : ''}`}>
+            <label className={`phrase-inline-volume flex items-center gap-1 min-w-0 ${occupied ? 'has-value' : ''}`}>
               <input aria-label={`Phrase volume step ${index + 1}`} type="range" min="0" max="127"
+                className="w-full min-w-0"
                 value={step.velocity ?? 127} disabled={!padId}
                 onChange={(event) => projectController.updateStep(patternIndex, index, { velocity: Number(event.target.value) }, trackIndex)} />
-              <span>{step.velocity ?? 127}</span>
+              <span className="tabular-nums shrink-0">{step.velocity ?? 127}</span>
             </label>
             <select aria-label={`Phrase FX1 step ${index + 1}`} className={fieldClass}
               value={fx1} disabled={!padId}
@@ -391,10 +538,10 @@ function PhraseRows({
           </div>
         );
       })}
-      <div className="phrase-page-controls">
+      <div className="phrase-page-controls flex flex-wrap items-center gap-1.5 mt-1">
         <button type="button" className={buttonClass} disabled={transportBusy || !firstLoadedPad}
           aria-expanded={euclideanOpen} onClick={() => setEuclideanOpen((open) => !open)}>EUCLID</button>
-        {euclideanOpen && <form className="euclidean-controls" onSubmit={(event) => {
+        {euclideanOpen && <form className="euclidean-controls flex items-center gap-1.5" onSubmit={(event) => {
           event.preventDefault();
           const currentPadId = instrumentIdToPadId(steps.find((step) => step.instrumentId !== null)?.instrumentId ?? null) ?? firstLoadedPad;
           if (!currentPadId) return;
@@ -559,8 +706,13 @@ function TableRows({
           </span>
         )}
       </div>
-      <div className="table-grid-header table-sequencer-grid">
-        <span>SUBTICK</span><span>PITCH</span><span>VOL</span><span>FX1</span><span>FX2</span><span>FX3</span>
+      <div className="table-grid-header table-sequencer-grid" style={TABLE_GRID_TEMPLATE}>
+        <span>SUB</span>
+        <span>PITCH</span>
+        <span>VOL</span>
+        <span>FX1</span>
+        <span>FX2</span>
+        <span>FX3</span>
       </div>
       {table.steps.slice(page * 16, page * 16 + 16).map((step, row) => {
         const index = page * 16 + row;
@@ -583,13 +735,13 @@ function TableRows({
         return (
           <div
             className={`table-row table-sequencer-grid relative ${isOpen ? 'z-30' : ''} ${current ? 'is-playing' : ''} ${playing && current && activeStep >= 0 && delayedSteps[activeStep % 16] ? 'is-groove-pulse' : ''} ${isGrooveSubAccent ? 'is-groove-subaccent border-rose-500/80 bg-rose-950/20' : ''}`}
+            style={{ ...TABLE_GRID_TEMPLATE, overflow: 'visible' }}
             key={index}
             data-subtick={index + 1}
             data-latched={isLatchedRow ? 'true' : undefined}
-            style={{ overflow: 'visible' }}
           >
             <div className="flex items-center gap-1 min-w-0">
-              <span className={`table-step-address ${isGrooveSubAccent ? 'text-rose-300 border-rose-500' : ''}`} aria-label={`Table subtick ${index + 1}`}>
+              <span className={`table-step-address tabular-nums shrink-0 ${isGrooveSubAccent ? 'text-rose-300 border-rose-500' : ''}`} aria-label={`Table subtick ${index + 1}`}>
                 {String(index + 1).padStart(3, '0')}
               </span>
               <button
@@ -609,13 +761,14 @@ function TableRows({
               <option value="">HOLD</option>
               {Array.from({ length: 49 }, (_, i) => i - 24).map((value) => <option key={value} value={value}>{value > 0 ? `+${value}` : value}</option>)}
             </select>
-            <label className="flex items-center gap-1" aria-label={`Table volume subtick ${index + 1}`}>
+            <label className="flex items-center gap-1 min-w-0" aria-label={`Table volume subtick ${index + 1}`}>
               <input aria-label={`Table volume subtick ${index + 1}`} type="range" min="0" max="127" step="1"
+                className="w-full min-w-0"
                 value={step.volume ?? 127}
                 onChange={(event) => projectController.updateTableStep(table.id, index, {
                   volume: Number(event.target.value),
                 }, trackIndex)} />
-              <button type="button" aria-label={`Set table volume subtick ${index + 1} to hold`}
+              <button type="button" className="tabular-nums shrink-0" aria-label={`Set table volume subtick ${index + 1} to hold`}
                 onClick={() => projectController.updateTableStep(table.id, index, { volume: null }, trackIndex)}>
                 {step.volume ?? 'H'}
               </button>
@@ -657,7 +810,7 @@ function TableRows({
                     max={127}
                     step={1}
                     aria-label={`${activeFx === 'FL' ? 'Filter' : 'Delay'} value subtick ${index + 1}`}
-                    className={`${fieldClass} w-12`}
+                    className={`${fieldClass} w-12 tabular-nums`}
                     value={opcodeValue}
                     onChange={(event) => setOpcodeParamValue(index, activeFx, Number(event.target.value))}
                   />
@@ -745,7 +898,7 @@ function TableRows({
               )}
             </div>
             <div className="table-fx2-cell flex items-center gap-1 min-w-0">
-              <select aria-label={`Table FX2 subtick ${index + 1}`} className={fieldClass}
+              <select aria-label={`Table FX2 subtick ${index + 1}`} className={`${fieldClass} w-full`}
                 value={activeFx2}
                 onChange={(event) => {
                   const nextFx2 = normalizeVoiceFx(event.target.value);
@@ -758,7 +911,7 @@ function TableRows({
               </select>
             </div>
             <div className="table-fx3-cell flex items-center gap-1 min-w-0">
-              <select aria-label={`Table FX3 subtick ${index + 1}`} className={fieldClass}
+              <select aria-label={`Table FX3 subtick ${index + 1}`} className={`${fieldClass} w-full`}
                 value={activeFx3}
                 onChange={(event) => {
                   const nextFx3 = normalizePunchFx3(event.target.value);
