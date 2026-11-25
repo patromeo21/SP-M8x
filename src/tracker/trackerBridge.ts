@@ -184,9 +184,10 @@ class TrackerBridge {
       typeof rawOffset === 'number' && Number.isFinite(rawOffset)
         ? Math.max(boundary ? 0 : -8, Math.min(8, Math.round(rawOffset)))
         : 0;
-    const scheduledTime = Math.max(0, stepTime + (offset * stepDuration) / 8);
+    const rawScheduledTime = Math.max(0, stepTime + (offset * stepDuration) / 8);
     const now = audioEngine.getContext()?.currentTime ?? 0;
-    if (scheduledTime < now - 0.01) return;
+    if (rawScheduledTime < now - Math.max(0.05, stepDuration)) return;
+    const scheduledTime = Math.max(now, rawScheduledTime);
 
     const note = event?.note ?? step.note;
     const instrumentId = event ? event.instrumentId ?? event.padId : step.instrumentId;
@@ -213,18 +214,24 @@ class TrackerBridge {
     const startPct = settings?.startPct ?? 0;
     const endPct = settings?.endPct ?? 100;
     const slice =
-      !event && step.sliceIndex !== undefined
+      step.sliceIndex !== undefined
         ? sliceRange(settings?.sliceMarkers ?? [], step.sliceIndex, buffer.length)
         : undefined;
-    if (!event && step.sliceIndex !== undefined && !slice) {
+    if (step.sliceIndex !== undefined && !slice) {
       console.error(`[TrackerBridge] Missing or invalid slice ${step.sliceIndex} for ${padId}.`);
       return;
     }
+    const useDynamicPadRange =
+      Boolean(event && (event as StepEvent & { followPadRange?: boolean }).followPadRange !== false && step.sliceIndex === undefined && settings);
     const eventStart =
-      event ? Math.max(0, Math.min(buffer.length, event.sliceStartFrame)) : undefined;
+      event && !useDynamicPadRange
+        ? Math.max(0, Math.min(buffer.length, event.sliceStartFrame))
+        : undefined;
     const eventEnd =
-      event ? Math.max(0, Math.min(buffer.length, event.sliceEndFrame)) : undefined;
-    if (event && (eventStart === undefined || eventEnd === undefined || eventEnd <= eventStart)) {
+      event && !useDynamicPadRange
+        ? Math.max(0, Math.min(buffer.length, event.sliceEndFrame))
+        : undefined;
+    if (event && !useDynamicPadRange && (eventStart === undefined || eventEnd === undefined || eventEnd <= eventStart)) {
       console.error(`[TrackerBridge] Invalid recorded slice for ${padId}.`);
       return;
     }
