@@ -17,6 +17,12 @@ import { exportSp8Bundle, importSp8Bundle } from '../project/sp8Bundle';
 import { readStoredAudio } from '../sampler/padStorage';
 import type { StoredPad } from '../sampler/padStorage';
 import { createRecordedStepEvent } from '../project/stepModel';
+import {
+  createInitialPausedPadTargetState,
+  resolvePausedPadTarget,
+  type PausedPadTargetState,
+  type TriggeredInstStep,
+} from '../tracker/pausedPadTargetSnap';
 
 export type WorkspaceTab = 'phrase' | 'table' | 'song' | 'mixer' | 'sampler';
 
@@ -91,6 +97,9 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
   const [subtick, setSubtick] = useState(0);
   const [fillActive, setFillActive] = useState(false);
   const [playhead, setPlayhead] = useState(-1);
+  const [pausedPadTarget, setPausedPadTarget] = useState<PausedPadTargetState>(() =>
+    createInitialPausedPadTargetState(),
+  );
   const [transportMessage, setTransportMessage] = useState('');
   const [queuedPatternIndex, setQueuedPatternIndex] = useState<number | null>(null);
   const [projectRevision, refreshProject] = useState(0);
@@ -113,10 +122,37 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
     }
   }, [currentBpm]);
 
+  const buildTriggeredInstSteps = useCallback((maxStep: number): TriggeredInstStep[] => {
+    const state = projectController.getState();
+    const pattern = state.tracker.patterns[state.settings.activePatternIndex];
+    const trackIndex = projectController.getSelectedTrackIndex();
+    const steps = pattern?.tracks[trackIndex]?.steps ?? [];
+    const limit = Math.min(steps.length, Math.max(0, maxStep + 1));
+    const items: TriggeredInstStep[] = [];
+    for (let i = 0; i < limit; i++) {
+      const step = steps[i];
+      const padId = step ? instrumentIdToPadId(step.instrumentId) : null;
+      const hasInstrument = step?.instrumentId !== null && step?.instrumentId !== undefined;
+      const activeNote = step?.note !== undefined && step?.note !== '---' && step?.note !== 'OFF';
+      items.push({
+        stepIndex: i,
+        padId,
+        instrumentId: hasInstrument ? String(step.instrumentId) : null,
+        triggered: Boolean(activeNote && (padId !== null || hasInstrument)),
+      });
+    }
+    return items;
+  }, []);
+
+  const clearPausedPadTarget = useCallback(() => {
+    setPausedPadTarget(createInitialPausedPadTargetState());
+  }, []);
+
   const stopTransport = useCallback(() => {
     startGeneration.current++;
     queueGeneration.current++;
     trackerEngine.stop();
+    clearPausedPadTarget();
     setQueuedPatternIndex(null);
     padBank.stopGatedVoices();
     setStarting(false);
@@ -127,15 +163,26 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
     setTransportCursorVisible(true);
     setFillActive(false);
     trackerEngine.setFillActive(false);
-  }, [padBank.stopGatedVoices]);
+  }, [clearPausedPadTarget, padBank.stopGatedVoices]);
 
   const pauseTransport = useCallback(() => {
     if (!playing) return;
     trackerEngine.pause();
+    const snapStep = playhead >= 0 ? playhead : 0;
+    const resolved = resolvePausedPadTarget(pausedPadTarget, {
+      isPlaying: false,
+      steps: buildTriggeredInstSteps(snapStep),
+      fallbackPhraseStep: snapStep,
+      maxStepIndex: snapStep,
+    });
+    setPausedPadTarget(resolved);
+    if (resolved.lockedPadId && padBank.slots[resolved.lockedPadId]?.sampleKey) {
+      padBank.selectPad(resolved.lockedPadId);
+    }
     setPlaying(false);
     setPaused(true);
     padBank.stopGatedVoices();
-  }, [padBank.stopGatedVoices, playing]);
+  }, [buildTriggeredInstSteps, padBank, pausedPadTarget, playhead, playing]);
 
   const handleUndo = useCallback(() => {
     projectController.undo();
@@ -228,6 +275,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
     trackerBridge.setPadSettingsProvider(padBank.getPadSettings);
     trackerEngine.setCallbacks(setPlayhead, (reason) => {
       queueGeneration.current++;
+      clearPausedPadTarget();
       setQueuedPatternIndex(null);
       setPlaying(false);
       setPaused(false);
@@ -248,12 +296,13 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
       unsubscribe();
       unsubscribeOverload();
     };
-  }, [padBank.getPadSettings]);
+  }, [clearPausedPadTarget, padBank.getPadSettings]);
 
   const startTransport = useCallback(() => {
     if (starting) {
       startGeneration.current++;
       trackerEngine.stop();
+      clearPausedPadTarget();
       setStarting(false);
       setPlaying(false);
       setPaused(false);
@@ -272,6 +321,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
         if (paused) {
           await trackerEngine.resume();
         } else {
+          clearPausedPadTarget();
           await audioEngine.initialize();
           const state = projectController.getState();
           const pattern = state.tracker.patterns[state.settings.activePatternIndex];
@@ -281,6 +331,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
           await trackerEngine.start(state.settings.bpm, armed && countInEnabled);
         }
         if (generation !== startGeneration.current) return;
+        clearPausedPadTarget();
         setPlaying(true);
         setPaused(false);
       } catch (error) {
@@ -291,7 +342,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
         if (generation === startGeneration.current) setStarting(false);
       }
     })();
-  }, [armed, countInEnabled, padBank.preparePads, paused, playing, starting]);
+  }, [armed, clearPausedPadTarget, countInEnabled, padBank.preparePads, paused, playing, starting]);
 
   const handleBpmChange = useCallback((bpm: number) => {
     if (!Number.isFinite(bpm)) return;
@@ -460,7 +511,11 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
     </main>;
   }
 
-  const visibleStep = playing || paused || transportCursorVisible ? playhead : activeStep;
+  const baseStep = playing || paused || transportCursorVisible ? playhead : activeStep;
+  const visibleStep = paused && pausedPadTarget.snappedPhraseStep !== null
+    ? pausedPadTarget.snappedPhraseStep
+    : baseStep;
+  const displayStepNumber = Math.max(0, visibleStep % 16).toString(16).toUpperCase().padStart(2, '0');
 
   return (
     <div className="app-shell flex flex-col w-full bg-[var(--bg-shell-deep)] text-[var(--text-primary)] font-mono overflow-hidden select-none">
@@ -648,7 +703,10 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
               {GROOVE_PRESETS.map((preset) => <option key={preset} value={preset}>{preset}</option>)}
             </select>
           </label>
-          <span role="status">STEP {Math.max(0, playhead % 16).toString(16).toUpperCase().padStart(2, '0')} · SUB {subtick}</span>
+          <span role="status">STEP {displayStepNumber} · SUB {subtick}</span>
+          {paused && pausedPadTarget.isPadLocked && pausedPadTarget.lockedPadId && (
+            <span role="status" className="text-amber-300">SNAP PAD: {pausedPadTarget.lockedPadId}</span>
+          )}
           <MasterOutput savedLocally={padBank.storageReady && !padBank.storageError && !projectController.hasSaveError() && !['SAVING', 'DELETING'].includes(padBank.storageStatus)} />
           {padBank.storageError && <span role="alert" className="text-rose-400">{padBank.storageStatus}</span>}
           {projectController.hasSaveError() && <span role="alert" className="text-rose-400">PHRASE SAVE FAILED</span>}
