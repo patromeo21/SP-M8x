@@ -23,6 +23,7 @@ export interface PadBankManagerProps {
   sliActive: boolean;
   setSliActive: (active: boolean) => void;
   onClearPad?: (padId: string) => void;
+  onCropPad?: (padId: string) => void;
   isEraseHeld?: boolean;
   onToggleEraseHold?: (held: boolean, targetPadId?: string | null) => void;
   isTransportPlaying?: boolean;
@@ -43,6 +44,16 @@ function formatSemitoneLabel(semitoneOffset: number): string {
   return semitoneOffset > 0 ? `+${semitoneOffset} ST` : `${semitoneOffset} ST`;
 }
 
+function formatPadPitchLabel(pitch: number): string {
+  if (pitch === 0) return '0 ST';
+  return pitch > 0 ? `+${pitch} ST` : `${pitch} ST`;
+}
+
+function clampPitchSemitones(pitch: number): number {
+  if (!Number.isFinite(pitch)) return 0;
+  return Math.max(-24, Math.min(24, Math.round(pitch)));
+}
+
 export const PadBankManager: React.FC<PadBankManagerProps> = ({
   slots,
   activeBank,
@@ -59,6 +70,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
   sliActive,
   setSliActive,
   onClearPad,
+  onCropPad,
   isEraseHeld = false,
   onToggleEraseHold,
   isTransportPlaying = false,
@@ -71,11 +83,22 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
   const [selectedForDelete, setSelectedForDelete] = useState<string[]>([]);
   const [confirmPending, setConfirmPending] = useState(false);
   const [copySourcePadId, setCopySourcePadId] = useState<string | null>(null);
+  const [copyTargetPadIds, setCopyTargetPadIds] = useState<string[]>([]);
   const [statusMessage, setStatusMessage] = useState('');
   const [localEraseHeld, setLocalEraseHeld] = useState(false);
 
   const effectiveEraseHeld = onToggleEraseHold ? isEraseHeld : localEraseHeld;
+  const effectivePlayMode: PadPlayMode =
+    padPlayMode === ('CHORD' as PadPlayMode) ? 'BANK_64' : padPlayMode;
   const bankPadIds = useMemo(() => getBankPadIds(activeBank), [activeBank]);
+  const selectedSlot = slots[selectedPadId];
+  const selectedPadPitch = clampPitchSemitones(selectedSlot?.pitch ?? 0);
+
+  useEffect(() => {
+    if (padPlayMode === ('CHORD' as PadPlayMode)) {
+      setPadPlayMode('BANK_64');
+    }
+  }, [padPlayMode, setPadPlayMode]);
 
   useEffect(() => {
     setConfirmPending(false);
@@ -86,6 +109,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
     setSelectedForDelete([]);
     setConfirmPending(false);
     setCopySourcePadId(null);
+    setCopyTargetPadIds([]);
   }, [activeBank]);
 
   const setEraseState = useCallback(
@@ -100,11 +124,70 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
     [onToggleEraseHold],
   );
 
+  const adjustSelectedPadPitch = useCallback(
+    (delta: number) => {
+      if (!selectedPadId) return;
+      const nextPitch = clampPitchSemitones(selectedPadPitch + delta);
+      updatePad(selectedPadId, { pitch: nextPitch });
+      setStatusMessage(`PAD ${selectedPadId} PITCH ${formatPadPitchLabel(nextPitch)}`);
+    },
+    [selectedPadId, selectedPadPitch, updatePad],
+  );
+
+  const handleCropClick = useCallback(() => {
+    const targetPadId = selectedPadId || bankPadIds[0];
+    if (!targetPadId) return;
+    if (onCropPad) {
+      onCropPad(targetPadId);
+      setStatusMessage(`CROPPED ${targetPadId} TO S/E FULL VIEW`);
+      return;
+    }
+    const targetSlot = slots[targetPadId];
+    const bufferLength = targetSlot?.buffer?.length ?? 0;
+    if (bufferLength > 0) {
+      const startFrame = Math.max(
+        0,
+        Math.min(bufferLength - 1, Math.round((targetSlot.startPct / 100) * bufferLength)),
+      );
+      const endFrame = Math.max(
+        startFrame + 1,
+        Math.min(bufferLength, Math.round((targetSlot.endPct / 100) * bufferLength)),
+      );
+      updatePad(targetPadId, {
+        startPct: (startFrame / bufferLength) * 100,
+        endPct: (endFrame / bufferLength) * 100,
+      });
+    }
+    setStatusMessage(`CROPPED ${targetPadId} TO S/E FULL VIEW`);
+  }, [bankPadIds, onCropPad, selectedPadId, slots, updatePad]);
+
   const toggleDeleteSelection = useCallback((padId: string) => {
     setSelectedForDelete((prev) =>
       prev.includes(padId) ? prev.filter((id) => id !== padId) : [...prev, padId],
     );
   }, []);
+
+  const toggleCopyTarget = useCallback((padId: string) => {
+    setCopyTargetPadIds((prev) =>
+      prev.includes(padId) ? prev.filter((id) => id !== padId) : [...prev, padId],
+    );
+  }, []);
+
+  const handleApplyMultiCopy = useCallback(async () => {
+    if (!copySourcePadId || copyTargetPadIds.length === 0) return;
+    const sourceId = copySourcePadId;
+    const targets = copyTargetPadIds.filter((id) => id !== sourceId);
+    const copied: string[] = [];
+    for (const destId of targets) {
+      await Promise.resolve(copyPad(sourceId, destId));
+      copied.push(destId);
+    }
+    setCopySourcePadId(null);
+    setCopyTargetPadIds([]);
+    if (copied.length > 0) {
+      setStatusMessage(`COPIED ${sourceId} -> ${copied.join(', ')}`);
+    }
+  }, [copyPad, copySourcePadId, copyTargetPadIds]);
 
   const handleConfirmDelete = useCallback(async () => {
     if (selectedForDelete.length === 0) return;
@@ -139,18 +222,18 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
       }
 
       if (copySourcePadId) {
-        if (copySourcePadId !== padId) {
-          void Promise.resolve(copyPad(copySourcePadId, padId)).then(() => {
-            setStatusMessage(`COPIED ${copySourcePadId} -> ${padId}`);
-          });
+        if (copySourcePadId === padId) {
+          setCopySourcePadId(null);
+          setCopyTargetPadIds([]);
+          return;
         }
-        setCopySourcePadId(null);
+        toggleCopyTarget(padId);
         return;
       }
 
       const instrumentId = padIdToInstrumentId(padId);
       const semitoneOffset =
-        padPlayMode === 'CHROMATIC_16' ? chromaticRootOffset + (padIndex - 1) : 0;
+        effectivePlayMode === 'CHROMATIC_16' ? chromaticRootOffset + (padIndex - 1) : 0;
 
       if (effectiveEraseHeld) {
         const state = projectController.getState();
@@ -212,14 +295,14 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
       activeStepIndex,
       activeSubtickIndex,
       chromaticRootOffset,
-      copyPad,
       copySourcePadId,
       deleteMode,
       effectiveEraseHeld,
+      effectivePlayMode,
       isRecording,
       isTransportPlaying,
-      padPlayMode,
       sliActive,
+      toggleCopyTarget,
       toggleDeleteSelection,
       triggerPad,
     ],
@@ -287,9 +370,11 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
             onClick={() => {
               if (copySourcePadId === selectedPadId) {
                 setCopySourcePadId(null);
+                setCopyTargetPadIds([]);
               } else {
                 setCopySourcePadId(selectedPadId);
-                setStatusMessage(`SELECT TARGET PAD TO COPY ${selectedPadId}`);
+                setCopyTargetPadIds([]);
+                setStatusMessage(`SELECT 1+ TARGET PADS TO COPY ${selectedPadId}`);
               }
             }}
             className={`compact-block-button px-2 py-0.5 font-bold ${
@@ -297,6 +382,24 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
             }`}
           >
             {copySourcePadId ? `COPY ${copySourcePadId}…` : 'COPY'}
+          </button>
+          {copySourcePadId && copyTargetPadIds.length > 0 && (
+            <button
+              type="button"
+              onClick={() => void handleApplyMultiCopy()}
+              className="compact-block-button bg-cyan-900 px-2 py-0.5 font-bold text-cyan-100"
+            >
+              PASTE ({copyTargetPadIds.length})
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={!storageReady || !selectedPadId || !selectedSlot?.buffer}
+            aria-label={`Crop pad ${selectedPadId} to S/E markers`}
+            onClick={handleCropClick}
+            className="compact-block-button px-2 py-0.5 font-bold text-cyan-300 disabled:opacity-40"
+          >
+            CROP
           </button>
           <button
             type="button"
@@ -308,22 +411,45 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
           >
             SLI
           </button>
+          <div className="flex items-center gap-0.5 ml-1" aria-label="Pad semitone pitch">
+            <button
+              type="button"
+              disabled={!storageReady || !selectedPadId}
+              aria-label="Tune selected pad pitch down 1 semitone"
+              onClick={() => adjustSelectedPadPitch(-1)}
+              className="px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-300 disabled:opacity-40"
+            >
+              -
+            </button>
+            <span className="text-zinc-300 px-1 tabular-nums">
+              {selectedPadId} {formatPadPitchLabel(selectedPadPitch)}
+            </span>
+            <button
+              type="button"
+              disabled={!storageReady || !selectedPadId}
+              aria-label="Tune selected pad pitch up 1 semitone"
+              onClick={() => adjustSelectedPadPitch(1)}
+              className="px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-300 disabled:opacity-40"
+            >
+              +
+            </button>
+          </div>
         </div>
 
         <div className="flex items-center gap-1">
-          {(['BANK_64', 'CHROMATIC_16', 'CHORD'] as PadPlayMode[]).map((mode) => (
+          {(['BANK_64', 'CHROMATIC_16'] as PadPlayMode[]).map((mode) => (
             <button
               key={mode}
               type="button"
               onClick={() => setPadPlayMode(mode)}
               className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
-                padPlayMode === mode ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-900 text-zinc-400'
+                effectivePlayMode === mode ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-900 text-zinc-400'
               }`}
             >
-              {mode === 'BANK_64' ? 'PAD' : mode === 'CHROMATIC_16' ? 'CHR' : 'CHD'}
+              {mode === 'BANK_64' ? 'PAD' : 'CHR'}
             </button>
           ))}
-          {padPlayMode === 'CHROMATIC_16' && (
+          {effectivePlayMode === 'CHROMATIC_16' && (
             <div className="flex items-center gap-1 ml-1">
               <button
                 type="button"
@@ -354,6 +480,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
           const isSelected = padId === selectedPadId;
           const isMarkedForDelete = selectedForDelete.includes(padId);
           const isCopySource = copySourcePadId === padId;
+          const isCopyTarget = copyTargetPadIds.includes(padId);
           const hasSample = Boolean(slot?.buffer || slot?.sampleKey);
 
           return (
@@ -365,7 +492,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
               className={`pad-tile rounded border p-2 text-left font-mono transition ${
                 isMarkedForDelete
                   ? 'border-rose-500 bg-rose-950/60 text-rose-200'
-                  : isCopySource
+                  : isCopySource || isCopyTarget
                     ? 'border-cyan-400 bg-cyan-950/60 text-cyan-200'
                     : isSelected
                       ? 'border-amber-400 bg-zinc-800/90 text-zinc-100'
@@ -377,7 +504,7 @@ export const PadBankManager: React.FC<PadBankManagerProps> = ({
               <div className="flex items-center justify-between text-[9px] font-bold">
                 <span>{padId}</span>
                 <span>
-                  {padPlayMode === 'CHROMATIC_16'
+                  {effectivePlayMode === 'CHROMATIC_16'
                     ? formatSemitoneLabel(chromaticRootOffset + idx)
                     : ''}
                 </span>

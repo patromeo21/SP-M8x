@@ -1,225 +1,164 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { audioEngine } from '../audio/audioEngine';
+import React, { useEffect, useMemo, useRef } from 'react';
 import {
-  createWaveformCanvasLayer,
+  createWaveformCanvas,
   drawStaticWaveform,
   drawWaveformOverlay,
   pointerXToNormalized,
   releaseWaveformResources,
   startDemandGatedRender,
-  type WaveformCanvasLayer,
   type Waveform2DContext,
-  type WaveformMipmapLevels,
+  type WaveformCanvasLayout,
+  type WaveformMipmapLevel,
 } from './waveformCanvasRendering';
 
 export interface AudioWaveformCanvasProps {
-  /** Audio buffer from the loaded sample */
   audioBuffer: AudioBuffer | null;
-  /** Optional pad ID to poll live playback position from audioEngine */
   padId?: string;
-  /** Whether the transport is currently playing */
-  isPlaying: boolean;
-  /** Normalized playhead position (0.0 to 1.0) */
-  playheadNorm: number;
-  /** Optional slice points (startNorm, endNorm) in 0-1 range */
+  isPlaying?: boolean;
+  playheadNorm?: number;
   slicePoints?: { startNorm: number; endNorm: number };
-  /** Optional normalized positions for interior slice markers */
-  sliceMarkers?: readonly number[];
-  /** Callback when slice points change via drag */
-  onSliceChange?: (startNorm: number, endNorm: number) => void;
-  /** Canvas height in pixels */
-  height?: number;
+  sliceMarkers?: number[];
   viewStartNorm?: number;
   viewEndNorm?: number;
+  height?: number;
   className?: string;
   style?: React.CSSProperties;
+  backgroundColor?: string;
+  waveformColor?: string;
+  accentColor?: string;
+  onScrubNormalized?: (normPos: number) => void;
 }
-
-const clampNorm = (value: number): number => Math.max(0, Math.min(1, value));
 
 export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
   audioBuffer,
-  padId,
-  isPlaying,
-  playheadNorm,
+  isPlaying = false,
+  playheadNorm = 0,
   slicePoints,
   sliceMarkers,
-  onSliceChange,
-  height = 128,
   viewStartNorm = 0,
   viewEndNorm = 1,
+  height = 96,
   className = '',
   style,
+  backgroundColor = '#09090b',
+  waveformColor = '#38bdf8',
+  accentColor = '#f59e0b',
+  onScrubNormalized,
 }) => {
-  const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const staticLayerRef = useRef<WaveformCanvasLayer | null>(null);
-  const overlayLayerRef = useRef<WaveformCanvasLayer | null>(null);
-  const activeSliceHandleRef = useRef<'start' | 'end' | null>(null);
-  const [mipmapResult, setMipmapResult] = useState<{ buffer: AudioBuffer; mipmaps: WaveformMipmapLevels } | null>(null);
-  const workerRef = useRef<Worker | null>(null);
-  const playheadRef = useRef(playheadNorm);
-  playheadRef.current = playheadNorm;
-  const mipmaps = mipmapResult?.buffer === audioBuffer ? mipmapResult.mipmaps : null;
-  const viewStart = Math.max(0, Math.min(1 - 1e-6, viewStartNorm));
-  const viewEnd = Math.max(viewStart + 1e-6, Math.min(1, viewEndNorm));
-  const sliceStart = slicePoints ? clampNorm(Math.min(slicePoints.startNorm, slicePoints.endNorm)) : undefined;
-  const sliceEnd = slicePoints ? clampNorm(Math.max(slicePoints.startNorm, slicePoints.endNorm)) : undefined;
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const peaksCacheRef = useRef<Map<AudioBuffer, WaveformMipmapLevel[]>>(new Map());
 
-  const getPointerPosition = (event: React.PointerEvent<HTMLDivElement>) => {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    return clampNorm(pointerXToNormalized(event.clientX, bounds.left, bounds.width, viewStart, viewEnd));
-  };
+  const layout = useMemo<WaveformCanvasLayout>(
+    () => ({
+      width: 300,
+      height,
+      dpr: typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1,
+      viewStartNorm,
+      viewEndNorm,
+    }),
+    [height, viewEndNorm, viewStartNorm],
+  );
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+
+    const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    const rect = host.getBoundingClientRect();
+    const width = Math.max(1, Math.floor(rect.width || host.clientWidth || layout.width));
+    const canvas = createWaveformCanvas(width, height, dpr);
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    canvas.style.display = 'block';
+
+    host.innerHTML = '';
+    host.appendChild(canvas);
+    canvasRef.current = canvas;
+
+    return () => {
+      releaseWaveformResources(canvas);
+      if (canvasRef.current === canvas) {
+        canvasRef.current = null;
+      }
+    };
+  }, [height, layout.width]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const context: Waveform2DContext | null = canvas.getContext('2d');
+    if (!context) return;
+
+    const renderFrame = () => {
+      const currentCanvas = canvasRef.current;
+      const currentContext: Waveform2DContext | null = currentCanvas?.getContext('2d') ?? null;
+      if (!currentCanvas || !currentContext) return;
+
+      const rect = currentCanvas.getBoundingClientRect();
+      const width = Math.max(1, Math.floor(rect.width || currentCanvas.clientWidth || layout.width));
+
+      drawStaticWaveform({
+        canvas: currentCanvas,
+        ctx: currentContext,
+        audioBuffer,
+        peaksCache: peaksCacheRef.current,
+        height,
+        backgroundColor,
+        waveformColor,
+        accentColor,
+        isPlaying,
+        playheadNorm,
+        slicePoints,
+        sliceMarkers,
+        viewStartNorm,
+        viewEndNorm,
+      });
+
+      drawWaveformOverlay(currentContext, width, height, {
+        isPlaying,
+        playheadNorm,
+        slicePoints,
+        sliceMarkers,
+        viewStartNorm,
+        viewEndNorm,
+        accentColor,
+      });
+    };
+
+    const cleanup = startDemandGatedRender(renderFrame);
+    return cleanup;
+  }, [
+    accentColor,
+    audioBuffer,
+    backgroundColor,
+    height,
+    isPlaying,
+    layout.width,
+    playheadNorm,
+    sliceMarkers,
+    slicePoints,
+    viewEndNorm,
+    viewStartNorm,
+    waveformColor,
+  ]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (sliceStart === undefined || sliceEnd === undefined || !onSliceChange || event.button !== 0) return;
-    const position = getPointerPosition(event);
-    activeSliceHandleRef.current =
-      Math.abs(position - sliceStart) <= Math.abs(position - sliceEnd) ? 'start' : 'end';
-    event.currentTarget.setPointerCapture(event.pointerId);
-    event.preventDefault();
+    if (!onScrubNormalized || !canvasRef.current) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const norm = pointerXToNormalized(event.clientX, rect, viewStartNorm, viewEndNorm);
+    onScrubNormalized(norm);
   };
-
-  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    const handle = activeSliceHandleRef.current;
-    if (!handle || sliceStart === undefined || sliceEnd === undefined || !onSliceChange) return;
-    const position = getPointerPosition(event);
-    if (handle === 'start') {
-      const nextStart = Math.min(position, sliceEnd);
-      onSliceChange(nextStart, sliceEnd);
-    } else {
-      const nextEnd = Math.max(position, sliceStart);
-      onSliceChange(sliceStart, nextEnd);
-    }
-  };
-
-  const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    activeSliceHandleRef.current = null;
-  };
-
-  // 1. Initialize Worker & Compute Mipmaps on Buffer Load
-  useEffect(() => {
-    if (!audioBuffer) {
-      setMipmapResult(null);
-      return;
-    }
-    setMipmapResult(null);
-
-    // Instantiate worker via Vite worker import syntax
-    const worker = new Worker(
-      new URL('../workers/waveformWorker.ts', import.meta.url),
-      { type: 'module' }
-    );
-    workerRef.current = worker;
-
-    const channels = Array.from({ length: audioBuffer.numberOfChannels }, (_, index) => audioBuffer.getChannelData(index).slice());
-    const workerId = Math.random().toString(36).substring(7);
-
-    worker.onmessage = (e: MessageEvent<{ id: string; mipmaps: WaveformMipmapLevels }>) => {
-      if (e.data.id === workerId) {
-        setMipmapResult({ buffer: audioBuffer, mipmaps: e.data.mipmaps });
-      }
-    };
-
-    worker.postMessage({ id: workerId, channels }, channels.map((channel) => channel.buffer));
-
-    return () => {
-      releaseWaveformResources([], [], worker);
-      if (workerRef.current === worker) workerRef.current = null;
-    };
-  }, [audioBuffer]);
-
-  // Reset dimensions on setup as well, so Strict Mode's effect replay restores the canvases.
-  useEffect(() => {
-    const staticCanvas = staticCanvasRef.current;
-    const overlayCanvas = overlayCanvasRef.current;
-    const canvases = [staticCanvas, overlayCanvas];
-    for (const canvas of canvases) {
-      if (canvas) {
-        canvas.width = 600;
-        canvas.height = height;
-      }
-    }
-    const staticLayer = staticCanvas ? createWaveformCanvasLayer(staticCanvas, false) : null;
-    const overlayLayer = overlayCanvas ? createWaveformCanvasLayer(overlayCanvas, true) : null;
-    staticLayerRef.current = staticLayer;
-    overlayLayerRef.current = overlayLayer;
-
-    return () => {
-      releaseWaveformResources(canvases, [staticLayer, overlayLayer]);
-      if (staticLayerRef.current === staticLayer) staticLayerRef.current = null;
-      if (overlayLayerRef.current === overlayLayer) overlayLayerRef.current = null;
-    };
-  }, [height]);
-
-  // 2. Render Static Waveform Layer (Layer 1 - Runs ONCE per load/zoom change)
-  useEffect(() => {
-    const canvas = staticCanvasRef.current;
-    const layer = staticLayerRef.current;
-    if (!canvas || !layer) return;
-
-    layer.render((context) => {
-      drawStaticWaveform(context, canvas.width, canvas.height, mipmaps, viewStart, viewEnd);
-    });
-  }, [mipmaps, height, viewStart, viewEnd]);
-
-  // 3. Demand-Gated Overlay Layer (Layer 2 - RAF active ONLY during playback)
-  useEffect(() => {
-    const canvas = overlayCanvasRef.current;
-    const layer = overlayLayerRef.current;
-    if (!canvas || !layer) return;
-
-    const drawOverlay = (context: Waveform2DContext) => {
-      let livePlayhead = isPlaying ? playheadRef.current : null;
-      if (isPlaying && padId && audioBuffer && audioBuffer.duration > 0) {
-        const liveSeconds = audioEngine.getPadPlaybackPosition(padId, audioBuffer);
-        if (liveSeconds !== null) {
-          livePlayhead = clampNorm(liveSeconds / audioBuffer.duration);
-        }
-      }
-      drawWaveformOverlay(
-        context,
-        canvas.width,
-        canvas.height,
-        viewStart,
-        viewEnd,
-        sliceStart,
-        sliceEnd,
-        sliceMarkers,
-        livePlayhead,
-      );
-    };
-    const renderOverlay = () => layer.render(drawOverlay);
-
-    return startDemandGatedRender(renderOverlay, isPlaying);
-  }, [audioBuffer, padId, isPlaying, sliceStart, sliceEnd, sliceMarkers, height, viewStart, viewEnd]);
 
   return (
     <div
-      className={`relative w-full rounded border border-[#222832] bg-[#13171d] overflow-hidden ${className}`}
-      style={{ height, ...style, touchAction: 'none' }}
+      ref={hostRef}
+      style={{ height, ...style }}
+      className={`audio-waveform-canvas relative w-full overflow-hidden rounded border border-zinc-800 ${className}`}
       onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={handlePointerUp}
-    >
-      {/* Layer 1: Static Waveform */}
-      <canvas
-        ref={staticCanvasRef}
-        width={600}
-        height={height}
-        className="absolute inset-0 w-full h-full pointer-events-none"
-      />
-      {/* Layer 2: Demand-Gated Playhead & Overlays */}
-      <canvas
-        ref={overlayCanvasRef}
-        width={600}
-        height={height}
-        className="absolute inset-0 w-full h-full pointer-events-none"
-      />
-    </div>
+    />
   );
 };
+
+export default AudioWaveformCanvas;

@@ -21,6 +21,8 @@ type MarkerDrag = {
 
 type SliceMarkerPatch = PadSlotPatch & Pick<PadSlot, 'sliceMarkers'>;
 
+const MAX_WAVEFORM_ZOOM = 64;
+
 interface Props {
   pad: PadSlot;
   onUpdatePad: PadBankApi['updatePad'];
@@ -139,6 +141,8 @@ export const WaveformEditor: React.FC<Props> = ({
       startPct: percentFromFrame(next.start, length),
       endPct: percentFromFrame(next.end, length),
     });
+    setZoom(1);
+    setPosition(0);
   }, [length, onUpdatePad, pad.id, viewEnd, viewStart]);
 
   useEffect(() => {
@@ -257,13 +261,23 @@ export const WaveformEditor: React.FC<Props> = ({
     };
   };
 
+  const markerLeftPercent = (edge: 'start' | 'end'): number => {
+    if (!length || viewLength <= 0) return 0;
+    const rawPercent = ((range[edge] - viewStart) * 100) / viewLength;
+    return Math.max(0, Math.min(100, rawPercent));
+  };
+
   const marker = (edge: 'start' | 'end') => (
     <button
       type="button"
       aria-label={`${edge === 'start' ? 'Start' : 'End'} marker`}
       disabled={!pad.buffer}
       className={`slice-handle slice-handle-${edge}`}
-      style={{ left: `clamp(22px, ${length ? (range[edge] - viewStart) * 100 / viewLength : 0}%, calc(100% - 22px))`, touchAction: 'none' }}
+      style={{
+        left: `${markerLeftPercent(edge)}%`,
+        transform: 'translateX(-50%)',
+        touchAction: 'none',
+      }}
       onPointerDown={(event) => startMarkerDrag(event, edge)}
       onPointerMove={moveMarker}
       onPointerUp={finishMarker}
@@ -289,7 +303,7 @@ export const WaveformEditor: React.FC<Props> = ({
       aria-label={`Slice marker ${index + 1}`}
       disabled={!pad.buffer}
       className="slice-handle slice-handle-intermediate"
-      style={{ left: `${(frame - viewStart) * 100 / viewLength}%`, touchAction: 'none' }}
+      style={{ left: `${(frame - viewStart) * 100 / viewLength}%`, transform: 'translateX(-50%)', touchAction: 'none' }}
       onPointerDown={(event) => startMarkerDrag(event, 'slice', index + 1)}
       onPointerMove={moveMarker}
       onPointerUp={finishMarker}
@@ -334,7 +348,7 @@ export const WaveformEditor: React.FC<Props> = ({
             const bounds = containerRef.current?.getBoundingClientRect();
             if (!first || !second || !bounds || bounds.width <= 0) return;
             const distance = Math.hypot(first.x - second.x, first.y - second.y);
-            const nextZoom = Math.max(1, Math.min(32, gesture.zoom * distance / gesture.distance));
+            const nextZoom = Math.max(1, Math.min(MAX_WAVEFORM_ZOOM, gesture.zoom * distance / gesture.distance));
             const centerX = (first.x + second.x) / 2;
             const ratio = Math.max(0, Math.min(1, (centerX - bounds.left) / bounds.width));
             const nextLength = Math.max(1, Math.ceil(length / nextZoom));
@@ -352,7 +366,7 @@ export const WaveformEditor: React.FC<Props> = ({
         {renderWaveform({
           isPlaying: waveformPlaying,
           playheadNorm,
-          slicePoints: length ? { startNorm: range.start / length, endNorm: range.end / length } : undefined,
+          slicePoints: undefined,
           sliceMarkers: sliceMarkerNorms,
           viewStartNorm: length ? viewStart / length : 0,
           viewEndNorm: length ? viewEnd / length : 1,
