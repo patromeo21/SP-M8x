@@ -117,14 +117,16 @@ function applyClearedStepRecords(
       continue;
     }
 
-    const parsedInstrumentId =
+   const parsedInstrumentId =
       nextRec.instrumentId !== null && nextRec.instrumentId !== undefined
         ? Number(nextRec.instrumentId)
         : null;
     const nextInstrumentId =
       parsedInstrumentId !== null && Number.isFinite(parsedInstrumentId)
         ? parsedInstrumentId
-        : padIdToInstrumentId(nextPadId);
+        : typeof nextRec.padId === 'string'
+          ? padIdToInstrumentId(nextRec.padId)
+          : null;
 
     const nextPatch: Partial<TrackerStepItem> = {
       instrumentId: nextInstrumentId,
