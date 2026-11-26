@@ -85,6 +85,18 @@ function clampSubtickOffset(raw: unknown): number {
   return Math.max(-8, Math.min(8, Math.round(raw)));
 }
 
+const SUBTICK_GROUP_PALETTE = [
+  { badge: 'text-cyan-300 border-cyan-500/70', band: 'bg-cyan-950/20 border-l-2 border-l-cyan-400' },
+  { badge: 'text-amber-300 border-amber-500/70', band: 'bg-amber-950/20 border-l-2 border-l-amber-400' },
+  { badge: 'text-emerald-300 border-emerald-500/70', band: 'bg-emerald-950/20 border-l-2 border-l-emerald-400' },
+  { badge: 'text-fuchsia-300 border-fuchsia-500/70', band: 'bg-fuchsia-950/20 border-l-2 border-l-fuchsia-400' },
+] as const;
+
+function getEightSubtickGroupStyle(subtickIndex: number) {
+  const groupIndex = Math.floor(subtickIndex / 8);
+  return SUBTICK_GROUP_PALETTE[groupIndex % SUBTICK_GROUP_PALETTE.length];
+}
+
 function getStackedPadIds(step: TrackerStepItem): string[] {
   const ordered: string[] = [];
   const seen = new Set<string>();
@@ -519,32 +531,44 @@ function PhraseRows({
         const occupied = Boolean(step.instrumentId !== null || (step.note && step.note !== '---'));
         const isCurrent = activeStep === index;
         const isFocusedRow = focusedStepIndex === index;
+        const isDimmedByLock = contextLock && focusedPadId !== null && !stackedPadIds.includes(focusedPadId);
         const isGrooveSubAccent = playing && isCurrent && groovePreset !== '8-8' && Boolean(delayedSteps[index % 16]);
         const fx1 = normalizeVoiceFx(step.fx);
         const fx2 = normalizeVoiceFx(step.fx2);
         const fx3 = normalizePunchFx3(step.fx3);
         const microOffset = clampSubtickOffset(step.subTickOffset);
+        const stackSummary = stackedPadIds.slice(0, 2).join('/');
 
         return (
           <div
-            className={`phrase-row phrase-sequencer-grid ${isFocusedRow ? 'is-focused ring-1 ring-emerald-400/60' : ''} ${isCurrent ? 'is-playing' : ''} ${playing && isCurrent && delayedSteps[index % 16] ? 'is-groove-pulse' : ''} ${isGrooveSubAccent ? 'is-groove-subaccent border-rose-500/80 bg-rose-950/20' : ''}`}
+            className={`phrase-row phrase-sequencer-grid ${isFocusedRow ? 'is-focused ring-1 ring-emerald-400/60' : ''} ${isCurrent ? 'is-playing' : ''} ${isDimmedByLock ? 'opacity-45' : ''} ${playing && isCurrent && delayedSteps[index % 16] ? 'is-groove-pulse' : ''} ${isGrooveSubAccent ? 'is-groove-subaccent border-rose-500/80 bg-rose-950/20' : ''}`}
             style={PHRASE_GRID_TEMPLATE}
             key={index}
             data-step={index + 1}
             data-poly-count={stackedPadIds.length}
+            data-poly-stack={isPolyStacked ? stackSummary : undefined}
             onClick={() => {
               if (padId) onFocusStepPad(index, padId);
             }}
           >
-            <button type="button" aria-label={`Phrase step ${index + 1}`} aria-pressed={active}
-              disabled={contextLock || (transportBusy && !occupied)}
-              onClick={(event) => {
-                event.stopPropagation();
-                toggleStep(index);
-              }}
-              className={`phrase-step-toggle shrink-0 ${active ? 'is-active' : ''} ${isGrooveSubAccent ? 'text-rose-300 border-rose-500' : ''}`}>
-              {stepNumber(index)}
-            </button>
+            <div className="flex items-center gap-1 min-w-0">
+              <span
+                aria-hidden="true"
+                data-poly-notch={isPolyStacked ? 'true' : undefined}
+                className={`w-1.5 h-5 rounded-sm shrink-0 ${
+                  isPolyStacked ? 'bg-amber-400' : 'bg-transparent'
+                }`}
+              />
+              <button type="button" aria-label={`Phrase step ${index + 1}`} aria-pressed={active}
+                disabled={contextLock || (transportBusy && !occupied)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  toggleStep(index);
+                }}
+                className={`phrase-step-toggle shrink-0 ${active ? 'is-active' : ''} ${isCurrent && isDimmedByLock ? 'opacity-45' : ''} ${isGrooveSubAccent ? 'text-rose-300 border-rose-500' : ''}`}>
+                {stepNumber(index)}
+              </button>
+            </div>
             <div className="phrase-microtiming-control flex items-center justify-between gap-0.5 min-w-0" aria-label={`Phrase subtick step ${index + 1}`}>
               <button type="button" className="px-1 shrink-0" aria-label={`Move step ${index + 1} earlier`} disabled={!padId}
                 onClick={(event) => {
@@ -597,6 +621,9 @@ function PhraseRows({
               </select>
               {isPolyStacked && (
                 <div className="phrase-poly-badges flex items-center gap-0.5 shrink-0" aria-label={`Stacked pads step ${index + 1}`}>
+                  <span className="px-1 py-0.5 text-[9px] font-bold text-amber-200 bg-amber-950/70 border border-amber-500/50 rounded">
+                    {stackSummary}
+                  </span>
                   {stackedPadIds.map((stackPadId) => {
                     const isSelectedStackPad = focusedPadId === stackPadId && isFocusedRow;
                     return (
@@ -876,6 +903,8 @@ function TableRows({
         const thumbPercent = ((slideValue + 24) / 48) * 100;
         const isOpen = pitchSlidePopup === index && activeFx === 'PS';
         const isLatchedRow = latched?.latchedTableStep === index;
+        const eightGroupIndex = Math.floor(index / 8);
+        const groupStyle = getEightSubtickGroupStyle(index);
         const isInFocused8Block =
           focusedSubtickRange !== null &&
           index >= focusedSubtickRange.start &&
@@ -884,15 +913,20 @@ function TableRows({
 
         return (
           <div
-            className={`table-row table-sequencer-grid relative ${isInFocused8Block ? 'is-focused-subtick-block bg-emerald-950/20 border-l-2 border-l-emerald-400' : ''} ${isOpen ? 'z-30' : ''} ${current ? 'is-playing' : ''} ${playing && current && activeStep >= 0 && delayedSteps[activeStep % 16] ? 'is-groove-pulse' : ''} ${isGrooveSubAccent ? 'is-groove-subaccent border-rose-500/80 bg-rose-950/20' : ''}`}
+            className={`table-row table-sequencer-grid relative ${isInFocused8Block ? 'is-focused-subtick-block bg-emerald-950/25 ring-1 ring-emerald-400/60' : groupStyle.band} ${isOpen ? 'z-30' : ''} ${current ? 'is-playing' : ''} ${playing && current && activeStep >= 0 && delayedSteps[activeStep % 16] ? 'is-groove-pulse' : ''} ${isGrooveSubAccent ? 'is-groove-subaccent border-rose-500/80 bg-rose-950/20' : ''}`}
             style={{ ...TABLE_GRID_TEMPLATE, overflow: 'visible' }}
             key={index}
             data-subtick={index + 1}
+            data-subtick-group={eightGroupIndex + 1}
             data-latched={isLatchedRow ? 'true' : undefined}
             data-focused-8={isInFocused8Block ? 'true' : undefined}
           >
             <div className="flex items-center gap-1 min-w-0">
-              <span className={`table-step-address tabular-nums shrink-0 ${isGrooveSubAccent ? 'text-rose-300 border-rose-500' : ''}`} aria-label={`Table subtick ${index + 1}`}>
+              <span
+                className={`table-step-address tabular-nums shrink-0 px-1 border rounded ${groupStyle.badge} ${isGrooveSubAccent ? 'text-rose-300 border-rose-500' : ''}`}
+                aria-label={`Table subtick ${index + 1}`}
+                data-subtick-group={eightGroupIndex + 1}
+              >
                 {String(index + 1).padStart(3, '0')}
               </span>
               <button
