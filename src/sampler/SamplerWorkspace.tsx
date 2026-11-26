@@ -3,7 +3,7 @@
  * SamplerWorkspace.tsx — Sampler view with workbench above the pad bank
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { BANKS, type PadBankApi, type PadSlot } from './usePadBank';
 import { chopToBankReplacingSingleSource } from './chopToBank';
 import { PadBankManager } from './PadBankManager';
@@ -11,7 +11,7 @@ import SamplerWorkbench from './SamplerWorkbench';
 import { useInputRecorder } from './useInputRecorder';
 import { projectController } from '../project/projectController';
 import { audioEngine } from '../audio/audioEngine';
-import { type AHDSRParams } from '../audio/ahdsr';
+import { createDefaultAHDSRParams, normalizeAHDSR, type AHDSRParams } from '../audio/ahdsr';
 import { PerformanceDeckControls } from '../fx/PerformanceDeckControls';
 import { FxStrip } from '../fx/FxStrip';
 import { AudioWaveformCanvas, type AudioWaveformCanvasProps } from './AudioWaveformCanvas';
@@ -24,14 +24,6 @@ export interface SamplerWorkspaceProps {
   pad?: PadSlot;
 }
 
-const DEFAULT_AHDSR: AHDSRParams = {
-  attackTime: 0.002,
-  holdTime: 0,
-  decayTime: 0.08,
-  sustainLevel: 1,
-  releaseTime: 0.03,
-};
-
 export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
   padBank,
   recorder,
@@ -41,56 +33,67 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
 }) => {
   const [volumeOpen, setVolumeOpen] = useState(false);
   const [ahdsrOpen, setAhdsrOpen] = useState(false);
-  const [padEnvelopes, setPadEnvelopes] = useState<Record<string, AHDSRParams>>({});
+  const [, setProjectRevision] = useState(0);
+
+  useEffect(() => {
+    return projectController.subscribe(() => {
+      setProjectRevision((rev) => rev + 1);
+    });
+  }, []);
+
   const project = projectController.getState();
-  const selectedPad = project.sampler.pads[padBank.selectedPadId];
+  const selectedPadId = padBank.selectedPadId;
+  const selectedPad = project.sampler.pads[selectedPadId];
   const activePadSlot = pad ?? padBank.selectedPad;
-  const trackVolume = project.settings.trackVolumes?.[selectedPad.targetTrack] ?? 1;
-  const activeAhdsr = padEnvelopes[padBank.selectedPadId] ?? DEFAULT_AHDSR;
+  const trackVolume = project.settings.trackVolumes?.[selectedPad?.targetTrack ?? 0] ?? 1;
+  const activeAhdsr: AHDSRParams = normalizeAHDSR(
+    selectedPad?.adsr ?? projectController.getPadAdsr(selectedPadId),
+  );
+
+  const applyPadAdsrToEngine = useCallback((padId: string, params: AHDSRParams) => {
+    const normalized = normalizeAHDSR(params);
+    const engine = audioEngine as unknown as {
+      setPadAdsr?: (id: string, env: AHDSRParams) => void;
+      setPadEnvelope?: (id: string, env: AHDSRParams) => void;
+    };
+    engine.setPadAdsr?.(padId, normalized);
+    engine.setPadEnvelope?.(padId, normalized);
+  }, []);
+
+  useEffect(() => {
+    applyPadAdsrToEngine(selectedPadId, activeAhdsr);
+  }, [activeAhdsr, applyPadAdsrToEngine, selectedPadId]);
 
   const updateAhdsr = useCallback(
     (patch: Partial<AHDSRParams>) => {
-      setPadEnvelopes((prev) => {
-        const current = prev[padBank.selectedPadId] ?? DEFAULT_AHDSR;
-        return {
-          ...prev,
-          [padBank.selectedPadId]: {
-            ...current,
-            ...patch,
-          },
-        };
-      });
+      const next = normalizeAHDSR(projectController.setPadAdsr(selectedPadId, patch));
+      applyPadAdsrToEngine(selectedPadId, next);
     },
-    [padBank.selectedPadId],
+    [applyPadAdsrToEngine, selectedPadId],
   );
 
-  const resetPadAdsr = useCallback((padId: string) => {
-    setPadEnvelopes((prev) => {
-      if (!(padId in prev)) return prev;
-      const next = { ...prev };
-      delete next[padId];
-      return next;
-    });
-  }, []);
+  const resetPadAdsr = useCallback(
+    (padId: string, reason: 'pad-cleared' | 'sample-loaded' | 'manual-reset' = 'manual-reset') => {
+      const result = projectController.resetPadAdsr(padId, reason);
+      const next = normalizeAHDSR(result?.adsr ?? createDefaultAHDSRParams());
+      applyPadAdsrToEngine(padId, next);
+    },
+    [applyPadAdsrToEngine],
+  );
 
-  const resetPadsAdsr = useCallback((padIds: readonly string[]) => {
-    setPadEnvelopes((prev) => {
-      let changed = false;
-      const next = { ...prev };
+  const resetPadsAdsr = useCallback(
+    (padIds: readonly string[], reason: 'pad-cleared' | 'sample-loaded' | 'manual-reset' = 'manual-reset') => {
       for (const padId of padIds) {
-        if (padId in next) {
-          delete next[padId];
-          changed = true;
-        }
+        resetPadAdsr(padId, reason);
       }
-      return changed ? next : prev;
-    });
-  }, []);
+    },
+    [resetPadAdsr],
+  );
 
   const handleDeletePads = useCallback<PadBankApi['deletePads']>(
     async (padIds) => {
       await padBank.deletePads(padIds);
-      resetPadsAdsr(padIds);
+      resetPadsAdsr(padIds, 'pad-cleared');
     },
     [padBank, resetPadsAdsr],
   );
@@ -98,7 +101,7 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
   const handleLoadSample = useCallback<PadBankApi['loadSample']>(
     (padId, buffer, name, audio) => {
       const result = padBank.loadSample(padId, buffer, name, audio);
-      resetPadAdsr(padId);
+      resetPadAdsr(padId, 'sample-loaded');
       return result;
     },
     [padBank, resetPadAdsr],
@@ -108,13 +111,65 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
     (padId: string) => {
       const activePatternIndex = projectController.getState().settings.activePatternIndex;
       projectController.clearPadSteps(activePatternIndex, padId);
-      resetPadAdsr(padId);
+      resetPadAdsr(padId, 'pad-cleared');
     },
     [resetPadAdsr],
   );
 
+  const handleCropPad = useCallback(
+    (padId: string) => {
+      const slot = padBank.slots[padId];
+      if (!slot) return;
+      const startPct = Math.max(0, Math.min(99.9, Number.isFinite(slot.startPct) ? slot.startPct : 0));
+      const endPct = Math.max(startPct + 0.1, Math.min(100, Number.isFinite(slot.endPct) ? slot.endPct : 100));
+      const buffer: AudioBuffer | null = slot.buffer ?? null;
+
+      if (buffer && buffer.length > 0 && typeof AudioContext !== 'undefined') {
+        const startFrame = Math.max(0, Math.min(buffer.length - 1, Math.floor((startPct / 100) * buffer.length)));
+        const endFrame = Math.max(startFrame + 1, Math.min(buffer.length, Math.ceil((endPct / 100) * buffer.length)));
+        const croppedLength = endFrame - startFrame;
+
+        try {
+          const tempCtx = new AudioContext();
+          const croppedBuffer = tempCtx.createBuffer(
+            buffer.numberOfChannels,
+            croppedLength,
+            buffer.sampleRate,
+          );
+          for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+            const src = buffer.getChannelData(ch);
+            const dst = croppedBuffer.getChannelData(ch);
+            dst.set(src.subarray(startFrame, endFrame));
+          }
+          void tempCtx.close();
+
+          const fallbackAudio =
+            typeof Blob !== 'undefined'
+              ? new Blob([new Float32Array(croppedLength)], { type: 'application/octet-stream' })
+              : (undefined as unknown as Blob);
+          padBank.loadSample(padId, croppedBuffer, slot.name, fallbackAudio);
+          padBank.updatePad(padId, {
+            startPct: 0,
+            endPct: 100,
+          });
+          return;
+        } catch {
+          // Fallback to range trim normalization if AudioContext creation is unavailable
+        }
+      }
+
+      padBank.updatePad(padId, {
+        startPct,
+        endPct,
+      });
+    },
+    [padBank],
+  );
+
   const handleTriggerPad = useCallback<PadBankApi['triggerPad']>(
     (padId, onTriggered, semitoneOffset, pointerTime, sliceIndex, playThrough) => {
+      const padEnvelope = normalizeAHDSR(projectController.getPadAdsr(padId));
+      applyPadAdsrToEngine(padId, padEnvelope);
       const release = triggerPad(padId, onTriggered, semitoneOffset, pointerTime, sliceIndex, playThrough);
       const context = audioEngine.getContext();
       if (context && context.state === 'running') {
@@ -125,7 +180,7 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
       }
       return release;
     },
-    [padBank.slots, triggerPad],
+    [applyPadAdsrToEngine, padBank.slots, triggerPad],
   );
 
   const renderWaveform = useCallback(
@@ -155,9 +210,9 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
             <select
               aria-label="Selected pad target track"
               className="bg-zinc-950 text-zinc-300"
-              value={selectedPad.targetTrack}
+              value={selectedPad?.targetTrack ?? 0}
               onChange={(event) =>
-                projectController.setPadTargetTrack(padBank.selectedPadId, Number(event.target.value))
+                projectController.setPadTargetTrack(selectedPadId, Number(event.target.value))
               }
             >
               {Array.from({ length: 8 }, (_, index) => (
@@ -172,10 +227,10 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
             <select
               aria-label="Pad choke group"
               className="bg-zinc-950 text-zinc-300"
-              value={selectedPad.chokeGroup ?? ''}
+              value={selectedPad?.chokeGroup ?? ''}
               onChange={(event) =>
                 projectController.setPadChokeGroup(
-                  padBank.selectedPadId,
+                  selectedPadId,
                   event.target.value ? Number(event.target.value) : null,
                 )
               }
@@ -228,23 +283,23 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
         {volumeOpen && (
           <div className="volume-drawer">
             <label>
-              PAD {padBank.selectedPadId}
+              PAD {selectedPadId}
               <input
                 aria-label="Selected pad volume"
                 type="range"
                 min="0"
                 max="1"
                 step="0.01"
-                value={selectedPad.volume}
+                value={selectedPad?.volume ?? 1}
                 onChange={(event) => {
                   const value = Number(event.target.value);
-                  projectController.setPadVolume(padBank.selectedPadId, value);
-                  audioEngine.setPadVolume(padBank.selectedPadId, value);
+                  projectController.setPadVolume(selectedPadId, value);
+                  audioEngine.setPadVolume(selectedPadId, value);
                 }}
               />
             </label>
             <label>
-              TRACK {selectedPad.targetTrack + 1}
+              TRACK {(selectedPad?.targetTrack ?? 0) + 1}
               <input
                 aria-label="Selected track volume"
                 type="range"
@@ -254,8 +309,8 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
                 value={trackVolume}
                 onChange={(event) => {
                   const value = Number(event.target.value);
-                  projectController.setTrackVolume(selectedPad.targetTrack, value);
-                  audioEngine.setTrackVolume(selectedPad.targetTrack, value);
+                  projectController.setTrackVolume(selectedPad?.targetTrack ?? 0, value);
+                  audioEngine.setTrackVolume(selectedPad?.targetTrack ?? 0, value);
                 }}
               />
             </label>
@@ -331,7 +386,7 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
                 type="button"
                 aria-label="Reset AHDSR envelope to default"
                 className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-200"
-                onClick={() => resetPadAdsr(padBank.selectedPadId)}
+                onClick={() => resetPadAdsr(selectedPadId, 'manual-reset')}
               >
                 RESET
               </button>
@@ -341,7 +396,7 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
         <PadBankManager
           slots={padBank.slots}
           activeBank={padBank.activeBank}
-          selectedPadId={padBank.selectedPadId}
+          selectedPadId={selectedPadId}
           padPlayMode={padBank.padPlayMode}
           chromaticRootOffset={padBank.chromaticRootOffset}
           setPadPlayMode={padBank.setPadPlayMode}
@@ -352,13 +407,14 @@ export const SamplerWorkspace: React.FC<SamplerWorkspaceProps> = ({
           storageReady={padBank.storageReady}
           updatePad={padBank.updatePad}
           onClearPad={handleClearPad}
+          onCropPad={handleCropPad}
           sliActive={
-            selectedPad.sliActive &&
+            Boolean(selectedPad?.sliActive) &&
             activePadSlot.sliceMarkers.length >= 2 &&
             padBank.padPlayMode === 'BANK_64'
           }
           setSliActive={(active) =>
-            projectController.updatePadMetadata(padBank.selectedPadId, { sliActive: active })
+            projectController.updatePadMetadata(selectedPadId, { sliActive: active })
           }
         />
       </div>
