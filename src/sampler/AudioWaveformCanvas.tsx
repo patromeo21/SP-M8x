@@ -63,7 +63,7 @@ export const AudioWaveformCanvas: React.FC<AudioWaveformCanvasProps> = ({
 }) => {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const peaksCacheRef = useRef>(new Map());
+  const peaksCacheRef = useRef(new Map());
   const activeDragRef = useRef<{
     pointerId: number;
     kind: 'start' | 'end' | 'sliceStart';
