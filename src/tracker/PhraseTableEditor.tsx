@@ -4,6 +4,7 @@ import {
   type Pattern,
   type PhraseLength,
   type PunchInSlotFxCode,
+  type TrackerStepItem,
   type TrackerTable,
   type VoiceSlotFxCode,
 } from '../project/projectController';
@@ -34,7 +35,7 @@ const PUNCH_FX3_OPTIONS: readonly PunchInSlotFxCode[] = ['OFF', 'PM', 'LF', 'BC'
 const PHRASE_GRID_TEMPLATE: React.CSSProperties = {
   display: 'grid',
   gridTemplateColumns:
-    '52px minmax(84px, 1fr) minmax(68px, 0.9fr) minmax(64px, 0.85fr) minmax(60px, 0.8fr) minmax(86px, 1fr) minmax(64px, 0.8fr) minmax(64px, 0.8fr) minmax(64px, 0.8fr) minmax(64px, 0.8fr)',
+    '52px minmax(84px, 1fr) minmax(68px, 0.9fr) minmax(64px, 0.85fr) minmax(76px, 0.95fr) minmax(86px, 1fr) minmax(64px, 0.8fr) minmax(64px, 0.8fr) minmax(64px, 0.8fr) minmax(64px, 0.8fr)',
   columnGap: '4px',
   alignItems: 'center',
 };
@@ -84,6 +85,29 @@ function clampSubtickOffset(raw: unknown): number {
   return Math.max(-8, Math.min(8, Math.round(raw)));
 }
 
+function getStackedPadIds(step: TrackerStepItem): string[] {
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  const pushId = (id: string | null) => {
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      ordered.push(id);
+    }
+  };
+
+  pushId(instrumentIdToPadId(step.instrumentId));
+  if (Array.isArray(step.events)) {
+    for (const ev of step.events) {
+      const candidate =
+        typeof ev.instrumentId === 'number'
+          ? instrumentIdToPadId(ev.instrumentId)
+          : instrumentIdToPadId(ev.padId);
+      pushId(candidate);
+    }
+  }
+  return ordered;
+}
+
 export function PhraseTableEditor({
   slots,
   activeStep,
@@ -105,6 +129,8 @@ export function PhraseTableEditor({
   const [trackIndex, setTrackIndex] = useState(() => projectController.getSelectedTrackIndex());
   const [selectedClearPadIds, setSelectedClearPadIds] = useState<string[]>([]);
   const [clearStatus, setClearStatus] = useState('');
+  const [focusedPhraseStepIndex, setFocusedPhraseStepIndex] = useState<number | null>(null);
+  const [focusedPadId, setFocusedPadId] = useState<string | null>(null);
   const [internalTableWindow, setInternalTableWindow] = useState<TableWindowState>(() =>
     createInitialTableWindowState(null),
   );
@@ -138,6 +164,39 @@ export function PhraseTableEditor({
       updateTableWindow((prev) => closeMagnifier(prev));
     }
   }, [mode, tableWindow.magnifier.isOpen]);
+
+  // Auto-focus the active pad's 8 subticks (step * 8 .. step * 8 + 7) when entering Table mode
+  // from a Phrase step/pad selection, without touching audio clock scheduling.
+  useEffect(() => {
+    if (mode !== 'table' || contextLock || focusedPhraseStepIndex === null) return;
+    const totalSteps = table?.steps.length ?? 512;
+    if (totalSteps <= 0) return;
+    const blockStart = Math.max(0, Math.min(totalSteps - 1, focusedPhraseStepIndex * 8));
+    const targetPage = Math.floor(blockStart / 16);
+    updateTableWindow((prev) => ({
+      ...setTablePage(prev, targetPage),
+      tableId: table ? String(table.id) : prev.tableId,
+      followPlayhead: false,
+      latchedIndicator: {
+        phraseStepIndex: focusedPhraseStepIndex,
+        microOffset:
+          pattern?.tracks[trackIndex]?.steps[focusedPhraseStepIndex]?.subTickOffset ?? 0,
+        latchedTableStep: blockStart,
+        latchedPageIndex: targetPage,
+      },
+    }));
+  }, [mode, contextLock, focusedPhraseStepIndex, table?.id, table?.steps.length, pattern, trackIndex]);
+
+  const handleFocusPhraseStepPad = (stepIndex: number, padId: string | null) => {
+    setFocusedPhraseStepIndex(stepIndex);
+    if (padId) {
+      setFocusedPadId(padId);
+    }
+    const step = pattern?.tracks[trackIndex]?.steps[stepIndex];
+    if (typeof step?.tableId === 'number') {
+      setTableId(step.tableId);
+    }
+  };
 
   const toggleClearPad = (padId: string) => {
     setSelectedClearPadIds((prev) =>
@@ -188,6 +247,22 @@ export function PhraseTableEditor({
   };
 
   if (!pattern) return <p role="alert">Active phrase is unavailable.</p>;
+
+  const effectiveLinkedPad =
+    focusedPadId && slots[focusedPadId]
+      ? {
+          padId: focusedPadId,
+          name: slots[focusedPadId].name || focusedPadId,
+          playMode: linkedPad?.playMode ?? 'one-shot',
+          sliActive: linkedPad?.sliActive,
+          sliceMarkers: linkedPad?.sliceMarkers,
+        }
+      : linkedPad;
+
+  const focusedSubtickRange =
+    focusedPhraseStepIndex !== null
+      ? { start: focusedPhraseStepIndex * 8, end: focusedPhraseStepIndex * 8 + 7 }
+      : null;
 
   return (
     <section className={`${mode === 'phrase' ? 'phrase-panel' : 'table-panel'} relative flex-1 min-h-0 flex flex-col gap-2 p-3 bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl font-mono text-xs overflow-visible`}>
@@ -251,14 +326,19 @@ export function PhraseTableEditor({
               {selectedClearPadIds.length > 0 ? `CLR TBL (${selectedClearPadIds.length})` : 'CLR TBL'}
             </button>
             <button type="button" className={buttonClass} aria-label="Toggle table context lock"
-              aria-pressed={contextLock} disabled={!linkedPad} onClick={onToggleContextLock}>
+              aria-pressed={contextLock} disabled={!effectiveLinkedPad} onClick={onToggleContextLock}>
               {contextLock ? 'PAD LOCK' : 'LINK PAD'}
             </button>
-            {linkedPad && <span role="status" className="text-cyan-300">
-              {linkedPad.padId} · {linkedPad.name} · {linkedPad.playMode.toUpperCase()}
-              {linkedPad.sliActive ? ` · SLI ${linkedPad.sliceMarkers?.length ?? 0}` : ''}
+            {effectiveLinkedPad && <span role="status" className="text-cyan-300">
+              {effectiveLinkedPad.padId} · {effectiveLinkedPad.name} · {effectiveLinkedPad.playMode.toUpperCase()}
+              {effectiveLinkedPad.sliActive ? ` · SLI ${effectiveLinkedPad.sliceMarkers?.length ?? 0}` : ''}
               {contextLock ? ' · PINNED' : ''}
             </span>}
+            {focusedSubtickRange && (
+              <span role="status" className="text-emerald-300">
+                8-SUB FOCUS S{focusedPhraseStepIndex! + 1}: {String(focusedSubtickRange.start + 1).padStart(3, '0')}-{String(focusedSubtickRange.end + 1).padStart(3, '0')}
+              </span>
+            )}
           </>
         )}
       </div>
@@ -320,6 +400,9 @@ export function PhraseTableEditor({
             delayedSteps={delayedSteps}
             transportBusy={transportBusy}
             contextLock={contextLock}
+            focusedStepIndex={focusedPhraseStepIndex}
+            focusedPadId={focusedPadId}
+            onFocusStepPad={handleFocusPhraseStepPad}
             onLatchMicroStep={(phraseStepIndex, microOffset) =>
               updateTableWindow((prev) =>
                 latchTableRowToMicroOffset(prev, phraseStepIndex, microOffset, 8),
@@ -338,6 +421,7 @@ export function PhraseTableEditor({
               paused={transportPaused}
               playing={transportPlaying}
               tableWindow={tableWindow}
+              focusedSubtickRange={focusedSubtickRange}
               onUpdateTableWindow={updateTableWindow}
             />
           : <p className="text-zinc-400">Create a reusable table, then assign it to a phrase step.</p>}
@@ -356,6 +440,9 @@ function PhraseRows({
   delayedSteps,
   transportBusy,
   contextLock,
+  focusedStepIndex,
+  focusedPadId,
+  onFocusStepPad,
   onLatchMicroStep,
 }: {
   pattern: Pattern;
@@ -368,6 +455,9 @@ function PhraseRows({
   delayedSteps: boolean[];
   transportBusy: boolean;
   contextLock: boolean;
+  focusedStepIndex: number | null;
+  focusedPadId: string | null;
+  onFocusStepPad: (stepIndex: number, padId: string | null) => void;
   onLatchMicroStep: (phraseStepIndex: number, microOffset: number) => void;
 }) {
   const [page, setPage] = useState(0);
@@ -386,20 +476,23 @@ function PhraseRows({
     const active = step && step.instrumentId !== null && step.note !== '---' && step.note !== 'OFF';
     if (active) {
       projectController.clearStepNotes(patternIndex, [index], trackIndex);
+      onFocusStepPad(index, null);
     } else {
-      const padId = instrumentIdToPadId(step?.instrumentId) ?? firstLoadedPad;
+      const padId = focusedPadId ?? instrumentIdToPadId(step?.instrumentId) ?? firstLoadedPad;
       if (!padId) return;
       projectController.updateStep(patternIndex, index, {
         instrumentId: padIdToInstrumentId(padId),
         note: 'C-4',
         velocity: step?.velocity ?? 127,
       }, trackIndex);
+      onFocusStepPad(index, padId);
     }
   };
 
   const applyMicroOffset = (index: number, rawOffset: number) => {
     const nextOffset = clampSubtickOffset(rawOffset);
     projectController.updateStep(patternIndex, index, { subTickOffset: nextOffset }, trackIndex);
+    onFocusStepPad(index, instrumentIdToPadId(steps[index]?.instrumentId));
     onLatchMicroStep(index, nextOffset);
   };
 
@@ -410,7 +503,7 @@ function PhraseRows({
         <span>SUB</span>
         <span>TBL</span>
         <span>NOTE</span>
-        <span>INST</span>
+        <span>INST / POLY</span>
         <span>VOL</span>
         <span>FX1</span>
         <span>FX2</span>
@@ -419,10 +512,13 @@ function PhraseRows({
       </div>
       {steps.slice(page * 16, page * 16 + 16).map((step, row) => {
         const index = page * 16 + row;
-        const padId = instrumentIdToPadId(step.instrumentId);
+        const stackedPadIds = getStackedPadIds(step);
+        const padId = stackedPadIds[0] ?? null;
+        const isPolyStacked = stackedPadIds.length > 1;
         const active = padId !== null && step.note !== '---' && step.note !== 'OFF';
         const occupied = Boolean(step.instrumentId !== null || (step.note && step.note !== '---'));
         const isCurrent = activeStep === index;
+        const isFocusedRow = focusedStepIndex === index;
         const isGrooveSubAccent = playing && isCurrent && groovePreset !== '8-8' && Boolean(delayedSteps[index % 16]);
         const fx1 = normalizeVoiceFx(step.fx);
         const fx2 = normalizeVoiceFx(step.fx2);
@@ -431,26 +527,42 @@ function PhraseRows({
 
         return (
           <div
-            className={`phrase-row phrase-sequencer-grid ${isCurrent ? 'is-playing' : ''} ${playing && isCurrent && delayedSteps[index % 16] ? 'is-groove-pulse' : ''} ${isGrooveSubAccent ? 'is-groove-subaccent border-rose-500/80 bg-rose-950/20' : ''}`}
+            className={`phrase-row phrase-sequencer-grid ${isFocusedRow ? 'is-focused ring-1 ring-emerald-400/60' : ''} ${isCurrent ? 'is-playing' : ''} ${playing && isCurrent && delayedSteps[index % 16] ? 'is-groove-pulse' : ''} ${isGrooveSubAccent ? 'is-groove-subaccent border-rose-500/80 bg-rose-950/20' : ''}`}
             style={PHRASE_GRID_TEMPLATE}
             key={index}
             data-step={index + 1}
+            data-poly-count={stackedPadIds.length}
+            onClick={() => {
+              if (padId) onFocusStepPad(index, padId);
+            }}
           >
             <button type="button" aria-label={`Phrase step ${index + 1}`} aria-pressed={active}
               disabled={contextLock || (transportBusy && !occupied)}
-              onClick={() => toggleStep(index)}
+              onClick={(event) => {
+                event.stopPropagation();
+                toggleStep(index);
+              }}
               className={`phrase-step-toggle shrink-0 ${active ? 'is-active' : ''} ${isGrooveSubAccent ? 'text-rose-300 border-rose-500' : ''}`}>
               {stepNumber(index)}
             </button>
             <div className="phrase-microtiming-control flex items-center justify-between gap-0.5 min-w-0" aria-label={`Phrase subtick step ${index + 1}`}>
               <button type="button" className="px-1 shrink-0" aria-label={`Move step ${index + 1} earlier`} disabled={!padId}
-                onClick={() => applyMicroOffset(index, microOffset - 1)}>−</button>
+                onClick={(event) => {
+                  event.stopPropagation();
+                  applyMicroOffset(index, microOffset - 1);
+                }}>−</button>
               <button type="button" className="phrase-micro-zero px-1 tabular-nums min-w-0 truncate" aria-label={`Reset step ${index + 1} subtick to zero`} disabled={!padId}
-                onClick={() => applyMicroOffset(index, 0)}>
+                onClick={(event) => {
+                  event.stopPropagation();
+                  applyMicroOffset(index, 0);
+                }}>
                 {microOffset === 0 ? '0' : microOffset > 0 ? `+${microOffset}` : String(microOffset)}
               </button>
               <button type="button" className="px-1 shrink-0" aria-label={`Move step ${index + 1} later`} disabled={!padId}
-                onClick={() => applyMicroOffset(index, microOffset + 1)}>+</button>
+                onClick={(event) => {
+                  event.stopPropagation();
+                  applyMicroOffset(index, microOffset + 1);
+                }}>+</button>
             </div>
             <select aria-label={`Phrase table step ${index + 1}`} className={fieldClass}
               value={step.tableId ?? ''} disabled={!padId}
@@ -468,16 +580,48 @@ function PhraseRows({
               {Array.from({ length: 72 }, (_, i) => noteName(i + 24)).map((note) => <option key={note} value={note}>{note}</option>)}
               <option value="OFF">OFF</option>
             </select>
-            <select aria-label={`Phrase instrument step ${index + 1}`} className={fieldClass}
-              value={padId ?? ''} disabled={transportBusy}
-              data-filled={padId !== null ? 'true' : undefined}
-              onChange={(event) => projectController.updateStep(patternIndex, index, {
-                instrumentId: event.target.value ? padIdToInstrumentId(event.target.value) : null,
-                note: event.target.value ? (step.note && step.note !== '---' ? step.note : 'C-4') : '---',
-              }, trackIndex)}>
-              <option value="">---</option>
-              {pads.map((pad) => <option key={pad.id} value={pad.id}>{pad.id}</option>)}
-            </select>
+            <div className="phrase-poly-inst-cell flex items-center gap-1 min-w-0" data-poly-stacked={isPolyStacked ? 'true' : undefined}>
+              <select aria-label={`Phrase instrument step ${index + 1}`} className={`${fieldClass} flex-1 min-w-0`}
+                value={padId ?? ''} disabled={transportBusy}
+                data-filled={padId !== null ? 'true' : undefined}
+                onChange={(event) => {
+                  const nextPadId = event.target.value || null;
+                  projectController.updateStep(patternIndex, index, {
+                    instrumentId: nextPadId ? padIdToInstrumentId(nextPadId) : null,
+                    note: nextPadId ? (step.note && step.note !== '---' ? step.note : 'C-4') : '---',
+                  }, trackIndex);
+                  onFocusStepPad(index, nextPadId);
+                }}>
+                <option value="">---</option>
+                {pads.map((pad) => <option key={pad.id} value={pad.id}>{pad.id}</option>)}
+              </select>
+              {isPolyStacked && (
+                <div className="phrase-poly-badges flex items-center gap-0.5 shrink-0" aria-label={`Stacked pads step ${index + 1}`}>
+                  {stackedPadIds.map((stackPadId) => {
+                    const isSelectedStackPad = focusedPadId === stackPadId && isFocusedRow;
+                    return (
+                      <button
+                        key={stackPadId}
+                        type="button"
+                        aria-pressed={isSelectedStackPad}
+                        aria-label={`Focus pad ${stackPadId} subticks on step ${index + 1}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onFocusStepPad(index, stackPadId);
+                        }}
+                        className={`px-1 py-0.5 text-[9px] font-bold border rounded ${
+                          isSelectedStackPad
+                            ? 'border-emerald-300 bg-emerald-950 text-emerald-200'
+                            : 'border-cyan-500/60 bg-cyan-950/60 text-cyan-200'
+                        }`}
+                      >
+                        {stackPadId}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
             <label className={`phrase-inline-volume flex items-center gap-1 min-w-0 ${occupied ? 'has-value' : ''}`}>
               <input aria-label={`Phrase volume step ${index + 1}`} type="range" min="0" max="127"
                 className="w-full min-w-0"
@@ -585,6 +729,7 @@ function TableRows({
   paused,
   playing,
   tableWindow,
+  focusedSubtickRange,
   onUpdateTableWindow,
 }: {
   table: TrackerTable;
@@ -596,6 +741,7 @@ function TableRows({
   paused: boolean;
   playing: boolean;
   tableWindow: TableWindowState;
+  focusedSubtickRange: { start: number; end: number } | null;
   onUpdateTableWindow: (updater: (prev: TableWindowState) => TableWindowState) => void;
 }) {
   const [pitchSlidePopup, setPitchSlidePopup] = useState<number | null>(null);
@@ -730,15 +876,20 @@ function TableRows({
         const thumbPercent = ((slideValue + 24) / 48) * 100;
         const isOpen = pitchSlidePopup === index && activeFx === 'PS';
         const isLatchedRow = latched?.latchedTableStep === index;
+        const isInFocused8Block =
+          focusedSubtickRange !== null &&
+          index >= focusedSubtickRange.start &&
+          index <= focusedSubtickRange.end;
         const isMagnifierAnchor = tableWindow.magnifier.isOpen && tableWindow.magnifier.anchorTableStep === index;
 
         return (
           <div
-            className={`table-row table-sequencer-grid relative ${isOpen ? 'z-30' : ''} ${current ? 'is-playing' : ''} ${playing && current && activeStep >= 0 && delayedSteps[activeStep % 16] ? 'is-groove-pulse' : ''} ${isGrooveSubAccent ? 'is-groove-subaccent border-rose-500/80 bg-rose-950/20' : ''}`}
+            className={`table-row table-sequencer-grid relative ${isInFocused8Block ? 'is-focused-subtick-block bg-emerald-950/20 border-l-2 border-l-emerald-400' : ''} ${isOpen ? 'z-30' : ''} ${current ? 'is-playing' : ''} ${playing && current && activeStep >= 0 && delayedSteps[activeStep % 16] ? 'is-groove-pulse' : ''} ${isGrooveSubAccent ? 'is-groove-subaccent border-rose-500/80 bg-rose-950/20' : ''}`}
             style={{ ...TABLE_GRID_TEMPLATE, overflow: 'visible' }}
             key={index}
             data-subtick={index + 1}
             data-latched={isLatchedRow ? 'true' : undefined}
+            data-focused-8={isInFocused8Block ? 'true' : undefined}
           >
             <div className="flex items-center gap-1 min-w-0">
               <span className={`table-step-address tabular-nums shrink-0 ${isGrooveSubAccent ? 'text-rose-300 border-rose-500' : ''}`} aria-label={`Table subtick ${index + 1}`}>
