@@ -6,7 +6,7 @@ import { audioEngine } from '../audio/audioEngine';
 import { MasterOutput } from '../audio/MasterOutput';
 import { GROOVE_PRESETS, trackerEngine } from '../tracker/trackerEngine';
 import { trackerBridge } from '../tracker/trackerBridge';
-import { projectController, type Pattern } from '../project/projectController';
+import { projectController, type Pattern, type TrackerStepItem } from '../project/projectController';
 import { PhraseTableEditor, type EditorProps } from '../tracker/PhraseTableEditor';
 import { SongArrangementView } from '../tracker/SongArrangementView';
 import { chromaticNote } from '../sampler/chromatic';
@@ -23,6 +23,19 @@ import {
   type PausedPadTargetState,
   type TriggeredInstStep,
 } from '../tracker/pausedPadTargetSnap';
+import {
+  canLiveErasePad,
+  clearPadScope,
+  createInitialLivePadEraseState,
+  erasePadAtStepAndSubtick,
+  resolveAdsrOnPadEvent,
+  setEraseHold,
+  setLiveEraseTargetPad,
+  syncLiveEraseTransport,
+  type LivePadEraseState,
+  type SequencerStepRecord,
+} from '../tracker/padEraseAndClear';
+import type { FxBus } from '../fx/fxEngine';
 
 export type WorkspaceTab = 'phrase' | 'table' | 'song' | 'mixer' | 'sampler';
 
@@ -53,6 +66,75 @@ function collectPatternPadIds(pattern: Pattern): string[] {
     }
   }
   return [...padIds];
+}
+
+function toSequencerStepRecords(pattern: Pattern, trackIndex: number): SequencerStepRecord[] {
+  const trackSteps = pattern.tracks[trackIndex]?.steps ?? [];
+  return Array.from({ length: pattern.length }, (_, stepIndex) => {
+    const step = trackSteps[stepIndex];
+    const events = step?.events ?? [];
+    const subticks = events
+      .map((ev, idx) => ({
+        subtickIndex: typeof ev.subTickOffset === 'number' ? ev.subTickOffset : idx,
+        padId: instrumentIdToPadId(ev.instrumentId ?? ev.padId),
+        instrumentId: ev.instrumentId !== undefined ? String(ev.instrumentId) : null,
+        value: ev.velocity,
+      }))
+      .filter((entry) => entry.padId !== null || entry.instrumentId !== null);
+
+    return {
+      stepIndex,
+      trackIndex,
+      padId: instrumentIdToPadId(step?.instrumentId),
+      instrumentId:
+        step?.instrumentId !== null && step?.instrumentId !== undefined
+          ? String(step.instrumentId)
+          : null,
+      note: step?.note ?? '---',
+      fx1: step?.fx ?? null,
+      fx2: step?.fx2 ?? null,
+      fx3: step?.fx3 ?? null,
+      subticks,
+    };
+  });
+}
+
+function applyClearedStepRecords(
+  patternIndex: number,
+  trackIndex: number,
+  prevSteps: readonly TrackerStepItem[],
+  nextRecords: readonly SequencerStepRecord[],
+): void {
+  const count = Math.min(prevSteps.length, nextRecords.length);
+  for (let stepIndex = 0; stepIndex < count; stepIndex++) {
+    const prevStep = prevSteps[stepIndex];
+    const nextRec = nextRecords[stepIndex];
+    if (!prevStep || !nextRec) continue;
+
+    const prevPadId = instrumentIdToPadId(prevStep.instrumentId);
+    const nextPadId = nextRec.padId;
+    if (prevPadId === nextPadId && (prevStep.note ?? '---') === (nextRec.note ?? prevStep.note ?? '---')) {
+      continue;
+    }
+
+    const parsedInstrumentId =
+      nextRec.instrumentId !== null && nextRec.instrumentId !== undefined
+        ? Number(nextRec.instrumentId)
+        : null;
+    const nextInstrumentId =
+      parsedInstrumentId !== null && Number.isFinite(parsedInstrumentId)
+        ? parsedInstrumentId
+        : padIdToInstrumentId(nextPadId);
+
+    const nextPatch: Partial<TrackerStepItem> = {
+      instrumentId: nextInstrumentId,
+      note: nextPadId === null ? '---' : (nextRec.note ?? prevStep.note ?? '---'),
+    };
+    if (nextPadId === null) {
+      nextPatch.events = [];
+    }
+    projectController.updateStep(patternIndex, stepIndex, nextPatch, trackIndex);
+  }
 }
 
 export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'phrase', activeStep = -1 }) => {
@@ -100,6 +182,9 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
   const [pausedPadTarget, setPausedPadTarget] = useState<PausedPadTargetState>(() =>
     createInitialPausedPadTargetState(),
   );
+  const [liveEraseState, setLiveEraseState] = useState<LivePadEraseState>(() =>
+    createInitialLivePadEraseState('A'),
+  );
   const [transportMessage, setTransportMessage] = useState('');
   const [queuedPatternIndex, setQueuedPatternIndex] = useState<number | null>(null);
   const [projectRevision, refreshProject] = useState(0);
@@ -115,6 +200,58 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
   if (tapTempoRef.current === null) tapTempoRef.current = { times: new Float64Array(8), count: 0, next: 0 };
   const recordingRef = useRef(false);
   recordingRef.current = armed && playing;
+
+  const resolveActiveBus = useCallback((): FxBus => {
+    const targetTrack =
+      projectController.getState().sampler.pads[padBank.selectedPadId]?.targetTrack ??
+      projectController.getSelectedTrackIndex();
+    return targetTrack < 4 ? 'A' : 'B';
+  }, [padBank.selectedPadId]);
+
+  useEffect(() => {
+    setLiveEraseState((prev) =>
+      syncLiveEraseTransport(prev, {
+        isRecording: recordingRef.current,
+        activeBus: resolveActiveBus(),
+      }),
+    );
+  }, [armed, playing, resolveActiveBus]);
+
+  useEffect(() => {
+    setLiveEraseState((prev) => setLiveEraseTargetPad(prev, padBank.selectedPadId));
+  }, [padBank.selectedPadId]);
+
+  const resetPadAdsrToDefault = useCallback(
+    (padId: string, eventType: 'pad-cleared' | 'sample-loaded' | 'manual-reset') => {
+      const resolution = resolveAdsrOnPadEvent(eventType);
+      if (resolution.shouldReset) {
+        audioEngine.setPadAdsr(padId, null);
+      }
+    },
+    [],
+  );
+
+  const handleClearSelectedPad = useCallback(
+    (padId: string) => {
+      const state = projectController.getState();
+      const patternIndex = state.settings.activePatternIndex;
+      const pattern = state.tracker.patterns[patternIndex];
+      const trackIndex = projectController.getSelectedTrackIndex();
+      if (pattern) {
+        const records = toSequencerStepRecords(pattern, trackIndex);
+        const result = clearPadScope(records, padId);
+        if (result.clearedCount > 0) {
+          applyClearedStepRecords(patternIndex, trackIndex, pattern.tracks[trackIndex]?.steps ?? [], result.items);
+        }
+        if (result.adsrResetRequired) {
+          resetPadAdsrToDefault(padId, 'pad-cleared');
+        }
+      } else {
+        resetPadAdsrToDefault(padId, 'pad-cleared');
+      }
+    },
+    [resetPadAdsrToDefault],
+  );
 
   useEffect(() => {
     if (document.activeElement !== bpmInputRef.current) {
@@ -194,10 +331,19 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
       const target = event.target;
-      if (target instanceof HTMLElement &&
-          (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      const isEditable =
+        target instanceof HTMLElement &&
+        (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+
+      if (!isEditable && !event.metaKey && !event.ctrlKey && !event.altKey && event.key === 'Backspace') {
+        event.preventDefault();
+        setLiveEraseState((prev) => setEraseHold(prev, true, padBank.selectedPadId));
+        return;
+      }
+
+      if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+      if (isEditable) return;
       const key = event.key.toLowerCase();
       if (key === 'z') {
         event.preventDefault();
@@ -208,9 +354,20 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
         handleRedo();
       }
     };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.key === 'Backspace') {
+        setLiveEraseState((prev) => setEraseHold(prev, false));
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleRedo, handleUndo]);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [handleRedo, handleUndo, padBank.selectedPadId]);
 
   const exportBundle = useCallback(async () => {
     if (!padBank.storageReady || bundleBusy) return;
@@ -428,6 +585,43 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
     const context = audioEngine.getContext();
     const captureTime = context && pointerTime !== undefined && Number.isFinite(pointerTime)
       ? context.currentTime + (pointerTime - performance.now()) / 1000 : undefined;
+
+    const eraseCandidate: LivePadEraseState = {
+      ...liveEraseState,
+      isRecording: recordingRef.current,
+      activeBus: resolveActiveBus(),
+      targetPadId: padId,
+    };
+    if (eraseCandidate.isEraseHeld) {
+      if (!canLiveErasePad(eraseCandidate)) {
+        if (eraseCandidate.isRecording && eraseCandidate.activeBus === 'MST') {
+          setTransportMessage('Live erase blocked while recording on MST bus.');
+        }
+        return () => {};
+      }
+      const state = projectController.getState();
+      const patternIndex = state.settings.activePatternIndex;
+      const pattern = state.tracker.patterns[patternIndex];
+      if (pattern) {
+        const trackIndex = projectController.getSelectedTrackIndex();
+        const pos = trackerEngine.recordPosition(captureTime ?? context?.currentTime ?? 0);
+        const stepIdx = pos ? pos.step : playhead >= 0 ? playhead : 0;
+        const records = toSequencerStepRecords(pattern, trackIndex);
+        const erased = erasePadAtStepAndSubtick(eraseCandidate, records, stepIdx);
+        setLiveEraseState(erased.state);
+        if (erased.didErase) {
+          applyClearedStepRecords(
+            patternIndex,
+            trackIndex,
+            pattern.tracks[trackIndex]?.steps ?? [],
+            erased.steps,
+          );
+          setTransportMessage(`ERASED ${padId} AT STEP ${stepIdx}`);
+        }
+      }
+      return () => {};
+    }
+
     let captured: { patternIndex: number; track: number; instrumentId: number; generation: number } | null = null;
     const gated = padBank.getPadSettings(padId)?.playbackMode === 'gate';
     const release = padBank.triggerPad(padId, (time) => {
@@ -484,7 +678,7 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
       if (position.patternIndex !== captured.patternIndex) return;
       projectController.recordRelease(captured.patternIndex, position.step, captured.track, captured.instrumentId, position.subTickOffset);
     };
-  }, [padBank.triggerPad, padBank.getPadSettings]);
+  }, [liveEraseState, padBank.getPadSettings, padBank.triggerPad, playhead, resolveActiveBus]);
 
   const setStagedCtrlValue = useCallback((index: 0 | 1 | 2, rawValue: number) => {
     const clamped = Math.max(0, Math.min(100, Math.round(rawValue)));
@@ -532,6 +726,8 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
             disabled={!projectController.canUndo()} aria-label="Undo" title="Undo (Ctrl/Cmd+Z)">UNDO</button>
           <button type="button" className="transport-control" onClick={handleRedo}
             disabled={!projectController.canRedo()} aria-label="Redo" title="Redo (Ctrl/Cmd+Shift+Z)">REDO</button>
+          <button type="button" className="transport-control" onClick={() => handleClearSelectedPad(padBank.selectedPadId)}
+            aria-label={`Clear pad ${padBank.selectedPadId} and reset ADSR`}>CLR PAD</button>
           <button type="button" className="transport-control" onClick={() => void exportBundle()}
             disabled={bundleBusy || !padBank.storageReady}>EXPORT .SP8</button>
           <button type="button" className="transport-control" onClick={() => bundleInputRef.current?.click()}
@@ -640,6 +836,17 @@ export const SPM8xDashboard: React.FC<SPM8xDashboardProps> = ({ initialTab = 'ph
             className="transport-control text-amber-300">PAUSE</button>
           <button type="button" onClick={stopTransport} className="transport-control text-rose-300">STOP</button>
           <button type="button" aria-pressed={armed} onClick={() => setArmed(!armed)} className={`transport-control ${armed ? 'text-rose-300' : 'text-zinc-400'}`}>{armed ? 'PHRASE REC ARMED' : 'PHRASE REC'}</button>
+          <button
+            type="button"
+            aria-pressed={liveEraseState.isEraseHeld}
+            onPointerDown={() => setLiveEraseState((prev) => setEraseHold(prev, true, padBank.selectedPadId))}
+            onPointerUp={() => setLiveEraseState((prev) => setEraseHold(prev, false))}
+            onPointerCancel={() => setLiveEraseState((prev) => setEraseHold(prev, false))}
+            onBlur={() => setLiveEraseState((prev) => setEraseHold(prev, false))}
+            className={`transport-control ${liveEraseState.isEraseHeld ? 'text-amber-300' : 'text-zinc-400'}`}
+          >
+            ERASE
+          </button>
           <label className="flex items-center gap-1">
             <input aria-label="One bar count-in" type="checkbox" checked={countInEnabled}
               onChange={(event) => setCountInEnabled(event.target.checked)} />

@@ -4,7 +4,8 @@
  * and Track / Table / Pad clear helpers with ADSR reset signaling
  */
 
-import { FxBus } from '../fx/fxEngine';
+import type { FxBus } from '../fx/fxEngine';
+import { DEFAULT_HARDWARE_ADSR, normalizeAdsrEnvelope, type AdsrEnvelope } from '../types';
 
 export type ClearScope = 'pad' | 'track' | 'table';
 
@@ -40,11 +41,13 @@ export interface AdsrEnvelopeDefaults {
   releaseSec: number;
 }
 
+const CANONICAL_DEFAULT_ADSR: AdsrEnvelope = normalizeAdsrEnvelope(DEFAULT_HARDWARE_ADSR);
+
 export const DEFAULT_ADSR_ENVELOPE: Readonly<AdsrEnvelopeDefaults> = Object.freeze({
-  attackSec: 0.005,
-  decaySec: 0.15,
-  sustain: 0.85,
-  releaseSec: 0.2,
+  attackSec: CANONICAL_DEFAULT_ADSR.attackMs / 1000,
+  decaySec: CANONICAL_DEFAULT_ADSR.decayMs / 1000,
+  sustain: CANONICAL_DEFAULT_ADSR.sustain,
+  releaseSec: CANONICAL_DEFAULT_ADSR.releaseMs / 1000,
 });
 
 export interface LivePadEraseState {
@@ -80,7 +83,7 @@ export function createInitialLivePadEraseState(
 
 export function normalizePadId(padId: string | null | undefined): string | null {
   if (typeof padId !== 'string') return null;
-  const trimmed = padId.trim();
+  const trimmed = padId.trim().toUpperCase();
   return trimmed.length > 0 ? trimmed : null;
 }
 
@@ -170,6 +173,7 @@ export function erasePadAtStepAndSubtick(
         ...step,
         padId: null,
         instrumentId: null,
+        note: '---',
         subticks: remainingSubticks,
       };
     }
@@ -229,6 +233,7 @@ export function clearPadScope(
         ...step,
         padId: null,
         instrumentId: null,
+        note: '---',
         subticks: filteredSubticks,
       };
     }
@@ -277,7 +282,7 @@ export function clearTrackScope(
       ...step,
       padId: null,
       instrumentId: null,
-      note: null,
+      note: '---',
       fx1: null,
       fx2: null,
       fx3: null,
