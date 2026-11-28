@@ -1,34 +1,17 @@
 /**
  * SP-M8x Hybrid Music Production Suite
  * table/tableWindowState.ts — 128-step Table windowing (16 rows/page),
- * single-instance subtick magnifier (2 before + 0..7 + 2 after),
- * and Phrase micro-step (-8..+8) latched Table row indicator helpers
+ * offset-aware 8-tick highlight window, per-tick scroll-stop latch,
+ * and Phrase micro-step (-8..+8) latched Table row indicator helpers.
+ * (Subtick magnifier retired per Section 4.)
  */
 
 export const TABLE_TOTAL_STEPS = 128;
 export const TABLE_PAGE_SIZE = 16;
 export const TABLE_TOTAL_PAGES = Math.ceil(TABLE_TOTAL_STEPS / TABLE_PAGE_SIZE); // 8 pages (0..7)
+export const FOCUSED_EIGHT_TICK_SPAN = 8;
 export const MIN_MICRO_STEP_OFFSET = -8;
 export const MAX_MICRO_STEP_OFFSET = 8;
-
-/**
- * Fixed local subtick inspection window: 2 before + 0..7 + 2 after (12 offsets).
- */
-export const SUBTICK_MAGNIFIER_OFFSETS = [-2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
-
-export type SubtickMagnifierOffset = (typeof SUBTICK_MAGNIFIER_OFFSETS)[number];
-
-export interface ViewportRect {
-  top: number;
-  left: number;
-  width: number;
-  height: number;
-}
-
-export interface PopoverSize {
-  width: number;
-  height: number;
-}
 
 export interface LatchedMicroOffsetIndicator {
   phraseStepIndex: number;
@@ -37,23 +20,19 @@ export interface LatchedMicroOffsetIndicator {
   latchedPageIndex: number; // Clamped to [0, 7]
 }
 
-export interface SubtickMagnifierState {
-  isOpen: boolean;
-  anchorTableStep: number | null;
-  focalSubtick: number;
-  visibleSubticks: number[];
-  anchorRect: ViewportRect | null;
-  popoverSize: PopoverSize;
-  position: { top: number; left: number };
+export interface FocusedEightTickWindow {
+  startTick: number; // 0..120
+  endTick: number; // 7..127
 }
 
 export interface TableWindowState {
   tableId: string | null;
   pageIndex: number; // 0..7
   followPlayhead: boolean;
+  anchorTableStep: number | null; // 0..127
   latchedStep: number | null; // 0..127
+  focusedEightWindow: FocusedEightTickWindow | null;
   latchedIndicator: LatchedMicroOffsetIndicator | null;
-  magnifier: SubtickMagnifierState;
 }
 
 export function clampTableStep(step: number): number {
@@ -94,77 +73,35 @@ export function getPageSlice<T>(items: readonly T[], pageIndex: number): T[] {
 export function computeLatchedTableStep(
   phraseStepIndex: number,
   microOffset: number,
-  stepsPerPhraseStep: number = 1,
+  stepsPerPhraseStep: number = 8,
 ): number {
   const safePhraseStep = Math.max(0, Number.isFinite(phraseStepIndex) ? Math.trunc(phraseStepIndex) : 0);
   const safeOffset = clampMicroStepOffset(microOffset);
-  const safeScale = Math.max(1, Number.isFinite(stepsPerPhraseStep) ? Math.trunc(stepsPerPhraseStep) : 1);
+  const safeScale = Math.max(1, Number.isFinite(stepsPerPhraseStep) ? Math.trunc(stepsPerPhraseStep) : 8);
   const baseTableStep = safePhraseStep * safeScale;
   return clampTableStep(baseTableStep + safeOffset);
 }
 
 /**
- * Builds the subtick window (2 before + 0..7 + 2 after) clamped within [0, 127].
+ * Computes the highlighted 8-tick window that tracks `anchorTableStep` plus any
+ * -8..+8 micro-step offset shift (safely guarded when anchorTableStep is null).
  */
-export function buildMagnifierSubticks(focalSubtick: number): number[] {
-  const safeFocal = clampTableStep(focalSubtick);
-  const result: number[] = [];
-  for (const delta of SUBTICK_MAGNIFIER_OFFSETS) {
-    const candidate = clampTableStep(safeFocal + delta);
-    if (!result.includes(candidate)) {
-      result.push(candidate);
-    }
+export function computeFocusedEightTickWindow(
+  anchorTableStep: number | null,
+  microOffset: number = 0,
+): FocusedEightTickWindow | null {
+  if (anchorTableStep === null || !Number.isFinite(anchorTableStep)) {
+    return null;
   }
-  return result;
-}
-
-/**
- * Clamps popover coordinates inside viewport bounds with padding for iPad ergonomics.
- */
-export function clampPopoverPosition(
-  anchorRect: ViewportRect | null,
-  popoverSize: PopoverSize,
-  viewport: { width: number; height: number; padding?: number },
-): { top: number; left: number } {
-  const pad = Math.max(4, viewport.padding ?? 12);
-  const maxLeft = Math.max(pad, viewport.width - popoverSize.width - pad);
-  const maxTop = Math.max(pad, viewport.height - popoverSize.height - pad);
-
-  if (!anchorRect) {
-    return {
-      left: Math.max(pad, Math.min(maxLeft, Math.round((viewport.width - popoverSize.width) / 2))),
-      top: Math.max(pad, Math.min(maxTop, Math.round((viewport.height - popoverSize.height) / 2))),
-    };
-  }
-
-  let left = Math.round(anchorRect.left + anchorRect.width + 8);
-  if (left > maxLeft) {
-    left = Math.round(anchorRect.left - popoverSize.width - 8);
-  }
-
-  let top = Math.round(anchorRect.top);
-  if (top + popoverSize.height > viewport.height - pad) {
-    top = Math.round(anchorRect.top + anchorRect.height - popoverSize.height);
-  }
-
-  return {
-    left: Math.max(pad, Math.min(maxLeft, left)),
-    top: Math.max(pad, Math.min(maxTop, top)),
-  };
-}
-
-export function createClosedMagnifierState(
-  popoverSize: PopoverSize = { width: 260, height: 340 },
-): SubtickMagnifierState {
-  return {
-    isOpen: false,
-    anchorTableStep: null,
-    focalSubtick: 0,
-    visibleSubticks: [],
-    anchorRect: null,
-    popoverSize,
-    position: { top: 12, left: 12 },
-  };
+  const safeAnchor = clampTableStep(anchorTableStep);
+  const safeOffset = clampMicroStepOffset(microOffset);
+  const shiftedTick = clampTableStep(safeAnchor + safeOffset);
+  const startTick = Math.max(
+    0,
+    Math.min(TABLE_TOTAL_STEPS - FOCUSED_EIGHT_TICK_SPAN, shiftedTick),
+  );
+  const endTick = Math.min(TABLE_TOTAL_STEPS - 1, startTick + FOCUSED_EIGHT_TICK_SPAN - 1);
+  return { startTick, endTick };
 }
 
 export function createInitialTableWindowState(tableId: string | null = null): TableWindowState {
@@ -172,24 +109,17 @@ export function createInitialTableWindowState(tableId: string | null = null): Ta
     tableId,
     pageIndex: 0,
     followPlayhead: true,
+    anchorTableStep: null,
     latchedStep: null,
+    focusedEightWindow: null,
     latchedIndicator: null,
-    magnifier: createClosedMagnifierState(),
-  };
-}
-
-export function closeMagnifier(state: TableWindowState): TableWindowState {
-  return {
-    ...state,
-    magnifier: createClosedMagnifierState(state.magnifier.popoverSize),
   };
 }
 
 export function setTablePage(state: TableWindowState, nextPageIndex: number): TableWindowState {
   const clampedPage = clampTablePageIndex(nextPageIndex);
-  const closed = closeMagnifier(state);
   return {
-    ...closed,
+    ...state,
     pageIndex: clampedPage,
     followPlayhead: false,
   };
@@ -204,34 +134,43 @@ export function syncPlayheadToTableWindow(
   const safeTick = clampTableStep(activeTick);
   const targetPage = Math.floor(safeTick / TABLE_PAGE_SIZE);
   if (targetPage === state.pageIndex) return state;
-  const closed = closeMagnifier(state);
   return {
-    ...closed,
+    ...state,
     pageIndex: targetPage,
   };
 }
 
 /**
- * Latches a Table row to a Phrase step + micro-step offset (-8..+8) and brings
- * the target 16-row page into view if needed, closing any stale magnifier.
+ * Latches a Table row/window to a Phrase step + micro-step offset (-8..+8),
+ * updates the 8-tick highlight window to follow the offset, and brings the
+ * target 16-row page into view unless `options.preservePage` is set.
  */
 export function latchTableRowToMicroOffset(
   state: TableWindowState,
   phraseStepIndex: number,
   microOffset: number,
-  stepsPerPhraseStep: number = 1,
+  stepsPerPhraseStep: number = 8,
+  options: { preservePage?: boolean } = {},
 ): TableWindowState {
+  const safePhraseStep = Math.max(0, Number.isFinite(phraseStepIndex) ? Math.trunc(phraseStepIndex) : 0);
   const safeOffset = clampMicroStepOffset(microOffset);
-  const latchedTableStep = computeLatchedTableStep(phraseStepIndex, safeOffset, stepsPerPhraseStep);
+  const safeScale = Math.max(1, Number.isFinite(stepsPerPhraseStep) ? Math.trunc(stepsPerPhraseStep) : 8);
+  const anchorTableStep = clampTableStep(safePhraseStep * safeScale);
+  const focusedEightWindow = computeFocusedEightTickWindow(anchorTableStep, safeOffset);
+  const latchedTableStep = focusedEightWindow
+    ? focusedEightWindow.startTick
+    : computeLatchedTableStep(safePhraseStep, safeOffset, safeScale);
   const latchedPageIndex = Math.floor(latchedTableStep / TABLE_PAGE_SIZE);
-  const closed = closeMagnifier(state);
 
   return {
-    ...closed,
-    pageIndex: latchedPageIndex,
+    ...state,
+    pageIndex: options.preservePage ? state.pageIndex : latchedPageIndex,
+    followPlayhead: false,
+    anchorTableStep,
     latchedStep: latchedTableStep,
+    focusedEightWindow,
     latchedIndicator: {
-      phraseStepIndex: Math.max(0, Math.trunc(phraseStepIndex)),
+      phraseStepIndex: safePhraseStep,
       microOffset: safeOffset,
       latchedTableStep,
       latchedPageIndex,
@@ -239,31 +178,33 @@ export function latchTableRowToMicroOffset(
   };
 }
 
-export function openSubtickMagnifier(
+/**
+ * Snaps/latches to the nearest tick row when vertical scrolling stops across
+ * the 128-tick table while keeping offset-aware 8-tick highlighting in sync.
+ */
+export function snapTableWindowToTick(
   state: TableWindowState,
-  anchorTableStep: number,
-  focalSubtick: number,
-  anchorRect: ViewportRect | null,
-  viewport: { width: number; height: number; padding?: number },
-  popoverSize?: PopoverSize,
+  tick: number,
+  options: { syncPage?: boolean } = {},
 ): TableWindowState {
-  const safeStep = clampTableStep(anchorTableStep);
-  const safeFocal = clampTableStep(focalSubtick);
-  const size = popoverSize ?? state.magnifier.popoverSize;
-  const pageIndex = Math.floor(safeStep / TABLE_PAGE_SIZE);
+  const safeTick = clampTableStep(tick);
+  const currentOffset = state.latchedIndicator?.microOffset ?? 0;
+  const focusedEightWindow = computeFocusedEightTickWindow(safeTick, currentOffset);
+  const nextPage = options.syncPage ? Math.floor(safeTick / TABLE_PAGE_SIZE) : state.pageIndex;
 
   return {
     ...state,
-    pageIndex,
-    latchedStep: safeStep,
-    magnifier: {
-      isOpen: true,
-      anchorTableStep: safeStep,
-      focalSubtick: safeFocal,
-      visibleSubticks: buildMagnifierSubticks(safeFocal),
-      anchorRect,
-      popoverSize: size,
-      position: clampPopoverPosition(anchorRect, size, viewport),
-    },
+    pageIndex: clampTablePageIndex(nextPage),
+    followPlayhead: false,
+    anchorTableStep: safeTick,
+    latchedStep: safeTick,
+    focusedEightWindow,
+    latchedIndicator: state.latchedIndicator
+      ? {
+          ...state.latchedIndicator,
+          latchedTableStep: safeTick,
+          latchedPageIndex: clampTablePageIndex(nextPage),
+        }
+      : null,
   };
 }

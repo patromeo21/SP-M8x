@@ -13,14 +13,13 @@ import { getGrooveDelayedSteps, type GroovePreset } from './groovePresets';
 import { instrumentIdToPadId, padIdToInstrumentId } from '../sampler/padIds';
 import { generateEuclideanSteps } from './euclideanGenerator';
 import {
-  closeMagnifier,
+  computeFocusedEightTickWindow,
   createInitialTableWindowState,
   latchTableRowToMicroOffset,
-  openSubtickMagnifier,
   setTablePage,
+  snapTableWindowToTick,
   syncPlayheadToTableWindow,
   type TableWindowState,
-  type ViewportRect,
 } from '../table/tableWindowState';
 
 const fieldClass = 'phrase-cell-control bg-zinc-950 border border-zinc-700 text-zinc-100 min-w-0';
@@ -43,7 +42,7 @@ const PHRASE_GRID_TEMPLATE: React.CSSProperties = {
 const TABLE_GRID_TEMPLATE: React.CSSProperties = {
   display: 'grid',
   gridTemplateColumns:
-    '92px minmax(72px, 0.9fr) minmax(96px, 1.1fr) minmax(110px, 1.4fr) minmax(76px, 0.9fr) minmax(76px, 0.9fr)',
+    '76px minmax(72px, 0.9fr) minmax(96px, 1.1fr) minmax(110px, 1.4fr) minmax(76px, 0.9fr) minmax(76px, 0.9fr)',
   columnGap: '6px',
   alignItems: 'center',
 };
@@ -171,31 +170,18 @@ export function PhraseTableEditor({
     }
   };
 
-  useEffect(() => {
-    if (mode !== 'table' && tableWindow.magnifier.isOpen) {
-      updateTableWindow((prev) => closeMagnifier(prev));
-    }
-  }, [mode, tableWindow.magnifier.isOpen]);
-
-  // Auto-focus the active pad's 8 subticks (step * 8 .. step * 8 + 7) when entering Table mode
+  // Focus the active pad's 8 subticks (with -8..+8 micro-offset tracking) when entering Table mode
   // from a Phrase step/pad selection, without touching audio clock scheduling.
   useEffect(() => {
     if (mode !== 'table' || contextLock || focusedPhraseStepIndex === null) return;
-    const totalSteps = table?.steps.length ?? 512;
+    const totalSteps = table?.steps.length ?? 128;
     if (totalSteps <= 0) return;
-    const blockStart = Math.max(0, Math.min(totalSteps - 1, focusedPhraseStepIndex * 8));
-    const targetPage = Math.floor(blockStart / 16);
+    const stepOffset = clampSubtickOffset(
+      pattern?.tracks[trackIndex]?.steps[focusedPhraseStepIndex]?.subTickOffset,
+    );
     updateTableWindow((prev) => ({
-      ...setTablePage(prev, targetPage),
+      ...latchTableRowToMicroOffset(prev, focusedPhraseStepIndex, stepOffset, 8),
       tableId: table ? String(table.id) : prev.tableId,
-      followPlayhead: false,
-      latchedIndicator: {
-        phraseStepIndex: focusedPhraseStepIndex,
-        microOffset:
-          pattern?.tracks[trackIndex]?.steps[focusedPhraseStepIndex]?.subTickOffset ?? 0,
-        latchedTableStep: blockStart,
-        latchedPageIndex: targetPage,
-      },
     }));
   }, [mode, contextLock, focusedPhraseStepIndex, table?.id, table?.steps.length, pattern, trackIndex]);
 
@@ -208,6 +194,12 @@ export function PhraseTableEditor({
     if (typeof step?.tableId === 'number') {
       setTableId(step.tableId);
     }
+    const stepOffset = clampSubtickOffset(step?.subTickOffset);
+    updateTableWindow((prev) =>
+      latchTableRowToMicroOffset(prev, stepIndex, stepOffset, 8, {
+        preservePage: contextLock || mode !== 'table',
+      }),
+    );
   };
 
   const toggleClearPad = (padId: string) => {
@@ -271,10 +263,18 @@ export function PhraseTableEditor({
         }
       : linkedPad;
 
-  const focusedSubtickRange =
+  const activeOffset =
     focusedPhraseStepIndex !== null
-      ? { start: focusedPhraseStepIndex * 8, end: focusedPhraseStepIndex * 8 + 7 }
-      : null;
+      ? clampSubtickOffset(pattern.tracks[trackIndex]?.steps[focusedPhraseStepIndex]?.subTickOffset)
+      : (tableWindow.latchedIndicator?.microOffset ?? 0);
+
+  const focusedSubtickRange =
+    tableWindow.focusedEightWindow ??
+    (tableWindow.anchorTableStep !== null
+      ? computeFocusedEightTickWindow(tableWindow.anchorTableStep, activeOffset)
+      : focusedPhraseStepIndex !== null
+        ? computeFocusedEightTickWindow(focusedPhraseStepIndex * 8, activeOffset)
+        : null);
 
   return (
     <section className={`${mode === 'phrase' ? 'phrase-panel' : 'table-panel'} relative flex-1 min-h-0 flex flex-col gap-2 p-3 bg-[var(--bg-canvas)] border border-[var(--border-grid)] rounded-xl font-mono text-xs overflow-visible`}>
@@ -311,7 +311,7 @@ export function PhraseTableEditor({
               onChange={(event) => {
                 const nextId = Number(event.target.value);
                 setTableId(nextId);
-                updateTableWindow((prev) => closeMagnifier({
+                updateTableWindow((prev) => ({
                   ...prev,
                   tableId: Number.isFinite(nextId) && nextId > 0 ? String(nextId) : null,
                 }));
@@ -323,7 +323,7 @@ export function PhraseTableEditor({
               onClick={() => {
                 const createdId = projectController.createTable(trackIndex);
                 setTableId(createdId);
-                updateTableWindow((prev) => closeMagnifier({
+                updateTableWindow((prev) => ({
                   ...prev,
                   tableId: String(createdId),
                 }));
@@ -348,7 +348,7 @@ export function PhraseTableEditor({
             </span>}
             {focusedSubtickRange && (
               <span role="status" className="text-emerald-300">
-                8-SUB FOCUS S{focusedPhraseStepIndex! + 1}: {String(focusedSubtickRange.start + 1).padStart(3, '0')}-{String(focusedSubtickRange.end + 1).padStart(3, '0')}
+                8-SUB FOCUS{focusedPhraseStepIndex !== null ? ` S${focusedPhraseStepIndex + 1}` : ''}: {String(focusedSubtickRange.startTick + 1).padStart(3, '0')}-{String(focusedSubtickRange.endTick + 1).padStart(3, '0')}
               </span>
             )}
           </>
@@ -417,7 +417,9 @@ export function PhraseTableEditor({
             onFocusStepPad={handleFocusPhraseStepPad}
             onLatchMicroStep={(phraseStepIndex, microOffset) =>
               updateTableWindow((prev) =>
-                latchTableRowToMicroOffset(prev, phraseStepIndex, microOffset, 8),
+                latchTableRowToMicroOffset(prev, phraseStepIndex, microOffset, 8, {
+                  preservePage: contextLock,
+                }),
               )
             }
           />
@@ -595,7 +597,7 @@ function PhraseRows({
                 tableId: event.target.value ? Number(event.target.value) : null,
               }, trackIndex)}>
               <option value="">---</option>
-              {projectController.getTables(trackIndex).map((table) => <option key={table.id} value={table.id}>{table.name}</option>)}
+              {projectController.getTables(trackIndex).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
             <select aria-label={`Phrase note step ${index + 1}`} className={fieldClass} value={step.note || '---'}
               disabled={!padId} onChange={(event) => projectController.updateStep(patternIndex, index, { note: event.target.value }, trackIndex)}
@@ -768,7 +770,7 @@ function TableRows({
   paused: boolean;
   playing: boolean;
   tableWindow: TableWindowState;
-  focusedSubtickRange: { start: number; end: number } | null;
+  focusedSubtickRange: { startTick: number; endTick: number } | null;
   onUpdateTableWindow: (updater: (prev: TableWindowState) => TableWindowState) => void;
 }) {
   const [pitchSlidePopup, setPitchSlidePopup] = useState<number | null>(null);
@@ -834,33 +836,21 @@ function TableRows({
     setSlideValue(subtickIndex, semitones);
   };
 
-  const toggleMagnifierForRow = (subtickIndex: number, buttonEl: HTMLElement) => {
-    setPitchSlidePopup(null);
-    onUpdateTableWindow((prev) => {
-      if (prev.magnifier.isOpen && prev.magnifier.anchorTableStep === subtickIndex) {
-        return closeMagnifier(prev);
-      }
-      const rect = buttonEl.getBoundingClientRect();
-      const anchorRect: ViewportRect = {
-        top: rect.top,
-        left: rect.left,
-        width: rect.width,
-        height: rect.height,
-      };
-      const viewport = {
-        width: typeof window !== 'undefined' ? window.innerWidth : 1024,
-        height: typeof window !== 'undefined' ? window.innerHeight : 768,
-      };
-      return openSubtickMagnifier(prev, subtickIndex, subtickIndex, anchorRect, viewport);
-    });
-  };
-
   const latched = tableWindow.latchedIndicator;
 
   return (
     <div
-      className="table-grid-scroll table-sequencer-list relative flex-1 min-h-0"
+      className="table-grid-scroll table-sequencer-list relative flex-1 min-h-0 overflow-y-auto"
       aria-label="Vertical table ticks"
+      onScroll={(event) => {
+        const el = event.currentTarget;
+        const maxScroll = Math.max(1, el.scrollHeight - el.clientHeight);
+        const ratio = Math.max(0, Math.min(1, el.scrollTop / maxScroll));
+        const pageStart = page * 16;
+        const pageEnd = Math.min(table.steps.length - 1, pageStart + 15);
+        const tickInPage = pageStart + Math.round(ratio * Math.max(0, pageEnd - pageStart));
+        onUpdateTableWindow((prev) => snapTableWindowToTick(prev, tickInPage, { syncPage: false }));
+      }}
     >
       <div className="table-page-controls flex flex-wrap items-center gap-2">
         <label className="control-block">PAGE <select aria-label="Table page" className={fieldClass}
@@ -907,9 +897,8 @@ function TableRows({
         const groupStyle = getEightSubtickGroupStyle(index);
         const isInFocused8Block =
           focusedSubtickRange !== null &&
-          index >= focusedSubtickRange.start &&
-          index <= focusedSubtickRange.end;
-        const isMagnifierAnchor = tableWindow.magnifier.isOpen && tableWindow.magnifier.anchorTableStep === index;
+          index >= focusedSubtickRange.startTick &&
+          index <= focusedSubtickRange.endTick;
 
         return (
           <div
@@ -920,6 +909,9 @@ function TableRows({
             data-subtick-group={eightGroupIndex + 1}
             data-latched={isLatchedRow ? 'true' : undefined}
             data-focused-8={isInFocused8Block ? 'true' : undefined}
+            onClick={() =>
+              onUpdateTableWindow((prev) => snapTableWindowToTick(prev, index, { syncPage: false }))
+            }
           >
             <div className="flex items-center gap-1 min-w-0">
               <span
@@ -929,15 +921,6 @@ function TableRows({
               >
                 {String(index + 1).padStart(3, '0')}
               </span>
-              <button
-                type="button"
-                aria-label={`Magnify subticks around ${index + 1}`}
-                aria-pressed={isMagnifierAnchor}
-                className={`${buttonClass} px-1 py-0.5 text-[10px]`}
-                onClick={(event) => toggleMagnifierForRow(index, event.currentTarget)}
-              >
-                MAG
-              </button>
             </div>
             <select aria-label={`Table pitch subtick ${index + 1}`} className={fieldClass}
               value={step.pitch ?? ''} onChange={(event) => projectController.updateTableStep(table.id, index, {
@@ -1111,56 +1094,6 @@ function TableRows({
           </div>
         );
       })}
-      {tableWindow.magnifier.isOpen && tableWindow.magnifier.anchorTableStep !== null && (() => {
-        const anchorStep = tableWindow.magnifier.anchorTableStep;
-        return (
-          <div
-            role="dialog"
-            aria-label="Subtick magnifier"
-            className="subtick-magnifier-popover fixed z-50 bg-zinc-950 border border-cyan-400 p-2 shadow-xl"
-            style={{
-              top: `${Math.round(tableWindow.magnifier.position.top)}px`,
-              left: `${Math.round(tableWindow.magnifier.position.left)}px`,
-            }}
-          >
-            <div className="flex items-center justify-between gap-2 mb-1">
-              <span className="text-cyan-300">
-                SUBTICK MAGNIFIER ({anchorStep + 1})
-              </span>
-              <button
-                type="button"
-                aria-label="Close subtick magnifier"
-                className={buttonClass}
-                onClick={() => onUpdateTableWindow((prev) => closeMagnifier(prev))}
-              >
-                ×
-              </button>
-            </div>
-            <div className="flex items-center gap-1 flex-wrap">
-              {tableWindow.magnifier.visibleSubticks.map((subtickIdx) => {
-                const rowItem = table.steps[subtickIdx];
-                const isCenter = subtickIdx === anchorStep;
-                return (
-                  <button
-                    key={subtickIdx}
-                    type="button"
-                    aria-label={`Select subtick ${subtickIdx + 1}`}
-                    className={`${buttonClass} ${isCenter ? 'border-cyan-400 text-cyan-300' : ''}`}
-                    onClick={() => {
-                      const targetPage = Math.floor(subtickIdx / 16);
-                      onUpdateTableWindow((prev) =>
-                        closeMagnifier(setTablePage(prev, targetPage)),
-                      );
-                    }}
-                  >
-                    {String(subtickIdx + 1).padStart(3, '0')}:{rowItem?.fx && rowItem.fx !== 'OFF' ? rowItem.fx : rowItem?.pitch ?? '—'}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })()}
     </div>
   );
 }
